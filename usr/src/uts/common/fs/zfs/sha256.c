@@ -24,17 +24,21 @@
  */
 #include <sys/zfs_context.h>
 #include <sys/zio.h>
-#include <sys/sha2.h>
+#ifdef _KERNEL
+#include <crypto/sha2/sha2.h>
+#else
+#include <sha256.h>
+#endif
 
 void
 zio_checksum_SHA256(const void *buf, uint64_t size, zio_cksum_t *zcp)
 {
-	SHA2_CTX ctx;
+	SHA256_CTX ctx;
 	zio_cksum_t tmp;
 
-	SHA2Init(SHA256, &ctx);
-	SHA2Update(&ctx, buf, size);
-	SHA2Final(&tmp, &ctx);
+	SHA256_Init(&ctx);
+	SHA256_Update(&ctx, buf, size);
+	SHA256_Final((unsigned char *)&tmp, &ctx);
 
 	/*
 	 * A prior implementation of this function had a

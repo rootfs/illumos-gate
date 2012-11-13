@@ -23,10 +23,6 @@
  * Use is subject to license terms.
  */
 
-/*
- * Copyright (c) 2012 by Delphix. All rights reserved.
- */
-
 #ifndef _SYS_SPACE_MAP_H
 #define	_SYS_SPACE_MAP_H
 
@@ -140,8 +136,6 @@ struct space_map_ops {
 
 typedef void space_map_func_t(space_map_t *sm, uint64_t start, uint64_t size);
 
-extern void space_map_init(void);
-extern void space_map_fini(void);
 extern void space_map_create(space_map_t *sm, uint64_t start, uint64_t size,
     uint8_t shift, kmutex_t *lp);
 extern void space_map_destroy(space_map_t *sm);

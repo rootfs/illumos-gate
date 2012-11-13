@@ -37,12 +37,9 @@
 #include <sys/systm.h>
 #include <sys/sunddi.h>
 #include <sys/uio.h>
-#include <sys/vmsystm.h>
 #include <sys/vfs.h>
 #include <sys/vnode.h>
-
-#include <vm/as.h>
-#include <vm/seg_vn.h>
+#include <sys/cred.h>
 
 #include <sys/gfs.h>
 
@@ -110,6 +107,7 @@
  * 	gfs_root_create_file()
  */
 
+#ifdef sun
 /*
  * gfs_make_opsvec: take an array of vnode type definitions and create
  * their vnodeops_t structures
@@ -143,6 +141,7 @@ gfs_make_opsvec(gfs_opsvec_t *vec)
 	}
 	return (error);
 }
+#endif	/* sun */
 
 /*
  * Low level directory routines
@@ -170,6 +169,7 @@ gfs_get_parent_ino(vnode_t *dvp, cred_t *cr, caller_context_t *ct,
 	if (parent == NULL) {
 		*pino = *ino;		/* root of filesystem */
 	} else if (dvp->v_flag & V_XATTRDIR) {
+#ifdef TODO
 		vattr_t va;
 
 		va.va_mask = AT_NODEID;
@@ -177,6 +177,9 @@ gfs_get_parent_ino(vnode_t *dvp, cred_t *cr, caller_context_t *ct,
 		if (error)
 			return (error);
 		*pino = va.va_nodeid;
+#else
+		panic("%s:%u: not implemented", __func__, __LINE__);
+#endif
 	} else {
 		*pino = ((gfs_file_t *)(parent->v_data))->gfs_ino;
 	}
@@ -255,18 +258,21 @@ gfs_readdir_init(gfs_readdir_state_t *st, int name_max, int ureclen,
  *   next	- the offset of the next entry
  */
 static int
-gfs_readdir_emit_int(gfs_readdir_state_t *st, uio_t *uiop, offset_t next)
+gfs_readdir_emit_int(gfs_readdir_state_t *st, uio_t *uiop, offset_t next,
+    int *ncookies, u_long **cookies)
 {
-	int reclen;
+	int reclen, namlen;
 	dirent64_t *dp;
 	edirent_t *edp;
 
 	if (st->grd_flags & V_RDDIR_ENTFLAGS) {
 		edp = st->grd_dirent;
-		reclen = EDIRENT_RECLEN(strlen(edp->ed_name));
+		namlen = strlen(edp->ed_name);
+		reclen = EDIRENT_RECLEN(namlen);
 	} else {
 		dp = st->grd_dirent;
-		reclen = DIRENT64_RECLEN(strlen(dp->d_name));
+		namlen = strlen(dp->d_name);
+		reclen = DIRENT64_RECLEN(namlen);
 	}
 
 	if (reclen > uiop->uio_resid) {
@@ -282,14 +288,22 @@ gfs_readdir_emit_int(gfs_readdir_state_t *st, uio_t *uiop, offset_t next)
 		edp->ed_off = next;
 		edp->ed_reclen = (ushort_t)reclen;
 	} else {
-		dp->d_off = next;
+		/* XXX: This can change in the future. */
 		dp->d_reclen = (ushort_t)reclen;
+		dp->d_type = DT_DIR;
+		dp->d_namlen = namlen;
 	}
 
 	if (uiomove((caddr_t)st->grd_dirent, reclen, UIO_READ, uiop))
 		return (EFAULT);
 
 	uiop->uio_loffset = next;
+	if (*cookies != NULL) {
+		**cookies = next;
+		(*cookies)++;
+		(*ncookies)--;
+		KASSERT(*ncookies >= 0, ("ncookies=%d", *ncookies));
+	}
 
 	return (0);
 }
@@ -308,7 +322,7 @@ gfs_readdir_emit_int(gfs_readdir_state_t *st, uio_t *uiop, offset_t next)
  */
 int
 gfs_readdir_emit(gfs_readdir_state_t *st, uio_t *uiop, offset_t voff,
-    ino64_t ino, const char *name, int eflags)
+    ino64_t ino, const char *name, int eflags, int *ncookies, u_long **cookies)
 {
 	offset_t off = (voff + 2) * st->grd_ureclen;
 
@@ -329,9 +343,11 @@ gfs_readdir_emit(gfs_readdir_state_t *st, uio_t *uiop, offset_t voff,
 	 * Inter-entry offsets are invalid, so we assume a record size of
 	 * grd_ureclen and explicitly set the offset appropriately.
 	 */
-	return (gfs_readdir_emit_int(st, uiop, off + st->grd_ureclen));
+	return (gfs_readdir_emit_int(st, uiop, off + st->grd_ureclen, ncookies,
+	    cookies));
 }
 
+#ifdef sun
 /*
  * gfs_readdir_emitn: like gfs_readdir_emit(), but takes an integer
  * instead of a string for the entry's name.
@@ -345,6 +361,7 @@ gfs_readdir_emitn(gfs_readdir_state_t *st, uio_t *uiop, offset_t voff,
 	numtos(num, buf);
 	return (gfs_readdir_emit(st, uiop, voff, ino, buf, 0));
 }
+#endif
 
 /*
  * gfs_readdir_pred: readdir loop predicate
@@ -356,7 +373,8 @@ gfs_readdir_emitn(gfs_readdir_state_t *st, uio_t *uiop, offset_t voff,
  * gfs_readdir_fini().
  */
 int
-gfs_readdir_pred(gfs_readdir_state_t *st, uio_t *uiop, offset_t *voffp)
+gfs_readdir_pred(gfs_readdir_state_t *st, uio_t *uiop, offset_t *voffp,
+    int *ncookies, u_long **cookies)
 {
 	offset_t off, voff;
 	int error;
@@ -369,11 +387,11 @@ top:
 	voff = off - 2;
 	if (off == 0) {
 		if ((error = gfs_readdir_emit(st, uiop, voff, st->grd_self,
-		    ".", 0)) == 0)
+		    ".", 0, ncookies, cookies)) == 0)
 			goto top;
 	} else if (off == 1) {
 		if ((error = gfs_readdir_emit(st, uiop, voff, st->grd_parent,
-		    "..", 0)) == 0)
+		    "..", 0, ncookies, cookies)) == 0)
 			goto top;
 	} else {
 		*voffp = voff;
@@ -430,6 +448,7 @@ gfs_lookup_dot(vnode_t **vpp, vnode_t *dvp, vnode_t *pvp, const char *nm)
 			VN_HOLD(pvp);
 			*vpp = pvp;
 		}
+		vn_lock(*vpp, LK_EXCLUSIVE | LK_RETRY);
 		return (0);
 	}
 
@@ -454,34 +473,39 @@ gfs_lookup_dot(vnode_t **vpp, vnode_t *dvp, vnode_t *pvp, const char *nm)
  * 	- Hold the parent
  */
 vnode_t *
-gfs_file_create(size_t size, vnode_t *pvp, vnodeops_t *ops)
+gfs_file_create(size_t size, vnode_t *pvp, vfs_t *vfsp, vnodeops_t *ops)
 {
 	gfs_file_t *fp;
 	vnode_t *vp;
+	int error;
 
 	/*
 	 * Allocate vnode and internal data structure
 	 */
 	fp = kmem_zalloc(size, KM_SLEEP);
-	vp = vn_alloc(KM_SLEEP);
+	error = getnewvnode("zfs", vfsp, ops, &vp);
+	ASSERT(error == 0);
+	vn_lock(vp, LK_EXCLUSIVE | LK_RETRY);
+	vp->v_data = (caddr_t)fp;
 
 	/*
 	 * Set up various pointers
 	 */
 	fp->gfs_vnode = vp;
 	fp->gfs_parent = pvp;
-	vp->v_data = fp;
 	fp->gfs_size = size;
 	fp->gfs_type = GFS_FILE;
+
+	vp->v_vflag |= VV_FORCEINSMQ;
+	error = insmntque(vp, vfsp);
+	vp->v_vflag &= ~VV_FORCEINSMQ;
+	KASSERT(error == 0, ("insmntque() failed: error %d", error));
 
 	/*
 	 * Initialize vnode and hold parent.
 	 */
-	vn_setops(vp, ops);
-	if (pvp) {
-		VN_SET_VFS_TYPE_DEV(vp, pvp->v_vfsp, VREG, 0);
+	if (pvp)
 		VN_HOLD(pvp);
-	}
 
 	return (vp);
 }
@@ -512,7 +536,7 @@ gfs_file_create(size_t size, vnode_t *pvp, vnodeops_t *ops)
  * This function also performs the same initialization as gfs_file_create().
  */
 vnode_t *
-gfs_dir_create(size_t struct_size, vnode_t *pvp, vnodeops_t *ops,
+gfs_dir_create(size_t struct_size, vnode_t *pvp, vfs_t *vfsp, vnodeops_t *ops,
     gfs_dirent_t *entries, gfs_inode_cb inode_cb, int maxlen,
     gfs_readdir_cb readdir_cb, gfs_lookup_cb lookup_cb)
 {
@@ -520,7 +544,7 @@ gfs_dir_create(size_t struct_size, vnode_t *pvp, vnodeops_t *ops,
 	gfs_dir_t *dp;
 	gfs_dirent_t *de;
 
-	vp = gfs_file_create(struct_size, pvp, ops);
+	vp = gfs_file_create(struct_size, pvp, vfsp, ops);
 	vp->v_type = VDIR;
 
 	dp = vp->v_data;
@@ -557,19 +581,19 @@ gfs_root_create(size_t size, vfs_t *vfsp, vnodeops_t *ops, ino64_t ino,
     gfs_dirent_t *entries, gfs_inode_cb inode_cb, int maxlen,
     gfs_readdir_cb readdir_cb, gfs_lookup_cb lookup_cb)
 {
-	vnode_t *vp = gfs_dir_create(size, NULL, ops, entries, inode_cb,
-	    maxlen, readdir_cb, lookup_cb);
-
-	/* Manually set the inode */
-	((gfs_file_t *)vp->v_data)->gfs_ino = ino;
+	vnode_t *vp;
 
 	VFS_HOLD(vfsp);
-	VN_SET_VFS_TYPE_DEV(vp, vfsp, VDIR, 0);
-	vp->v_flag |= VROOT | VNOCACHE | VNOMAP | VNOSWAP | VNOMOUNT;
+	vp = gfs_dir_create(size, NULL, vfsp, ops, entries, inode_cb,
+	    maxlen, readdir_cb, lookup_cb);
+	/* Manually set the inode */
+	((gfs_file_t *)vp->v_data)->gfs_ino = ino;
+	vp->v_flag |= VROOT;
 
 	return (vp);
 }
 
+#ifdef sun
 /*
  * gfs_root_create_file(): create a root vnode for a GFS file as a filesystem
  *
@@ -589,6 +613,7 @@ gfs_root_create_file(size_t size, vfs_t *vfsp, vnodeops_t *ops, ino64_t ino)
 
 	return (vp);
 }
+#endif	/* sun */
 
 /*
  * gfs_file_inactive()
@@ -612,7 +637,12 @@ gfs_file_inactive(vnode_t *vp)
 	if (fp->gfs_parent == NULL || (vp->v_flag & V_XATTRDIR))
 		goto found;
 
-	dp = fp->gfs_parent->v_data;
+	/*
+	 * XXX cope with a FreeBSD-specific race wherein the parent's
+	 * snapshot data can be freed before the parent is
+	 */
+	if ((dp = fp->gfs_parent->v_data) == NULL)
+		return (NULL);
 
 	/*
 	 * First, see if this vnode is cached in the parent.
@@ -635,51 +665,37 @@ gfs_file_inactive(vnode_t *vp)
 	ge = NULL;
 
 found:
-	if (vp->v_flag & V_XATTRDIR) {
-		mutex_enter(&fp->gfs_parent->v_lock);
+	if (vp->v_flag & V_XATTRDIR)
+		VI_LOCK(fp->gfs_parent);
+	VI_LOCK(vp);
+	/*
+	 * Really remove this vnode
+	 */
+	data = vp->v_data;
+	if (ge != NULL) {
+		/*
+		 * If this was a statically cached entry, simply set the
+		 * cached vnode to NULL.
+		 */
+		ge->gfse_vnode = NULL;
 	}
-	mutex_enter(&vp->v_lock);
-	if (vp->v_count == 1) {
-		/*
-		 * Really remove this vnode
-		 */
-		data = vp->v_data;
-		if (ge != NULL) {
-			/*
-			 * If this was a statically cached entry, simply set the
-			 * cached vnode to NULL.
-			 */
-			ge->gfse_vnode = NULL;
-		}
-		if (vp->v_flag & V_XATTRDIR) {
-			fp->gfs_parent->v_xattrdir = NULL;
-			mutex_exit(&fp->gfs_parent->v_lock);
-		}
-		mutex_exit(&vp->v_lock);
+	VI_UNLOCK(vp);
 
-		/*
-		 * Free vnode and release parent
-		 */
-		if (fp->gfs_parent) {
-			if (dp) {
-				gfs_dir_unlock(dp);
-			}
-			VN_RELE(fp->gfs_parent);
-		} else {
-			ASSERT(vp->v_vfsp != NULL);
-			VFS_RELE(vp->v_vfsp);
-		}
-		vn_free(vp);
-	} else {
-		vp->v_count--;
-		data = NULL;
-		mutex_exit(&vp->v_lock);
-		if (vp->v_flag & V_XATTRDIR) {
-			mutex_exit(&fp->gfs_parent->v_lock);
-		}
+	/*
+	 * Free vnode and release parent
+	 */
+	if (fp->gfs_parent) {
 		if (dp)
 			gfs_dir_unlock(dp);
+		VI_LOCK(fp->gfs_parent);
+		fp->gfs_parent->v_usecount--;
+		VI_UNLOCK(fp->gfs_parent);
+	} else {
+		ASSERT(vp->v_vfsp != NULL);
+		VFS_RELE(vp->v_vfsp);
 	}
+	if (vp->v_flag & V_XATTRDIR)
+		VI_UNLOCK(fp->gfs_parent);
 
 	return (data);
 }
@@ -998,8 +1014,8 @@ out:
  *	Return 0 on success, or error on failure.
  */
 int
-gfs_dir_readdir(vnode_t *dvp, uio_t *uiop, int *eofp, void *data, cred_t *cr,
-    caller_context_t *ct, int flags)
+gfs_dir_readdir(vnode_t *dvp, uio_t *uiop, int *eofp, int *ncookies,
+    u_long **cookies, void *data, cred_t *cr, int flags)
 {
 	gfs_readdir_state_t gstate;
 	int error, eof = 0;
@@ -1007,7 +1023,7 @@ gfs_dir_readdir(vnode_t *dvp, uio_t *uiop, int *eofp, void *data, cred_t *cr,
 	offset_t off, next;
 	gfs_dir_t *dp = dvp->v_data;
 
-	error = gfs_get_parent_ino(dvp, cr, ct, &pino, &ino);
+	error = gfs_get_parent_ino(dvp, cr, NULL, &pino, &ino);
 	if (error)
 		return (error);
 
@@ -1015,15 +1031,15 @@ gfs_dir_readdir(vnode_t *dvp, uio_t *uiop, int *eofp, void *data, cred_t *cr,
 	    pino, ino, flags)) != 0)
 		return (error);
 
-	while ((error = gfs_readdir_pred(&gstate, uiop, &off)) == 0 &&
-	    !eof) {
+	while ((error = gfs_readdir_pred(&gstate, uiop, &off, ncookies,
+	    cookies)) == 0 && !eof) {
 
 		if (off >= 0 && off < dp->gfsd_nstatic) {
 			ino = dp->gfsd_inode(dvp, off);
 
 			if ((error = gfs_readdir_emit(&gstate, uiop,
-			    off, ino, dp->gfsd_static[off].gfse_name, 0))
-			    != 0)
+			    off, ino, dp->gfsd_static[off].gfse_name, 0,
+			    ncookies, cookies)) != 0)
 				break;
 
 		} else if (dp->gfsd_readdir) {
@@ -1038,7 +1054,7 @@ gfs_dir_readdir(vnode_t *dvp, uio_t *uiop, int *eofp, void *data, cred_t *cr,
 			next += dp->gfsd_nstatic + 2;
 
 			if ((error = gfs_readdir_emit_int(&gstate, uiop,
-			    next)) != 0)
+			    next, ncookies, cookies)) != 0)
 				break;
 		} else {
 			/*
@@ -1076,13 +1092,52 @@ gfs_vop_lookup(vnode_t *dvp, char *nm, vnode_t **vpp, pathname_t *pnp,
  */
 /* ARGSUSED */
 int
-gfs_vop_readdir(vnode_t *vp, uio_t *uiop, cred_t *cr, int *eofp,
-    caller_context_t *ct, int flags)
+gfs_vop_readdir(ap)
+	struct vop_readdir_args /* {
+		struct vnode *a_vp;
+		struct uio *a_uio;
+		struct ucred *a_cred;
+		int *a_eofflag;
+		int *ncookies;
+		u_long **a_cookies;
+	} */ *ap;
 {
-	return (gfs_dir_readdir(vp, uiop, eofp, NULL, cr, ct, flags));
+	vnode_t *vp = ap->a_vp;
+	uio_t *uiop = ap->a_uio;
+	cred_t *cr = ap->a_cred;
+	int *eofp = ap->a_eofflag;
+	int ncookies = 0;
+	u_long *cookies = NULL;
+	int error;
+
+	if (ap->a_ncookies) {
+		/*
+		 * Minimum entry size is dirent size and 1 byte for a file name.
+		 */
+		ncookies = uiop->uio_resid / (sizeof(struct dirent) - sizeof(((struct dirent *)NULL)->d_name) + 1);
+		cookies = malloc(ncookies * sizeof(u_long), M_TEMP, M_WAITOK);
+		*ap->a_cookies = cookies;
+		*ap->a_ncookies = ncookies;
+	}
+
+	error = gfs_dir_readdir(vp, uiop, eofp, &ncookies, &cookies, NULL,
+	    cr, 0);
+
+	if (error == 0) {
+		/* Subtract unused cookies */
+		if (ap->a_ncookies)
+			*ap->a_ncookies -= ncookies;
+	} else if (ap->a_ncookies) {
+		free(*ap->a_cookies, M_TEMP);
+		*ap->a_cookies = NULL;
+		*ap->a_ncookies = 0;
+	}
+
+	return (error);
 }
 
 
+#ifdef sun
 /*
  * gfs_vop_map: VOP_MAP() entry point
  *
@@ -1154,6 +1209,7 @@ gfs_vop_map(vnode_t *vp, offset_t off, struct as *as, caddr_t *addrp,
 
 	return (rv);
 }
+#endif	/* sun */
 
 /*
  * gfs_vop_inactive: VOP_INACTIVE() entry point
@@ -1162,17 +1218,25 @@ gfs_vop_map(vnode_t *vp, offset_t off, struct as *as, caddr_t *addrp,
  * gfs_dir_inactive() as necessary, and kmem_free()s associated private data.
  */
 /* ARGSUSED */
-void
-gfs_vop_inactive(vnode_t *vp, cred_t *cr, caller_context_t *ct)
+int
+gfs_vop_inactive(ap)
+	struct vop_inactive_args /* {
+		struct vnode *a_vp;
+		struct thread *a_td;
+	} */ *ap;
 {
+	vnode_t *vp = ap->a_vp;
 	gfs_file_t *fp = vp->v_data;
-	void *data;
 
 	if (fp->gfs_type == GFS_DIR)
-		data = gfs_dir_inactive(vp);
+		gfs_dir_inactive(vp);
 	else
-		data = gfs_file_inactive(vp);
+		gfs_file_inactive(vp);
 
-	if (data != NULL)
-		kmem_free(data, fp->gfs_size);
+	VI_LOCK(vp);
+	vp->v_data = NULL;
+	VI_UNLOCK(vp);
+	kmem_free(fp, fp->gfs_size);
+
+	return (0);
 }

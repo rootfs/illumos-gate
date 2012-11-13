@@ -28,6 +28,11 @@
  * Internal utility routines for the ZFS library.
  */
 
+#include <sys/param.h>
+#include <sys/linker.h>
+#include <sys/module.h>
+#include <sys/stat.h>
+
 #include <errno.h>
 #include <fcntl.h>
 #include <libintl.h>
@@ -43,11 +48,12 @@
 #include <sys/types.h>
 
 #include <libzfs.h>
-#include <libzfs_core.h>
 
 #include "libzfs_impl.h"
 #include "zfs_prop.h"
 #include "zfeature_common.h"
+
+int aok;
 
 int
 libzfs_errno(libzfs_handle_t *hdl)
@@ -362,6 +368,7 @@ zfs_standard_error_fmt(libzfs_handle_t *hdl, int error, const char *fmt, ...)
 	case ENOSPC:
 	case EDQUOT:
 		zfs_verror(hdl, EZFS_NOSPC, fmt, ap);
+		va_end(ap);
 		return (-1);
 
 	case EEXIST:
@@ -461,6 +468,7 @@ zpool_standard_error_fmt(libzfs_handle_t *hdl, int error, const char *fmt, ...)
 	case ENOSPC:
 	case EDQUOT:
 		zfs_verror(hdl, EZFS_NOSPC, fmt, ap);
+		va_end(ap);
 		return (-1);
 
 	case EAGAIN:
@@ -609,12 +617,32 @@ libzfs_print_on_error(libzfs_handle_t *hdl, boolean_t printerr)
 	hdl->libzfs_printerr = printerr;
 }
 
+static int
+libzfs_load(void)
+{
+	int error;
+
+	if (modfind("zfs") < 0) {
+		/* Not present in kernel, try loading it. */
+		if (kldload("zfs") < 0 || modfind("zfs") < 0) {
+			if (errno != EEXIST)
+				return (-1);
+		}
+	}
+	return (0);
+}
+
 libzfs_handle_t *
 libzfs_init(void)
 {
 	libzfs_handle_t *hdl;
 
 	if ((hdl = calloc(1, sizeof (libzfs_handle_t))) == NULL) {
+		return (NULL);
+	}
+
+	if (libzfs_load() < 0) {
+		free(hdl);
 		return (NULL);
 	}
 
@@ -629,15 +657,7 @@ libzfs_init(void)
 		return (NULL);
 	}
 
-	hdl->libzfs_sharetab = fopen("/etc/dfs/sharetab", "r");
-
-	if (libzfs_core_init() != 0) {
-		(void) close(hdl->libzfs_fd);
-		(void) fclose(hdl->libzfs_mnttab);
-		(void) fclose(hdl->libzfs_sharetab);
-		free(hdl);
-		return (NULL);
-	}
+	hdl->libzfs_sharetab = fopen(ZFS_EXPORTS_PATH, "r");
 
 	zfs_prop_init();
 	zpool_prop_init();
@@ -656,11 +676,14 @@ libzfs_fini(libzfs_handle_t *hdl)
 	if (hdl->libzfs_sharetab)
 		(void) fclose(hdl->libzfs_sharetab);
 	zfs_uninit_libshare(hdl);
+	if (hdl->libzfs_log_str)
+		(void) free(hdl->libzfs_log_str);
 	zpool_free_handles(hdl);
+#ifdef sun
 	libzfs_fru_clear(hdl, B_TRUE);
+#endif
 	namespace_clear(hdl);
 	libzfs_mnttab_fini(hdl);
-	libzfs_core_fini();
 	free(hdl);
 }
 
@@ -707,6 +730,7 @@ zfs_path_to_zhandle(libzfs_handle_t *hdl, char *path, zfs_type_t argtype)
 		return (NULL);
 	}
 
+#ifdef sun
 	rewind(hdl->libzfs_mnttab);
 	while ((ret = getextmntent(hdl->libzfs_mnttab, &entry, 0)) == 0) {
 		if (makedevice(entry.mnt_major, entry.mnt_minor) ==
@@ -714,6 +738,19 @@ zfs_path_to_zhandle(libzfs_handle_t *hdl, char *path, zfs_type_t argtype)
 			break;
 		}
 	}
+#else
+	{
+		struct statfs sfs;
+
+		ret = statfs(path, &sfs);
+		if (ret == 0)
+			statfs2mnttab(&sfs, &entry);
+		else {
+			(void) fprintf(stderr, "%s: %s\n", path,
+			    strerror(errno));
+		}
+	}
+#endif	/* sun */
 	if (ret != 0) {
 		return (NULL);
 	}
@@ -738,7 +775,7 @@ zcmd_alloc_dst_nvlist(libzfs_handle_t *hdl, zfs_cmd_t *zc, size_t len)
 		len = 16 * 1024;
 	zc->zc_nvlist_dst_size = len;
 	if ((zc->zc_nvlist_dst = (uint64_t)(uintptr_t)
-	    zfs_alloc(hdl, zc->zc_nvlist_dst_size)) == NULL)
+	    zfs_alloc(hdl, zc->zc_nvlist_dst_size)) == 0)
 		return (-1);
 
 	return (0);
@@ -755,7 +792,7 @@ zcmd_expand_dst_nvlist(libzfs_handle_t *hdl, zfs_cmd_t *zc)
 	free((void *)(uintptr_t)zc->zc_nvlist_dst);
 	if ((zc->zc_nvlist_dst = (uint64_t)(uintptr_t)
 	    zfs_alloc(hdl, zc->zc_nvlist_dst_size))
-	    == NULL)
+	    == 0)
 		return (-1);
 
 	return (0);
@@ -820,9 +857,19 @@ zcmd_read_dst_nvlist(libzfs_handle_t *hdl, zfs_cmd_t *zc, nvlist_t **nvlp)
 }
 
 int
-zfs_ioctl(libzfs_handle_t *hdl, int request, zfs_cmd_t *zc)
+zfs_ioctl(libzfs_handle_t *hdl, unsigned long request, zfs_cmd_t *zc)
 {
-	return (ioctl(hdl->libzfs_fd, request, zc));
+	int error;
+
+	zc->zc_history = (uint64_t)(uintptr_t)hdl->libzfs_log_str;
+	error = ioctl(hdl->libzfs_fd, request, zc);
+	if (hdl->libzfs_log_str) {
+		free(hdl->libzfs_log_str);
+		hdl->libzfs_log_str = NULL;
+	}
+	zc->zc_history = 0;
+
+	return (error);
 }
 
 /*

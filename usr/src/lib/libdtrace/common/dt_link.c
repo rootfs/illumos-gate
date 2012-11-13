@@ -30,18 +30,31 @@
 #include <elf.h>
 
 #include <sys/types.h>
+#if defined(sun)
 #include <sys/sysmacros.h>
+#else
+#define	P2ROUNDUP(x, align)		(-(-(x) & -(align)))
+#endif
 
 #include <unistd.h>
 #include <strings.h>
+#if defined(sun)
 #include <alloca.h>
+#endif
 #include <limits.h>
 #include <stddef.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <fcntl.h>
 #include <errno.h>
+#if defined(sun)
 #include <wait.h>
+#else
+#include <sys/wait.h>
+#include <libelf.h>
+#include <gelf.h>
+#include <sys/mman.h>
+#endif
 #include <assert.h>
 #include <sys/ipc.h>
 
@@ -214,11 +227,23 @@ prepare_elf32(dtrace_hdl_t *dtp, const dof_hdr_t *dof, dof_elf32_t *dep)
 		s = &dofs[dofrh->dofr_tgtsec];
 
 		for (j = 0; j < nrel; j++) {
-#if defined(__i386) || defined(__amd64)
+#if defined(__arm__)
+/* XXX */
+printf("%s:%s(%d): DOODAD\n",__FUNCTION__,__FILE__,__LINE__);
+#elif defined(__ia64__)
+/* XXX */
+printf("%s:%s(%d): DOODAD\n",__FUNCTION__,__FILE__,__LINE__);
+#elif defined(__i386) || defined(__amd64)
 			rel->r_offset = s->dofs_offset +
 			    dofr[j].dofr_offset;
 			rel->r_info = ELF32_R_INFO(count + dep->de_global,
 			    R_386_32);
+#elif defined(__mips__)
+/* XXX */
+printf("%s:%s(%d): DOODAD\n",__FUNCTION__,__FILE__,__LINE__);
+#elif defined(__powerpc__)
+/* XXX */
+printf("%s:%s(%d): DOODAD\n",__FUNCTION__,__FILE__,__LINE__);
 #elif defined(__sparc)
 			/*
 			 * Add 4 bytes to hit the low half of this 64-bit
@@ -390,7 +415,16 @@ prepare_elf64(dtrace_hdl_t *dtp, const dof_hdr_t *dof, dof_elf64_t *dep)
 		s = &dofs[dofrh->dofr_tgtsec];
 
 		for (j = 0; j < nrel; j++) {
-#if defined(__i386) || defined(__amd64)
+#ifdef DOODAD
+#if defined(__arm__)
+/* XXX */
+#elif defined(__ia64__)
+/* XXX */
+#elif defined(__mips__)
+/* XXX */
+#elif defined(__powerpc__)
+/* XXX */
+#elif defined(__i386) || defined(__amd64)
 			rel->r_offset = s->dofs_offset +
 			    dofr[j].dofr_offset;
 			rel->r_info = ELF64_R_INFO(count + dep->de_global,
@@ -402,6 +436,7 @@ prepare_elf64(dtrace_hdl_t *dtp, const dof_hdr_t *dof, dof_elf64_t *dep)
 			    R_SPARC_64);
 #else
 #error unknown ISA
+#endif
 #endif
 
 			sym->st_name = base + dofr[j].dofr_name - 1;
@@ -480,13 +515,24 @@ dump_elf32(dtrace_hdl_t *dtp, const dof_hdr_t *dof, int fd)
 	elf_file.ehdr.e_ident[EI_MAG3] = ELFMAG3;
 	elf_file.ehdr.e_ident[EI_VERSION] = EV_CURRENT;
 	elf_file.ehdr.e_ident[EI_CLASS] = ELFCLASS32;
-#if defined(_BIG_ENDIAN)
+#if BYTE_ORDER == _BIG_ENDIAN
 	elf_file.ehdr.e_ident[EI_DATA] = ELFDATA2MSB;
-#elif defined(_LITTLE_ENDIAN)
+#else
 	elf_file.ehdr.e_ident[EI_DATA] = ELFDATA2LSB;
 #endif
+#if defined(__FreeBSD__)
+	elf_file.ehdr.e_ident[EI_OSABI] = ELFOSABI_FREEBSD;
+#endif
 	elf_file.ehdr.e_type = ET_REL;
-#if defined(__sparc)
+#if defined(__arm__)
+	elf_file.ehdr.e_machine = EM_ARM;
+#elif defined(__ia64__)
+	elf_file.ehdr.e_machine = EM_IA_64;
+#elif defined(__mips__)
+	elf_file.ehdr.e_machine = EM_MIPS;
+#elif defined(__powerpc__)
+	elf_file.ehdr.e_machine = EM_PPC;
+#elif defined(__sparc)
 	elf_file.ehdr.e_machine = EM_SPARC;
 #elif defined(__i386) || defined(__amd64)
 	elf_file.ehdr.e_machine = EM_386;
@@ -617,13 +663,24 @@ dump_elf64(dtrace_hdl_t *dtp, const dof_hdr_t *dof, int fd)
 	elf_file.ehdr.e_ident[EI_MAG3] = ELFMAG3;
 	elf_file.ehdr.e_ident[EI_VERSION] = EV_CURRENT;
 	elf_file.ehdr.e_ident[EI_CLASS] = ELFCLASS64;
-#if defined(_BIG_ENDIAN)
+#if BYTE_ORDER == _BIG_ENDIAN
 	elf_file.ehdr.e_ident[EI_DATA] = ELFDATA2MSB;
-#elif defined(_LITTLE_ENDIAN)
+#else
 	elf_file.ehdr.e_ident[EI_DATA] = ELFDATA2LSB;
 #endif
+#if defined(__FreeBSD__)
+	elf_file.ehdr.e_ident[EI_OSABI] = ELFOSABI_FREEBSD;
+#endif
 	elf_file.ehdr.e_type = ET_REL;
-#if defined(__sparc)
+#if defined(__arm__)
+	elf_file.ehdr.e_machine = EM_ARM;
+#elif defined(__ia64__)
+	elf_file.ehdr.e_machine = EM_IA_64;
+#elif defined(__mips__)
+	elf_file.ehdr.e_machine = EM_MIPS;
+#elif defined(__powerpc__)
+	elf_file.ehdr.e_machine = EM_PPC;
+#elif defined(__sparc)
 	elf_file.ehdr.e_machine = EM_SPARCV9;
 #elif defined(__i386) || defined(__amd64)
 	elf_file.ehdr.e_machine = EM_AMD64;
@@ -739,7 +796,44 @@ dt_symtab_lookup(Elf_Data *data_sym, int nsym, uintptr_t addr, uint_t shn,
 	return (ret);
 }
 
-#if defined(__sparc)
+#if defined(__arm__)
+/* XXX */
+static int
+dt_modtext(dtrace_hdl_t *dtp, char *p, int isenabled, GElf_Rela *rela,
+    uint32_t *off)
+{
+printf("%s:%s(%d): DOODAD\n",__FUNCTION__,__FILE__,__LINE__);
+	return (0);
+}
+#elif defined(__ia64__)
+/* XXX */
+static int
+dt_modtext(dtrace_hdl_t *dtp, char *p, int isenabled, GElf_Rela *rela,
+    uint32_t *off)
+{
+printf("%s:%s(%d): DOODAD\n",__FUNCTION__,__FILE__,__LINE__);
+	return (0);
+}
+#elif defined(__mips__)
+/* XXX */
+static int
+dt_modtext(dtrace_hdl_t *dtp, char *p, int isenabled, GElf_Rela *rela,
+    uint32_t *off)
+{
+printf("%s:%s(%d): DOODAD\n",__FUNCTION__,__FILE__,__LINE__);
+	return (0);
+}
+#elif defined(__powerpc__)
+/* XXX */
+static int
+dt_modtext(dtrace_hdl_t *dtp, char *p, int isenabled, GElf_Rela *rela,
+    uint32_t *off)
+{
+printf("%s:%s(%d): DOODAD\n",__FUNCTION__,__FILE__,__LINE__);
+	return (0);
+}
+
+#elif defined(__sparc)
 
 #define	DT_OP_RET		0x81c7e008
 #define	DT_OP_NOP		0x01000000
@@ -1012,7 +1106,7 @@ process_obj(dtrace_hdl_t *dtp, const char *obj, int *eprobesp)
 	static const char dt_prefix[] = "__dtrace";
 	static const char dt_enabled[] = "enabled";
 	static const char dt_symprefix[] = "$dtrace";
-	static const char dt_symfmt[] = "%s%d.%s";
+	static const char dt_symfmt[] = "%s%ld.%s";
 	int fd, i, ndx, eprobe, mod = 0;
 	Elf *elf = NULL;
 	GElf_Ehdr ehdr;
@@ -1060,7 +1154,13 @@ process_obj(dtrace_hdl_t *dtp, const char *obj, int *eprobesp)
 
 	if (dtp->dt_oflags & DTRACE_O_LP64) {
 		eclass = ELFCLASS64;
-#if defined(__sparc)
+#if defined(__ia64__)
+		emachine1 = emachine2 = EM_IA_64;
+#elif defined(__mips__)
+		emachine1 = emachine2 = EM_MIPS;
+#elif defined(__powerpc__)
+		emachine1 = emachine2 = EM_PPC64;
+#elif defined(__sparc)
 		emachine1 = emachine2 = EM_SPARCV9;
 #elif defined(__i386) || defined(__amd64)
 		emachine1 = emachine2 = EM_AMD64;
@@ -1068,10 +1168,16 @@ process_obj(dtrace_hdl_t *dtp, const char *obj, int *eprobesp)
 		symsize = sizeof (Elf64_Sym);
 	} else {
 		eclass = ELFCLASS32;
-#if defined(__sparc)
+#if defined(__arm__)
+		emachine1 = emachine2 = EM_ARM;
+#elif defined(__mips__)
+		emachine1 = emachine2 = EM_MIPS;
+#elif defined(__powerpc__)
+		emachine1 = emachine2 = EM_PPC;
+#elif defined(__sparc)
 		emachine1 = EM_SPARC;
 		emachine2 = EM_SPARC32PLUS;
-#elif defined(__i386) || defined(__amd64)
+#elif defined(__i386) || defined(__amd64) || defined(__ia64__)
 		emachine1 = emachine2 = EM_386;
 #endif
 		symsize = sizeof (Elf32_Sym);
@@ -1415,14 +1521,29 @@ process_obj(dtrace_hdl_t *dtp, const char *obj, int *eprobesp)
 
 			off = rela.r_offset - fsym.st_value;
 			if (dt_modtext(dtp, data_tgt->d_buf, eprobe,
-			    &rela, &off) != 0) {
+			    &rela, &off) != 0)
 				goto err;
-			}
 
 			if (dt_probe_define(pvp, prp, s, r, off, eprobe) != 0) {
 				return (dt_link_error(dtp, elf, fd, bufs,
 				    "failed to allocate space for probe"));
 			}
+#if !defined(sun)
+			/*
+			 * Our linker doesn't understand the SUNW_IGNORE ndx and
+			 * will try to use this relocation when we build the
+			 * final executable. Since we are done processing this
+			 * relocation, mark it as inexistant and let libelf
+			 * remove it from the file.
+			 * If this wasn't done, we would have garbage added to
+			 * the executable file as the symbol is going to be
+			 * change from UND to ABS.
+			 */
+			rela.r_offset = 0;
+			rela.r_info  = 0;
+			rela.r_addend = 0;
+			(void) gelf_update_rela(data_rel, i, &rela);
+#endif
 
 			mod = 1;
 			(void) elf_flagdata(data_tgt, ELF_C_SET, ELF_F_DIRTY);
@@ -1434,6 +1555,9 @@ process_obj(dtrace_hdl_t *dtp, const char *obj, int *eprobesp)
 			 * already been processed by an earlier link
 			 * invocation.
 			 */
+#if !defined(sun)
+#define SHN_SUNW_IGNORE	SHN_ABS
+#endif
 			if (rsym.st_shndx != SHN_SUNW_IGNORE) {
 				rsym.st_shndx = SHN_SUNW_IGNORE;
 				(void) gelf_update_sym(data_sym, ndx, &rsym);
@@ -1447,6 +1571,9 @@ process_obj(dtrace_hdl_t *dtp, const char *obj, int *eprobesp)
 	(void) elf_end(elf);
 	(void) close(fd);
 
+#if !defined(sun)
+	if (nsym > 0)
+#endif
 	while ((pair = bufs) != NULL) {
 		bufs = pair->dlp_next;
 		dt_free(dtp, pair->dlp_str);
@@ -1465,12 +1592,45 @@ int
 dtrace_program_link(dtrace_hdl_t *dtp, dtrace_prog_t *pgp, uint_t dflags,
     const char *file, int objc, char *const objv[])
 {
+#if !defined(sun)
+	char tfile[PATH_MAX];
+	Elf *e;
+	Elf_Scn *scn;
+	Elf_Data *data;
+	GElf_Shdr shdr;
+	int efd;
+	size_t stridx;
+	unsigned char *buf;
+	char *s;
+	int loc;
+	GElf_Ehdr ehdr;
+	Elf_Scn *scn0;
+	GElf_Shdr shdr0;
+	uint64_t off, rc;
+#endif
 	char drti[PATH_MAX];
 	dof_hdr_t *dof;
 	int fd, status, i, cur;
 	char *cmd, tmp;
 	size_t len;
 	int eprobes = 0, ret = 0;
+
+#if !defined(sun)
+	if (access(file, R_OK) == 0) {
+		fprintf(stderr, "dtrace: target object (%s) already exists. "
+		    "Please remove the target\ndtrace: object and rebuild all "
+		    "the source objects if you wish to run the DTrace\n"
+		    "dtrace: linking process again\n", file);
+		/*
+		 * Several build infrastructures run DTrace twice (e.g.
+		 * postgres) and we don't want the build to fail. Return
+		 * 0 here since this isn't really a fatal error.
+		 */
+		return (0);
+	}
+	/* XXX Should get a temp file name here. */
+	snprintf(tfile, sizeof(tfile), "%s.tmp", file);
+#endif
 
 	/*
 	 * A NULL program indicates a special use in which we just link
@@ -1533,6 +1693,7 @@ dtrace_program_link(dtrace_hdl_t *dtp, dtrace_prog_t *pgp, uint_t dflags,
 	if ((dof = dtrace_dof_create(dtp, pgp, dflags)) == NULL)
 		return (-1); /* errno is set for us */
 
+#if defined(sun)
 	/*
 	 * Create a temporary file and then unlink it if we're going to
 	 * combine it with drti.o later.  We can still refer to it in child
@@ -1542,6 +1703,11 @@ dtrace_program_link(dtrace_hdl_t *dtp, dtrace_prog_t *pgp, uint_t dflags,
 		return (dt_link_error(dtp, NULL, -1, NULL,
 		    "failed to open %s: %s", file, strerror(errno)));
 	}
+#else
+	if ((fd = open(tfile, O_RDWR | O_CREAT | O_TRUNC, 0666)) == -1)
+		return (dt_link_error(dtp, NULL, -1, NULL,
+		    "failed to open %s: %s", tfile, strerror(errno)));
+#endif
 
 	/*
 	 * If -xlinktype=DOF has been selected, just write out the DOF.
@@ -1571,20 +1737,28 @@ dtrace_program_link(dtrace_hdl_t *dtp, dtrace_prog_t *pgp, uint_t dflags,
 	}
 
 
+#if defined(sun)
 	if (!dtp->dt_lazyload)
 		(void) unlink(file);
+#endif
 
+#if defined(sun)
 	if (dtp->dt_oflags & DTRACE_O_LP64)
 		status = dump_elf64(dtp, dof, fd);
 	else
 		status = dump_elf32(dtp, dof, fd);
 
 	if (status != 0 || lseek(fd, 0, SEEK_SET) != 0) {
+#else
+	/* We don't write the ELF header, just the DOF section */
+	if (dt_write(dtp, fd, dof, dof->dofh_filesz) < dof->dofh_filesz) {
+#endif
 		return (dt_link_error(dtp, NULL, -1, NULL,
 		    "failed to write %s: %s", file, strerror(errno)));
 	}
 
 	if (!dtp->dt_lazyload) {
+#if defined(sun)
 		const char *fmt = "%s -o %s -r -Blocal -Breduce /dev/fd/%d %s";
 
 		if (dtp->dt_oflags & DTRACE_O_LP64) {
@@ -1601,15 +1775,43 @@ dtrace_program_link(dtrace_hdl_t *dtp, dtrace_prog_t *pgp, uint_t dflags,
 		cmd = alloca(len);
 
 		(void) snprintf(cmd, len, fmt, dtp->dt_ld_path, file, fd, drti);
+#else
+		const char *fmt = "%s -o %s -r %s";
 
+#if defined(__amd64__)
+		/*
+		 * Arches which default to 64-bit need to explicitly use
+		 * the 32-bit library path.
+		 */
+		int use_32 = !(dtp->dt_oflags & DTRACE_O_LP64);
+#else
+		/*
+		 * Arches which are 32-bit only just use the normal
+		 * library path.
+		 */
+		int use_32 = 0;
+#endif
+
+		(void) snprintf(drti, sizeof (drti), "/usr/lib%s/dtrace/drti.o",
+		    use_32 ? "32":"");
+
+		len = snprintf(&tmp, 1, fmt, dtp->dt_ld_path, file, tfile,
+		    drti) + 1;
+
+#if !defined(sun)
+		len *= 2;
+#endif
+		cmd = alloca(len);
+
+		(void) snprintf(cmd, len, fmt, dtp->dt_ld_path, file,
+		    drti);
+#endif
 		if ((status = system(cmd)) == -1) {
 			ret = dt_link_error(dtp, NULL, -1, NULL,
 			    "failed to run %s: %s", dtp->dt_ld_path,
 			    strerror(errno));
 			goto done;
 		}
-
-		(void) close(fd); /* release temporary file */
 
 		if (WIFSIGNALED(status)) {
 			ret = dt_link_error(dtp, NULL, -1, NULL,
@@ -1624,11 +1826,147 @@ dtrace_program_link(dtrace_hdl_t *dtp, dtrace_prog_t *pgp, uint_t dflags,
 			    file, dtp->dt_ld_path, WEXITSTATUS(status));
 			goto done;
 		}
+#if !defined(sun)
+#define BROKEN_LIBELF
+		/*
+		 * FreeBSD's ld(1) is not instructed to interpret and add
+		 * correctly the SUNW_dof section present in tfile.
+		 * We use libelf to add this section manually and hope the next
+		 * ld invocation won't remove it.
+		 */
+		elf_version(EV_CURRENT);
+		if ((efd = open(file, O_RDWR, 0)) < 0) {
+			ret = dt_link_error(dtp, NULL, -1, NULL,
+			    "failed to open file %s: %s",
+			    file, strerror(errno));
+			goto done;
+		}
+		if ((e = elf_begin(efd, ELF_C_RDWR, NULL)) == NULL) {
+			close(efd);
+			ret = dt_link_error(dtp, NULL, -1, NULL,
+			    "failed to open elf file: %s",
+			    elf_errmsg(elf_errno()));
+			goto done;
+		}
+		/*
+		 * Add the string '.SUWN_dof' to the shstrtab section.
+		 */
+#ifdef BROKEN_LIBELF
+		elf_flagelf(e, ELF_C_SET, ELF_F_LAYOUT);
+#endif
+		elf_getshdrstrndx(e, &stridx);
+		scn = elf_getscn(e, stridx);
+		gelf_getshdr(scn, &shdr);
+		data = elf_newdata(scn);
+		data->d_off = shdr.sh_size;
+		data->d_buf = ".SUNW_dof";
+		data->d_size = 10;
+		data->d_type = ELF_T_BYTE;
+		loc = shdr.sh_size;
+		shdr.sh_size += data->d_size;
+		gelf_update_shdr(scn, &shdr);
+#ifdef BROKEN_LIBELF
+		off = shdr.sh_offset;
+		rc = shdr.sh_offset + shdr.sh_size;
+		gelf_getehdr(e, &ehdr);
+		if (ehdr.e_shoff > off) {
+			off = ehdr.e_shoff + ehdr.e_shnum * ehdr.e_shentsize;
+			rc = roundup(rc, 8);
+			ehdr.e_shoff = rc;
+			gelf_update_ehdr(e, &ehdr);
+			rc += ehdr.e_shnum * ehdr.e_shentsize;
+		}
+		for (;;) {
+			scn0 = NULL;
+			scn = NULL;
+			while ((scn = elf_nextscn(e, scn)) != NULL) {
+				gelf_getshdr(scn, &shdr);
+				if (shdr.sh_type == SHT_NOBITS ||
+				    shdr.sh_offset < off)
+					continue;
+				/* Find the immediately adjcent section. */
+				if (scn0 == NULL ||
+				    shdr.sh_offset < shdr0.sh_offset) {
+					scn0 = scn;
+					gelf_getshdr(scn0, &shdr0);
+				}
+			}
+			if (scn0 == NULL)
+				break;
+			/* Load section data to work around another bug */
+			elf_getdata(scn0, NULL);
+			/* Update section header, assure section alignment */
+			off = shdr0.sh_offset + shdr0.sh_size;
+			rc = roundup(rc, shdr0.sh_addralign);
+			shdr0.sh_offset = rc;
+			gelf_update_shdr(scn0, &shdr0);
+			rc += shdr0.sh_size;
+		}
+		if (elf_update(e, ELF_C_WRITE) < 0) {
+			ret = dt_link_error(dtp, NULL, -1, NULL,
+			    "failed to add append the shstrtab section: %s",
+			    elf_errmsg(elf_errno()));
+			elf_end(e);
+			close(efd);
+			goto done;
+		}
+		elf_end(e);
+		e = elf_begin(efd, ELF_C_RDWR, NULL);
+#endif
+		/*
+		 * Construct the .SUNW_dof section.
+		 */
+		scn = elf_newscn(e);
+		data = elf_newdata(scn);
+		buf = mmap(NULL, dof->dofh_filesz, PROT_READ, MAP_SHARED,
+		    fd, 0);
+		if (buf == MAP_FAILED) {
+			ret = dt_link_error(dtp, NULL, -1, NULL,
+			    "failed to mmap buffer %s", strerror(errno));
+			elf_end(e);
+			close(efd);
+			goto done;
+		}
+		data->d_buf = buf;
+		data->d_align = 4;
+		data->d_size = dof->dofh_filesz;
+		data->d_version = EV_CURRENT;
+		gelf_getshdr(scn, &shdr);
+		shdr.sh_name = loc;
+		shdr.sh_flags = SHF_ALLOC;
+		/*
+		 * Actually this should be SHT_SUNW_dof, but FreeBSD's ld(1)
+		 * will remove this 'unknown' section when we try to create an
+		 * executable using the object we are modifying, so we stop
+		 * playing by the rules and use SHT_PROGBITS.
+		 * Also, note that our drti has modifications to handle this.
+		 */
+		shdr.sh_type = SHT_PROGBITS;
+		shdr.sh_addralign = 4;
+		gelf_update_shdr(scn, &shdr);
+		if (elf_update(e, ELF_C_WRITE) < 0) {
+			ret = dt_link_error(dtp, NULL, -1, NULL,
+			    "failed to add the SUNW_dof section: %s",
+			    elf_errmsg(elf_errno()));
+			munmap(buf, dof->dofh_filesz);
+			elf_end(e);
+			close(efd);
+			goto done;
+		}
+		munmap(buf, dof->dofh_filesz);
+		elf_end(e);
+		close(efd);
+#endif
+		(void) close(fd); /* release temporary file */
 	} else {
 		(void) close(fd);
 	}
 
 done:
 	dtrace_dof_destroy(dtp, dof);
+
+#if !defined(sun)
+	unlink(tfile);
+#endif
 	return (ret);
 }

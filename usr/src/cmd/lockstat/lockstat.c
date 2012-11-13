@@ -46,6 +46,19 @@
 #include <signal.h>
 #include <assert.h>
 
+#if defined(sun)
+#define	GETOPT_EOF	EOF
+#else
+/* FreeBSD */ 
+#include <sys/time.h>
+#include <sys/resource.h>
+
+#define	mergesort(a, b, c, d)	lsmergesort(a, b, c, d)
+#define	GETOPT_EOF		(-1)
+
+typedef	uintptr_t	pc_t;
+#endif /* defined(sun) */
+
 #define	LOCKSTAT_OPTSTR	"x:bths:n:d:i:l:f:e:ckwWgCHEATID:RpPo:V"
 
 #define	LS_MAX_STACK_DEPTH	50
@@ -201,7 +214,12 @@ static ls_event_info_t g_event_info[LS_MAX_EVENTS] = {
 	{ 'H',	"Lock",	"Unknown event (type 53)",		"units"	},
 	{ 'H',	"Lock",	"Unknown event (type 54)",		"units"	},
 	{ 'H',	"Lock",	"Unknown event (type 55)",		"units"	},
+#if defined(sun)
 	{ 'I',	"CPU+PIL", "Profiling interrupt",		"nsec",
+#else
+	/* FreeBSD */
+	{ 'I',	"CPU+Pri_Class", "Profiling interrupt",		"nsec",
+#endif
 	    "profile:::profile-97", NULL },
 	{ 'I',	"Lock",	"Unknown event (type 57)",		"units"	},
 	{ 'I',	"Lock",	"Unknown event (type 58)",		"units"	},
@@ -212,6 +230,16 @@ static ls_event_info_t g_event_info[LS_MAX_EVENTS] = {
 	{ 'E',	"Lock",	"Lockstat exit failure",		"nsec"	},
 	{ 'E',	"Lock",	"Lockstat record failure",		"(N/A)"	},
 };
+
+#if !defined(sun)
+static char *g_pri_class[] = {
+	"",
+	"Intr",
+	"RealT",
+	"TShar",
+	"Idle"
+};
+#endif
 
 static void
 fail(int do_perror, const char *message, ...)
@@ -459,15 +487,15 @@ site_and_count_cmp_anylock(lsrec_t *a, lsrec_t *b)
 }
 
 static void
-mergesort(int (*cmp)(lsrec_t *, lsrec_t *), lsrec_t **a, lsrec_t **b, int n)
+lsmergesort(int (*cmp)(lsrec_t *, lsrec_t *), lsrec_t **a, lsrec_t **b, int n)
 {
 	int m = n / 2;
 	int i, j;
 
 	if (m > 1)
-		mergesort(cmp, a, b, m);
+		lsmergesort(cmp, a, b, m);
 	if (n - m > 1)
-		mergesort(cmp, a + m, b + m, n - m);
+		lsmergesort(cmp, a + m, b + m, n - m);
 	for (i = m; i > 0; i--)
 		b[i - 1] = a[i - 1];
 	for (j = m - 1; j < n - 1; j++)
@@ -570,8 +598,13 @@ filter_add(char **filt, char *what, uintptr_t base, uintptr_t size)
 		*filt[0] = '\0';
 	}
 
+#if defined(sun)
 	(void) sprintf(c, "%s(%s >= 0x%p && %s < 0x%p)", *filt[0] != '\0' ?
 	    " || " : "", what, (void *)base, what, (void *)(base + size));
+#else
+	(void) sprintf(c, "%s(%s >= %p && %s < %p)", *filt[0] != '\0' ?
+	    " || " : "", what, (void *)base, what, (void *)(base + size));
+#endif
 
 	newlen = (len = strlen(*filt) + 1) + strlen(c);
 	new = malloc(newlen);
@@ -597,6 +630,7 @@ dprog_add(const char *fmt, ...)
 
 	va_start(args, fmt);
 	size = vsnprintf(&c, 1, fmt, args) + 1;
+	va_end(args);
 
 	if (g_proglen == 0) {
 		offs = 0;
@@ -609,7 +643,9 @@ dprog_add(const char *fmt, ...)
 	if ((g_prog = realloc(g_prog, g_proglen)) == NULL)
 		fail(1, "failed to reallocate program text");
 
+	va_start(args, fmt);
 	(void) vsnprintf(&g_prog[offs], size, fmt, args);
+	va_end(args);
 }
 
 /*
@@ -640,8 +676,13 @@ dprog_addevent(int event)
 		 * the number of nanoseconds) is the number of nanoseconds
 		 * late -- and it's stored in arg2.
 		 */
+#if defined(sun)
 		arg0 = "(uintptr_t)curthread->t_cpu + \n"
 		    "\t    curthread->t_cpu->cpu_profile_pil";
+#else
+		arg0 = "(uintptr_t)(curthread->td_oncpu << 16) + \n"
+		    "\t    0x01000000 + curthread->td_pri_class";
+#endif
 		caller = "(uintptr_t)arg0";
 		arg1 = "arg2";
 	} else {
@@ -783,7 +824,11 @@ dprog_compile()
 }
 
 static void
+#if defined(sun)
 status_fire(void)
+#else
+status_fire(int i)
+#endif
 {}
 
 static void
@@ -1018,7 +1063,7 @@ main(int argc, char **argv)
 	char *data_buf;
 	lsrec_t *lsp, **current, **first, **sort_buf, **merge_buf;
 	FILE *out = stdout;
-	char c;
+	int c;
 	pid_t child;
 	int status;
 	int i, j;
@@ -1051,7 +1096,7 @@ main(int argc, char **argv)
 
 	g_nrecs = DEFAULT_NRECS;
 
-	while ((c = getopt(argc, argv, LOCKSTAT_OPTSTR)) != EOF) {
+	while ((c = getopt(argc, argv, LOCKSTAT_OPTSTR)) != GETOPT_EOF) {
 		switch (c) {
 		case 'b':
 			g_recsize = LS_BASIC;
@@ -1345,7 +1390,7 @@ main(int argc, char **argv)
 		dfail("failed to set 'statusrate'");
 
 	optind = 1;
-	while ((c = getopt(argc, argv, LOCKSTAT_OPTSTR)) != EOF) {
+	while ((c = getopt(argc, argv, LOCKSTAT_OPTSTR)) != GETOPT_EOF) {
 		switch (c) {
 		case 'x':
 			if ((p = strchr(optarg, '=')) != NULL)
@@ -1378,7 +1423,11 @@ main(int argc, char **argv)
 		exit(127);
 	}
 
+#if defined(sun)
 	while (waitpid(child, &status, WEXITED) != child)
+#else
+	while (waitpid(child, &status, 0) != child)
+#endif
 		status_check();
 
 	g_elapsed += gethrtime();
@@ -1419,8 +1468,13 @@ main(int argc, char **argv)
 			dfail("failed to walk aggregate");
 	}
 
+#if defined(sun)
 	if ((data_buf = memalign(sizeof (uint64_t),
 	    (g_nrecs + 1) * g_recsize)) == NULL)
+#else
+	if (posix_memalign((void **)&data_buf, sizeof (uint64_t),  
+	    (g_nrecs + 1) * g_recsize) )
+#endif
 		fail(1, "Memory allocation failed");
 
 	/*
@@ -1446,8 +1500,13 @@ main(int argc, char **argv)
 	if (g_gflag) {
 		lsrec_t *newlsp, *oldlsp;
 
+#if defined(sun)
 		newlsp = memalign(sizeof (uint64_t),
 		    g_nrecs_used * LS_TIME * (g_stkdepth + 1));
+#else
+		posix_memalign((void **)&newlsp, sizeof (uint64_t), 
+		    g_nrecs_used * LS_TIME * (g_stkdepth + 1));
+#endif
 		if (newlsp == NULL)
 			fail(1, "Cannot allocate space for -g processing");
 		lsp = newlsp;
@@ -1605,7 +1664,11 @@ format_symbol(char *buf, uintptr_t addr, int show_size)
 	else if (symoff == 0)
 		(void) sprintf(buf, "%s", symname);
 	else if (symoff < 16 && bcmp(symname, "cpu[", 4) == 0)	/* CPU+PIL */
+#if defined(sun)
 		(void) sprintf(buf, "%s+%ld", symname, (long)symoff);
+#else
+		(void) sprintf(buf, "%s+%s", symname, g_pri_class[(int)symoff]);
+#endif
 	else if (symoff <= symsize || (symoff < 256 && addr != symoff))
 		(void) sprintf(buf, "%s+0x%llx", symname,
 		    (unsigned long long)symoff);

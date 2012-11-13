@@ -53,7 +53,7 @@ EOF
 sleeper()
 {
 	while true; do
-		/usr/bin/sleep 1
+		/bin/sleep 1
 		$badexec
 	done
 }

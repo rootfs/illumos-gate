@@ -203,7 +203,7 @@ def do_userspace():
 
 	ds = zfs.dataset.Dataset(dsname, types=("filesystem"))
 
-	if ds.getprop("zoned") and solaris.misc.isglobalzone():
+	if ds.getprop("jailed") and solaris.misc.isglobalzone():
 		options.noname = True
 
 	if not ds.getprop("useraccounting"):

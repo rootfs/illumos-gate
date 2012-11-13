@@ -29,7 +29,7 @@
 #pragma D option destructive
 
 proc:::signal-send
-/pid == 0 && args[1]->pr_pid == $1 && args[2] == SIGUSR1/
+/args[1]->p_pid == $1 && args[2] == SIGUSR1/
 {
 	sent = 1;
 }

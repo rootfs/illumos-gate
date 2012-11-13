@@ -24,10 +24,6 @@
  * Use is subject to license terms.
  */
 
-/*
- * Copyright (c) 2012 by Delphix. All rights reserved.
- */
-
 #include <stdlib.h>
 #include <assert.h>
 #include <errno.h>
@@ -38,6 +34,12 @@
 #include <dt_pid.h>
 
 #include <dis_tables.h>
+
+#if !defined(sun)
+#define PR_MODEL_ILP32	1
+#define PR_MODEL_LP64	2
+#include <libproc_compat.h>
+#endif
 
 #define	DT_POPL_EBP	0x5d
 #define	DT_RET		0xc3
@@ -82,8 +84,17 @@ dt_pid_has_jump_table(struct ps_prochandle *P, dtrace_hdl_t *dtp,
 {
 	ulong_t i;
 	int size;
+#if defined(sun)
 	pid_t pid = Pstatus(P)->pr_pid;
 	char dmodel = Pstatus(P)->pr_dmodel;
+#else
+	pid_t pid = proc_getpid(P);
+#if __i386__
+	char dmodel = PR_MODEL_ILP32;
+#elif __amd64__
+	char dmodel = PR_MODEL_LP64;
+#endif
+#endif
 
 	/*
 	 * Take a pass through the function looking for a register-dependant
@@ -102,6 +113,7 @@ dt_pid_has_jump_table(struct ps_prochandle *P, dtrace_hdl_t *dtp,
 			return (1);
 		}
 
+#ifdef notyet
 		/*
 		 * Register-dependant jmp instructions start with a 0xff byte
 		 * and have the modrm.reg field set to 4. They can have an
@@ -114,6 +126,7 @@ dt_pid_has_jump_table(struct ps_prochandle *P, dtrace_hdl_t *dtp,
 			    ftp->ftps_func, i);
 			return (1);
 		}
+#endif
 	}
 
 	return (0);
@@ -127,8 +140,17 @@ dt_pid_create_return_probe(struct ps_prochandle *P, dtrace_hdl_t *dtp,
 	uint8_t *text;
 	ulong_t i, end;
 	int size;
+#if defined(sun)
 	pid_t pid = Pstatus(P)->pr_pid;
 	char dmodel = Pstatus(P)->pr_dmodel;
+#else
+	pid_t pid = proc_getpid(P);
+#if __i386__
+	char dmodel = PR_MODEL_ILP32;
+#elif __amd64__
+	char dmodel = PR_MODEL_LP64;
+#endif
+#endif
 
 	/*
 	 * We allocate a few extra bytes at the end so we don't have to check
@@ -279,8 +301,17 @@ dt_pid_create_offset_probe(struct ps_prochandle *P, dtrace_hdl_t *dtp,
 		uint8_t *text;
 		ulong_t i;
 		int size;
+#if defined(sun)
 		pid_t pid = Pstatus(P)->pr_pid;
 		char dmodel = Pstatus(P)->pr_dmodel;
+#else
+		pid_t pid = proc_getpid(P);
+#if __i386__
+		char dmodel = PR_MODEL_ILP32;
+#elif __amd64__
+		char dmodel = PR_MODEL_LP64;
+#endif
+#endif
 
 		if ((text = malloc(symp->st_size)) == NULL) {
 			dt_dprintf("mr sparkle: malloc() failed\n");
@@ -353,8 +384,17 @@ dt_pid_create_glob_offset_probes(struct ps_prochandle *P, dtrace_hdl_t *dtp,
 	uint8_t *text;
 	int size;
 	ulong_t i, end = symp->st_size;
+#if defined(sun)
 	pid_t pid = Pstatus(P)->pr_pid;
 	char dmodel = Pstatus(P)->pr_dmodel;
+#else
+	pid_t pid = proc_getpid(P);
+#if __i386__
+	char dmodel = PR_MODEL_ILP32;
+#elif __amd64__
+	char dmodel = PR_MODEL_LP64;
+#endif
+#endif
 
 	ftp->ftps_type = DTFTP_OFFSETS;
 	ftp->ftps_pc = (uintptr_t)symp->st_value;
@@ -396,7 +436,7 @@ dt_pid_create_glob_offset_probes(struct ps_prochandle *P, dtrace_hdl_t *dtp,
 		char name[sizeof (i) * 2 + 1];
 
 		for (i = 0; i < end; i += size) {
-			(void) snprintf(name, sizeof (name), "%x", i);
+			(void) snprintf(name, sizeof (name), "%lx", i);
 			if (gmatch(name, pattern))
 				ftp->ftps_offs[ftp->ftps_noffs++] = i;
 
@@ -485,8 +525,7 @@ dt_instr_size(uchar_t *instr, dtrace_hdl_t *dtp, pid_t pid, uintptr_t addr,
 	 * another debugger attached to this process. The original instruction
 	 * can't be recovered so this must fail.
 	 */
-	if (x86dis.d86_len == 1 &&
-	    (uchar_t)x86dis.d86_bytes[0] == FASTTRAP_INSTR)
+	if (x86dis.d86_len == 1 && instr[0] == FASTTRAP_INSTR)
 		return (-1);
 
 	return (x86dis.d86_len);

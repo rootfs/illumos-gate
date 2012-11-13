@@ -279,9 +279,6 @@ feature_enable_sync(void *arg1, void *arg2, dmu_tx_t *tx)
 	zfeature_info_t *feature = arg2;
 
 	spa_feature_enable(spa, feature, tx);
-	spa_history_log_internal(spa, "zhack enable feature", tx,
-	    "guid=%s can_readonly=%u",
-	    feature->fi_guid, feature->fi_can_readonly);
 }
 
 static void
@@ -359,8 +356,6 @@ feature_incr_sync(void *arg1, void *arg2, dmu_tx_t *tx)
 	zfeature_info_t *feature = arg2;
 
 	spa_feature_incr(spa, feature, tx);
-	spa_history_log_internal(spa, "zhack feature incr", tx,
-	    "guid=%s", feature->fi_guid);
 }
 
 static void
@@ -370,8 +365,6 @@ feature_decr_sync(void *arg1, void *arg2, dmu_tx_t *tx)
 	zfeature_info_t *feature = arg2;
 
 	spa_feature_decr(spa, feature, tx);
-	spa_history_log_internal(spa, "zhack feature decr", tx,
-	    "guid=%s", feature->fi_guid);
 }
 
 static void

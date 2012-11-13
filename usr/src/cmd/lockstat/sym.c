@@ -42,9 +42,15 @@
 #include <libelf.h>
 #include <link.h>
 #include <elf.h>
+#if defined(sun)
 #include <sys/machelf.h>
 
 #include <kstat.h>
+#else
+/* FreeBSD */
+#include <sys/elf.h>
+#include <sys/ksyms.h>
+#endif
 #include <sys/cpuvar.h>
 
 typedef struct syment {
@@ -57,10 +63,12 @@ static syment_t *symbol_table;
 static int nsyms, maxsyms;
 static char maxsymname[64];
 
+#if defined(sun)
 #ifdef _ELF64
 #define	elf_getshdr elf64_getshdr
 #else
 #define	elf_getshdr elf32_getshdr
+#endif
 #endif
 
 static void
@@ -94,6 +102,7 @@ remove_symbol(uintptr_t addr)
 			sep->addr = 0;
 }
 
+#if defined(sun)
 static void
 fake_up_certain_popular_kernel_symbols(void)
 {
@@ -121,6 +130,25 @@ fake_up_certain_popular_kernel_symbols(void)
 	}
 	(void) kstat_close(kc);
 }
+#else
+/* FreeBSD */
+static void
+fake_up_certain_popular_kernel_symbols(void)
+{
+	char *name;
+	uintptr_t addr;
+	int i;
+
+	/* Good for up to 256 CPUs */
+	for(i=0; i < 256;  i++) {
+		if ((name = malloc(20)) == NULL)
+			break;
+		(void) sprintf(name, "cpu[%d]", i);
+		addr = 0x01000000 + (i << 16); 
+		add_symbol(name, addr, sizeof (uintptr_t));
+	}
+}
+#endif /* !defined(sun) */
 
 static int
 symcmp(const void *p1, const void *p2)
@@ -146,13 +174,42 @@ symtab_init(void)
 	int		fd;
 	int		i;
 	int		strindex = -1;
+#if !defined(sun)
+	void		*ksyms;
+	size_t		sz;
+#endif
 
 	if ((fd = open("/dev/ksyms", O_RDONLY)) == -1)
 		return (-1);
 
+#if defined(sun)
 	(void) elf_version(EV_CURRENT);
 
 	elf = elf_begin(fd, ELF_C_READ, NULL);
+#else
+	/* FreeBSD */
+	/* 
+	 * XXX - libelf needs to be fixed so it will work with
+	 * non 'ordinary' files like /dev/ksyms.  The following
+	 * is a work around for now.
+	 */ 
+	if (elf_version(EV_CURRENT) == EV_NONE) {
+		close(fd);
+		return (-1);
+	}
+	if (ioctl(fd, KIOCGSIZE, &sz) < 0) {
+		close(fd);
+		return (-1);
+	}
+	if (ioctl(fd, KIOCGADDR, &ksyms) < 0) {
+		close(fd);
+		return (-1);
+	}
+	if ((elf = elf_memory(ksyms, sz)) == NULL) {
+		close(fd);
+		return (-1);
+	}
+#endif 
 
 	for (cnt = 1; (scn = elf_nextscn(elf, scn)) != NULL; cnt++) {
 		Shdr *shdr = elf_getshdr(scn);
@@ -199,6 +256,7 @@ symtab_init(void)
 	symbol_table[0].addr = 0;
 	symbol_table[0].size = 1;
 
+	close(fd);
 	return (0);
 }
 
@@ -235,7 +293,7 @@ sym_to_addr(char *name)
 			return (sep->addr);
 		sep++;
 	}
-	return (NULL);
+	return (0);
 }
 
 size_t

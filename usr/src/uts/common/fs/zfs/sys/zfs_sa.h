@@ -27,7 +27,6 @@
 #define	_SYS_ZFS_SA_H
 
 #ifdef _KERNEL
-#include <sys/types32.h>
 #include <sys/list.h>
 #include <sys/dmu.h>
 #include <sys/zfs_acl.h>

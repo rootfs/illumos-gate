@@ -20,13 +20,17 @@
  */
 
 /*
- * Copyright (c) 2003, 2010, Oracle and/or its affiliates. All rights reserved.
+ * Copyright 2008 Sun Microsystems, Inc.  All rights reserved.
  * Copyright (c) 2011, Joyent Inc. All rights reserved.
  */
 
+#pragma ident	"%Z%%M%	%I%	%E% SMI"
+
 #include <assert.h>
 #include <strings.h>
+#if defined(sun)
 #include <alloca.h>
+#endif
 #include <fcntl.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -201,7 +205,7 @@ dt_pragma_binding(const char *prname, dt_node_t *dnp)
 		dtp->dt_globals->dh_defer = &dt_pragma_apply;
 }
 
-static void
+static void 
 dt_pragma_depends_finddep(dtrace_hdl_t *dtp, const char *lname, char *lib,
     size_t len)
 {
@@ -359,7 +363,8 @@ dt_pragma_option(const char *prname, dt_node_t *dnp)
 		    "superfluous arguments specified for #pragma %s\n", prname);
 	}
 
-	opt = strdupa(dnp->dn_string);
+	opt = alloca(strlen(dnp->dn_string) + 1);
+	(void) strcpy(opt, dnp->dn_string);
 
 	if ((val = strchr(opt, '=')) != NULL)
 		*val++ = '\0';

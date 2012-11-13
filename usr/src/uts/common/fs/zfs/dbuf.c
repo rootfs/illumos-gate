@@ -258,7 +258,7 @@ dbuf_init(void)
 	 * with an average 4K block size.  The table will take up
 	 * totalmem*sizeof(void*)/4K (i.e. 2MB/GB with 8-byte pointers).
 	 */
-	while (hsize * 4096 < physmem * PAGESIZE)
+	while (hsize * 4096 < (uint64_t)physmem * PAGESIZE)
 		hsize <<= 1;
 
 retry:
@@ -2341,6 +2341,10 @@ dbuf_sync_leaf(dbuf_dirty_record_t *dr, dmu_tx_t *tx)
 		ASSERT(dr->dr_next == NULL);
 		ASSERT(dr->dr_dbuf == db);
 		*drp = dr->dr_next;
+		if (dr->dr_dbuf->db_level != 0) {
+			list_destroy(&dr->dt.di.dr_children);
+			mutex_destroy(&dr->dt.di.dr_mtx);
+		}
 		kmem_free(dr, sizeof (dbuf_dirty_record_t));
 		ASSERT(db->db_dirtycnt > 0);
 		db->db_dirtycnt -= 1;

@@ -20,7 +20,6 @@
  */
 /*
  * Copyright (c) 2006, 2010, Oracle and/or its affiliates. All rights reserved.
- * Copyright (c) 2012 by Delphix. All rights reserved.
  */
 
 #include <libzfs.h>
@@ -44,8 +43,6 @@
 #include <sys/dmu_objset.h>
 #include <sys/dnode.h>
 #include <sys/vdev_impl.h>
-
-#include <sys/mkdev.h>
 
 #include "zinject.h"
 
@@ -89,9 +86,7 @@ static int
 parse_pathname(const char *inpath, char *dataset, char *relpath,
     struct stat64 *statbuf)
 {
-	struct extmnttab mp;
-	FILE *fp;
-	int match;
+	struct statfs sfs;
 	const char *rel;
 	char fullpath[MAXPATHLEN];
 
@@ -115,40 +110,27 @@ parse_pathname(const char *inpath, char *dataset, char *relpath,
 		return (-1);
 	}
 
-	if ((fp = fopen(MNTTAB, "r")) == NULL) {
-		(void) fprintf(stderr, "cannot open /etc/mnttab\n");
+	if (statfs(fullpath, &sfs) == -1) {
+		(void) fprintf(stderr, "cannot find mountpoint for '%s': %s\n",
+		    fullpath, strerror(errno));
 		return (-1);
 	}
 
-	match = 0;
-	while (getextmntent(fp, &mp, sizeof (mp)) == 0) {
-		if (makedev(mp.mnt_major, mp.mnt_minor) == statbuf->st_dev) {
-			match = 1;
-			break;
-		}
-	}
-
-	if (!match) {
-		(void) fprintf(stderr, "cannot find mountpoint for '%s'\n",
-		    fullpath);
-		return (-1);
-	}
-
-	if (strcmp(mp.mnt_fstype, MNTTYPE_ZFS) != 0) {
+	if (strcmp(sfs.f_fstypename, MNTTYPE_ZFS) != 0) {
 		(void) fprintf(stderr, "invalid path '%s': not a ZFS "
 		    "filesystem\n", fullpath);
 		return (-1);
 	}
 
-	if (strncmp(fullpath, mp.mnt_mountp, strlen(mp.mnt_mountp)) != 0) {
+	if (strncmp(fullpath, sfs.f_mntonname, strlen(sfs.f_mntonname)) != 0) {
 		(void) fprintf(stderr, "invalid path '%s': mountpoint "
 		    "doesn't match path\n", fullpath);
 		return (-1);
 	}
 
-	(void) strcpy(dataset, mp.mnt_special);
+	(void) strcpy(dataset, sfs.f_mntfromname);
 
-	rel = fullpath + strlen(mp.mnt_mountp);
+	rel = fullpath + strlen(sfs.f_mntonname);
 	if (rel[0] == '/')
 		rel++;
 	(void) strcpy(relpath, rel);
@@ -471,20 +453,6 @@ translate_device(const char *pool, const char *device, err_type_t label_type,
 
 		verify(nvlist_lookup_uint64(tgt, ZPOOL_CONFIG_GUID,
 		    &record->zi_guid) == 0);
-	}
-
-	/*
-	 * Device faults can take on three different forms:
-	 * 1). delayed or hanging I/O
-	 * 2). zfs label faults
-	 * 3). generic disk faults
-	 */
-	if (record->zi_timer != 0) {
-		record->zi_cmd = ZINJECT_DELAY_IO;
-	} else if (label_type != TYPE_INVAL) {
-		record->zi_cmd = ZINJECT_LABEL_FAULT;
-	} else {
-		record->zi_cmd = ZINJECT_DEVICE_FAULT;
 	}
 
 	switch (label_type) {

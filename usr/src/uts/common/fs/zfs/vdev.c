@@ -42,6 +42,10 @@
 #include <sys/arc.h>
 #include <sys/zil.h>
 #include <sys/dsl_scan.h>
+#include <sys/trim_map.h>
+
+SYSCTL_DECL(_vfs_zfs);
+SYSCTL_NODE(_vfs_zfs, OID_AUTO, vdev, CTLFLAG_RW, 0, "ZFS VDEV");
 
 /*
  * Virtual device management.
@@ -53,15 +57,17 @@ static vdev_ops_t *vdev_ops_table[] = {
 	&vdev_mirror_ops,
 	&vdev_replacing_ops,
 	&vdev_spare_ops,
+#ifdef _KERNEL
+	&vdev_geom_ops,
+#else
 	&vdev_disk_ops,
+#endif
 	&vdev_file_ops,
 	&vdev_missing_ops,
 	&vdev_hole_ops,
 	NULL
 };
 
-/* maximum scrub/resilver I/O queue per leaf vdev */
-int zfs_scrub_limit = 10;
 
 /*
  * Given a vdev type, return the appropriate ops vector.
@@ -1084,7 +1090,7 @@ vdev_open_children(vdev_t *vd)
 	 * in a single thread so that the same thread holds the
 	 * spa_namespace_lock
 	 */
-	if (vdev_uses_zvols(vd)) {
+	if (B_TRUE || vdev_uses_zvols(vd)) {
 		for (int c = 0; c < children; c++)
 			vd->vdev_child[c]->vdev_open_error =
 			    vdev_open(vd->vdev_child[c]);
@@ -1095,7 +1101,7 @@ vdev_open_children(vdev_t *vd)
 
 	for (int c = 0; c < children; c++)
 		VERIFY(taskq_dispatch(tq, vdev_open_child, vd->vdev_child[c],
-		    TQ_SLEEP) != NULL);
+		    TQ_SLEEP) != 0);
 
 	taskq_destroy(tq);
 }
@@ -1190,6 +1196,11 @@ vdev_open(vdev_t *vd)
 	if (vd->vdev_ishole || vd->vdev_ops == &vdev_missing_ops)
 		return (0);
 
+	if (vd->vdev_ops->vdev_op_leaf) {
+		vd->vdev_notrim = B_FALSE;
+		trim_map_create(vd);
+	}
+
 	for (int c = 0; c < vd->vdev_children; c++) {
 		if (vd->vdev_child[c]->vdev_state != VDEV_STATE_HEALTHY) {
 			vdev_set_state(vd, B_TRUE, VDEV_STATE_DEGRADED,
@@ -1244,16 +1255,12 @@ vdev_open(vdev_t *vd)
 		vd->vdev_ashift = MAX(ashift, vd->vdev_ashift);
 	} else {
 		/*
-		 * Detect if the alignment requirement has increased.
-		 * We don't want to make the pool unavailable, just
-		 * issue a warning instead.
+		 * Make sure the alignment requirement hasn't increased.
 		 */
-		if (ashift > vd->vdev_top->vdev_ashift &&
-		    vd->vdev_ops->vdev_op_leaf) {
-			cmn_err(CE_WARN,
-			    "Disk, '%s', has a block alignment that is "
-			    "larger than the pool's alignment\n",
-			    vd->vdev_path);
+		if (ashift > vd->vdev_top->vdev_ashift) {
+			vdev_set_state(vd, B_TRUE, VDEV_STATE_CANT_OPEN,
+			    VDEV_AUX_BAD_LABEL);
+			return (EINVAL);
 		}
 		vd->vdev_max_asize = max_asize;
 	}
@@ -1437,6 +1444,9 @@ vdev_close(vdev_t *vd)
 	vd->vdev_ops->vdev_op_close(vd);
 
 	vdev_cache_purge(vd);
+
+	if (vd->vdev_ops->vdev_op_leaf)
+		trim_map_destroy(vd);
 
 	/*
 	 * We record the previous state before we close it, so that if we are
@@ -3044,13 +3054,21 @@ vdev_set_state(vdev_t *vd, boolean_t isopen, vdev_state_t state, vdev_aux_t aux)
 
 /*
  * Check the vdev configuration to ensure that it's capable of supporting
- * a root pool. Currently, we do not support RAID-Z or partial configuration.
- * In addition, only a single top-level vdev is allowed and none of the leaves
- * can be wholedisks.
+ * a root pool.
+ *
+ * On Solaris, we do not support RAID-Z or partial configuration.  In
+ * addition, only a single top-level vdev is allowed and none of the
+ * leaves can be wholedisks.
+ *
+ * For FreeBSD, we can boot from any configuration. There is a
+ * limitation that the boot filesystem must be either uncompressed or
+ * compresses with lzjb compression but I'm not sure how to enforce
+ * that here.
  */
 boolean_t
 vdev_is_bootable(vdev_t *vd)
 {
+#ifdef sun
 	if (!vd->vdev_ops->vdev_op_leaf) {
 		char *vdev_type = vd->vdev_ops->vdev_op_type;
 
@@ -3069,6 +3087,7 @@ vdev_is_bootable(vdev_t *vd)
 		if (!vdev_is_bootable(vd->vdev_child[c]))
 			return (B_FALSE);
 	}
+#endif	/* sun */
 	return (B_TRUE);
 }
 
@@ -3152,42 +3171,4 @@ vdev_split(vdev_t *vd)
 		cvd->vdev_splitting = B_TRUE;
 	}
 	vdev_propagate_state(cvd);
-}
-
-void
-vdev_deadman(vdev_t *vd)
-{
-	for (int c = 0; c < vd->vdev_children; c++) {
-		vdev_t *cvd = vd->vdev_child[c];
-
-		vdev_deadman(cvd);
-	}
-
-	if (vd->vdev_ops->vdev_op_leaf) {
-		vdev_queue_t *vq = &vd->vdev_queue;
-
-		mutex_enter(&vq->vq_lock);
-		if (avl_numnodes(&vq->vq_pending_tree) > 0) {
-			spa_t *spa = vd->vdev_spa;
-			zio_t *fio;
-			uint64_t delta;
-
-			/*
-			 * Look at the head of all the pending queues,
-			 * if any I/O has been outstanding for longer than
-			 * the spa_deadman_synctime we panic the system.
-			 */
-			fio = avl_first(&vq->vq_pending_tree);
-			delta = ddi_get_lbolt64() - fio->io_timestamp;
-			if (delta > NSEC_TO_TICK(spa_deadman_synctime(spa))) {
-				zfs_dbgmsg("SLOW IO: zio timestamp %llu, "
-				    "delta %llu, last io %llu",
-				    fio->io_timestamp, delta,
-				    vq->vq_io_complete_ts);
-				fm_panic("I/O to pool '%s' appears to be "
-				    "hung.", spa_name(spa));
-			}
-		}
-		mutex_exit(&vq->vq_lock);
-	}
 }

@@ -26,7 +26,6 @@
 
 #include <sys/zfs_context.h>
 #include <sys/spa_impl.h>
-#include <sys/spa_boot.h>
 #include <sys/zio.h>
 #include <sys/zio_checksum.h>
 #include <sys/zio_compress.h>
@@ -249,26 +248,10 @@ int zfs_flags = 0;
  * set, calls to zfs_panic_recover() will turn into warning messages.
  */
 int zfs_recover = 0;
-
-extern int zfs_txg_synctime_ms;
-
-/*
- * Expiration time in units of zfs_txg_synctime_ms. This value has two
- * meanings. First it is used to determine when the spa_deadman logic
- * should fire. By default the spa_deadman will fire if spa_sync has
- * not completed in 1000 * zfs_txg_synctime_ms (i.e. 1000 seconds).
- * Secondly, the value determines if an I/O is considered "hung".
- * Any I/O that has not completed in zfs_deadman_synctime is considered
- * "hung" resulting in a system panic.
- * 1000 zfs_txg_synctime_ms (i.e. 1000 seconds).
- */
-uint64_t zfs_deadman_synctime = 1000ULL;
-
-/*
- * Override the zfs deadman behavior via /etc/system. By default the
- * deadman is enabled except on VMware and sparc deployments.
- */
-int zfs_deadman_enabled = -1;
+SYSCTL_DECL(_vfs_zfs);
+TUNABLE_INT("vfs.zfs.recover", &zfs_recover);
+SYSCTL_INT(_vfs_zfs, OID_AUTO, recover, CTLFLAG_RDTUN, &zfs_recover, 0,
+    "Try to recover from otherwise-fatal errors.");
 
 
 /*
@@ -439,23 +422,6 @@ spa_lookup(const char *name)
 }
 
 /*
- * Fires when spa_sync has not completed within zfs_deadman_synctime_ms.
- * If the zfs_deadman_enabled flag is set then it inspects all vdev queues
- * looking for potentially hung I/Os.
- */
-void
-spa_deadman(void *arg)
-{
-	spa_t *spa = arg;
-
-	zfs_dbgmsg("slow spa_sync: started %llu seconds ago, calls %llu",
-	    (gethrtime() - spa->spa_sync_starttime) / NANOSEC,
-	    ++spa->spa_deadman_calls);
-	if (zfs_deadman_enabled)
-		vdev_deadman(spa->spa_root_vdev);
-}
-
-/*
  * Create an uninitialized spa_t with the given name.  Requires
  * spa_namespace_lock.  The caller must ensure that the spa_t doesn't already
  * exist by calling spa_lookup() first.
@@ -465,8 +431,6 @@ spa_add(const char *name, nvlist_t *config, const char *altroot)
 {
 	spa_t *spa;
 	spa_config_dirent_t *dp;
-	cyc_handler_t hdlr;
-	cyc_time_t when;
 
 	ASSERT(MUTEX_HELD(&spa_namespace_lock));
 
@@ -497,25 +461,6 @@ spa_add(const char *name, nvlist_t *config, const char *altroot)
 	spa->spa_load_max_txg = UINT64_MAX;
 	spa->spa_proc = &p0;
 	spa->spa_proc_state = SPA_PROC_NONE;
-
-	hdlr.cyh_func = spa_deadman;
-	hdlr.cyh_arg = spa;
-	hdlr.cyh_level = CY_LOW_LEVEL;
-
-	spa->spa_deadman_synctime = zfs_deadman_synctime *
-	    zfs_txg_synctime_ms * MICROSEC;
-
-	/*
-	 * This determines how often we need to check for hung I/Os after
-	 * the cyclic has already fired. Since checking for hung I/Os is
-	 * an expensive operation we don't want to check too frequently.
-	 * Instead wait for 5 synctimes before checking again.
-	 */
-	when.cyt_interval = 5ULL * zfs_txg_synctime_ms * MICROSEC;
-	when.cyt_when = CY_INFINITY;
-	mutex_enter(&cpu_lock);
-	spa->spa_deadman_cycid = cyclic_add(&hdlr, &when);
-	mutex_exit(&cpu_lock);
 
 	refcount_create(&spa->spa_refcount);
 	spa_config_lock_init(spa);
@@ -598,12 +543,6 @@ spa_remove(spa_t *spa)
 	nvlist_free(spa->spa_label_features);
 	nvlist_free(spa->spa_load_info);
 	spa_config_set(spa, NULL);
-
-	mutex_enter(&cpu_lock);
-	if (spa->spa_deadman_cycid != CYCLIC_NONE)
-		cyclic_remove(spa->spa_deadman_cycid);
-	mutex_exit(&cpu_lock);
-	spa->spa_deadman_cycid = CYCLIC_NONE;
 
 	refcount_destroy(&spa->spa_refcount);
 
@@ -1327,7 +1266,7 @@ zfs_panic_recover(const char *fmt, ...)
  * lowercase hexidecimal numbers that don't overflow.
  */
 uint64_t
-strtonum(const char *str, char **nptr)
+zfs_strtonum(const char *str, char **nptr)
 {
 	uint64_t val = 0;
 	char c;
@@ -1572,12 +1511,6 @@ spa_prev_software_version(spa_t *spa)
 }
 
 uint64_t
-spa_deadman_synctime(spa_t *spa)
-{
-	return (spa->spa_deadman_synctime);
-}
-
-uint64_t
 dva_get_dsize_sync(spa_t *spa, const dva_t *dva)
 {
 	uint64_t asize = DVA_GET_ASIZE(dva);
@@ -1671,9 +1604,8 @@ spa_init(int mode)
 
 	spa_mode_global = mode;
 
-#ifdef _KERNEL
-	spa_arch_init();
-#else
+#ifdef illumos
+#ifndef _KERNEL
 	if (spa_mode_global != FREAD && dprintf_find_string("watch")) {
 		arc_procfd = open("/proc/self/ctl", O_WRONLY);
 		if (arc_procfd == -1) {
@@ -1684,10 +1616,9 @@ spa_init(int mode)
 		}
 	}
 #endif
-
-	refcount_init();
+#endif /* illumos */
+	refcount_sysinit();
 	unique_init();
-	space_map_init();
 	zio_init();
 	dmu_init();
 	zil_init();
@@ -1710,7 +1641,6 @@ spa_fini(void)
 	zil_fini();
 	dmu_fini();
 	zio_fini();
-	space_map_fini();
 	unique_fini();
 	refcount_fini();
 

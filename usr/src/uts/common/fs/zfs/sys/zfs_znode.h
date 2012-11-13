@@ -26,9 +26,6 @@
 #define	_SYS_FS_ZFS_ZNODE_H
 
 #ifdef _KERNEL
-#include <sys/isa_defs.h>
-#include <sys/types32.h>
-#include <sys/attr.h>
 #include <sys/list.h>
 #include <sys/dmu.h>
 #include <sys/sa.h>
@@ -151,7 +148,9 @@ extern "C" {
  * Convert mode bits (zp_mode) to BSD-style DT_* values for storing in
  * the directory entries.
  */
+#ifndef IFTODT
 #define	IFTODT(mode) (((mode) & S_IFMT) >> 12)
+#endif
 
 /*
  * The directory entry has the type (currently unused on Solaris) in the
@@ -208,6 +207,8 @@ typedef struct znode {
 	list_node_t	z_link_node;	/* all znodes in fs link */
 	sa_handle_t	*z_sa_hdl;	/* handle to sa data */
 	boolean_t	z_is_sa;	/* are we native sa? */
+	/* FreeBSD-specific field. */
+	struct task	z_task;
 } znode_t;
 
 
@@ -230,11 +231,31 @@ typedef struct znode {
 /*
  * Convert between znode pointers and vnode pointers
  */
+#ifdef DEBUG
+static __inline vnode_t *
+ZTOV(znode_t *zp)
+{
+	vnode_t *vp = zp->z_vnode;
+
+	ASSERT(vp == NULL || vp->v_data == NULL || vp->v_data == zp);
+	return (vp);
+}
+static __inline znode_t *
+VTOZ(vnode_t *vp)
+{
+	znode_t *zp = (znode_t *)vp->v_data;
+
+	ASSERT(zp == NULL || zp->z_vnode == NULL || zp->z_vnode == vp);
+	return (zp);
+}
+#else
 #define	ZTOV(ZP)	((ZP)->z_vnode)
 #define	VTOZ(VP)	((znode_t *)(VP)->v_data)
+#endif
 
 /*
  * ZFS_ENTER() is called on entry to each ZFS vnode and vfs operation.
+ * ZFS_ENTER_NOERROR() is called when we can't return EIO.
  * ZFS_EXIT() must be called before exitting the vop.
  * ZFS_VERIFY_ZP() verifies the znode is valid.
  */
@@ -246,6 +267,9 @@ typedef struct znode {
 			return (EIO); \
 		} \
 	}
+
+#define	ZFS_ENTER_NOERROR(zfsvfs) \
+	rrw_enter(&(zfsvfs)->z_teardown_lock, RW_READER, FTAG)
 
 #define	ZFS_EXIT(zfsvfs) rrw_exit(&(zfsvfs)->z_teardown_lock, FTAG)
 
@@ -311,7 +335,6 @@ extern void	zfs_znode_delete(znode_t *, dmu_tx_t *);
 extern void	zfs_znode_free(znode_t *);
 extern void	zfs_remove_op_tables();
 extern int	zfs_create_op_tables();
-extern int	zfs_sync(vfs_t *vfsp, short flag, cred_t *cr);
 extern dev_t	zfs_cmpldev(uint64_t);
 extern int	zfs_get_zplprop(objset_t *os, zfs_prop_t prop, uint64_t *value);
 extern int	zfs_get_stats(objset_t *os, nvlist_t *nv);
@@ -337,14 +360,13 @@ extern void zfs_log_truncate(zilog_t *zilog, dmu_tx_t *tx, int txtype,
     znode_t *zp, uint64_t off, uint64_t len);
 extern void zfs_log_setattr(zilog_t *zilog, dmu_tx_t *tx, int txtype,
     znode_t *zp, vattr_t *vap, uint_t mask_applied, zfs_fuid_info_t *fuidp);
+#ifndef ZFS_NO_ACL
 extern void zfs_log_acl(zilog_t *zilog, dmu_tx_t *tx, znode_t *zp,
     vsecattr_t *vsecp, zfs_fuid_info_t *fuidp);
+#endif
 extern void zfs_xvattr_set(znode_t *zp, xvattr_t *xvap, dmu_tx_t *tx);
 extern void zfs_upgrade(zfsvfs_t *zfsvfs, dmu_tx_t *tx);
 extern int zfs_create_share_dir(zfsvfs_t *zfsvfs, dmu_tx_t *tx);
-
-extern caddr_t zfs_map_page(page_t *, enum seg_rw);
-extern void zfs_unmap_page(page_t *, caddr_t);
 
 extern zil_get_data_t zfs_get_data;
 extern zil_replay_func_t *zfs_replay_vector[TX_MAX_TYPE];

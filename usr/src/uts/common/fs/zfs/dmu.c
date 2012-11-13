@@ -42,7 +42,6 @@
 #include <sys/zio_checksum.h>
 #include <sys/sa.h>
 #ifdef _KERNEL
-#include <sys/vmsystm.h>
 #include <sys/zfs_znode.h>
 #endif
 
@@ -412,9 +411,12 @@ dmu_buf_hold_array_by_dnode(dnode_t *dn, uint64_t offset, uint64_t length,
 			return (EIO);
 		}
 		/* initiate async i/o */
-		if (read) {
+		if (read)
 			(void) dbuf_read(db, zio, dbuf_flags);
-		}
+#ifdef _KERNEL
+		else
+			curthread->td_ru.ru_oublock++;
+#endif
 		dbp[i] = &db->db;
 	}
 	rw_exit(&dn->dn_struct_rwlock);
@@ -980,8 +982,10 @@ dmu_read_uio(objset_t *os, uint64_t object, uio_t *uio, uint64_t size)
 	if (err)
 		return (err);
 
+#ifdef UIO_XUIO
 	if (uio->uio_extflg == UIO_XUIO)
 		xuio = (xuio_t *)uio;
+#endif
 
 	for (i = 0; i < numbufs; i++) {
 		int tocpy;
@@ -1113,6 +1117,7 @@ dmu_write_uio(objset_t *os, uint64_t object, uio_t *uio, uint64_t size,
 	return (err);
 }
 
+#ifdef sun
 int
 dmu_write_pages(objset_t *os, uint64_t object, uint64_t offset, uint64_t size,
     page_t *pp, dmu_tx_t *tx)
@@ -1167,6 +1172,7 @@ dmu_write_pages(objset_t *os, uint64_t object, uint64_t offset, uint64_t size,
 	dmu_buf_rele_array(dbp, numbufs, FTAG);
 	return (err);
 }
+#endif	/* sun */
 #endif
 
 /*
@@ -1512,6 +1518,10 @@ dmu_object_set_compress(objset_t *os, uint64_t object, uint8_t compress,
 }
 
 int zfs_mdcomp_disable = 0;
+TUNABLE_INT("vfs.zfs.mdcomp_disable", &zfs_mdcomp_disable);
+SYSCTL_DECL(_vfs_zfs);
+SYSCTL_INT(_vfs_zfs, OID_AUTO, mdcomp_disable, CTLFLAG_RW,
+    &zfs_mdcomp_disable, 0, "Disable metadata compression");
 
 void
 dmu_write_policy(objset_t *os, dnode_t *dn, int level, int wp, zio_prop_t *zp)

@@ -78,7 +78,6 @@
 #include "libzfs_impl.h"
 
 #include <libshare.h>
-#include <sys/systeminfo.h>
 #define	MAXISALEN	257	/* based on sysinfo(2) man page */
 
 static int zfs_share_proto(zfs_handle_t *, zfs_share_proto_t *);
@@ -139,6 +138,7 @@ is_shared(libzfs_handle_t *hdl, const char *mountpoint, zfs_share_proto_t proto)
 
 		*tab = '\0';
 		if (strcmp(buf, mountpoint) == 0) {
+#ifdef sun
 			/*
 			 * the protocol field is the third field
 			 * skip over second field
@@ -161,12 +161,17 @@ is_shared(libzfs_handle_t *hdl, const char *mountpoint, zfs_share_proto_t proto)
 					return (0);
 				}
 			}
+#else
+			if (proto == PROTO_NFS)
+				return (SHARED_NFS);
+#endif
 		}
 	}
 
 	return (SHARED_NOT_SHARED);
 }
 
+#ifdef sun
 /*
  * Returns true if the specified directory is empty.  If we can't open the
  * directory at all, return true so that the mount can fail with a more
@@ -194,6 +199,7 @@ dir_is_empty(const char *dirname)
 	(void) closedir(dirp);
 	return (B_TRUE);
 }
+#endif
 
 /*
  * Checks to see if the mount is active.  If the filesystem is mounted, we fill
@@ -290,6 +296,7 @@ zfs_mount(zfs_handle_t *zhp, const char *options, int flags)
 		}
 	}
 
+#ifdef sun	/* FreeBSD: overlay mounts are not checked. */
 	/*
 	 * Determine if the mountpoint is empty.  If so, refuse to perform the
 	 * mount.  We don't perform this check if MS_OVERLAY is specified, which
@@ -304,9 +311,10 @@ zfs_mount(zfs_handle_t *zhp, const char *options, int flags)
 		return (zfs_error_fmt(hdl, EZFS_MOUNTFAILED,
 		    dgettext(TEXT_DOMAIN, "cannot mount '%s'"), mountpoint));
 	}
+#endif
 
 	/* perform the mount */
-	if (mount(zfs_get_name(zhp), mountpoint, MS_OPTIONSTR | flags,
+	if (zmount(zfs_get_name(zhp), mountpoint, flags,
 	    MNTTYPE_ZFS, NULL, 0, mntopts, sizeof (mntopts)) != 0) {
 		/*
 		 * Generic errors are nasty, but there are just way too many
@@ -498,6 +506,7 @@ zfs_is_shared_smb(zfs_handle_t *zhp, char **where)
  * initialized in _zfs_init_libshare() are actually present.
  */
 
+#ifdef sun
 static sa_handle_t (*_sa_init)(int);
 static void (*_sa_fini)(sa_handle_t);
 static sa_share_t (*_sa_find_share)(sa_handle_t, char *);
@@ -510,6 +519,7 @@ static libzfs_handle_t *(*_sa_get_zfs_handle)(sa_handle_t);
 static int (*_sa_zfs_process_share)(sa_handle_t, sa_group_t, sa_share_t,
     char *, char *, zprop_source_t, char *, char *, char *);
 static void (*_sa_update_sharetab_ts)(sa_handle_t);
+#endif
 
 /*
  * _zfs_init_libshare()
@@ -523,6 +533,7 @@ static void (*_sa_update_sharetab_ts)(sa_handle_t);
 static void
 _zfs_init_libshare(void)
 {
+#ifdef sun
 	void *libshare;
 	char path[MAXPATHLEN];
 	char isa[MAXISALEN];
@@ -577,6 +588,7 @@ _zfs_init_libshare(void)
 			_sa_update_sharetab_ts = NULL;
 		}
 	}
+#endif
 }
 
 /*
@@ -592,6 +604,7 @@ zfs_init_libshare(libzfs_handle_t *zhandle, int service)
 {
 	int ret = SA_OK;
 
+#ifdef sun
 	if (_sa_init == NULL)
 		ret = SA_CONFIG_ERR;
 
@@ -617,6 +630,7 @@ zfs_init_libshare(libzfs_handle_t *zhandle, int service)
 
 	if (ret == SA_OK && zhandle->libzfs_sharehdl == NULL)
 		ret = SA_NO_MEMORY;
+#endif
 
 	return (ret);
 }
@@ -631,8 +645,10 @@ void
 zfs_uninit_libshare(libzfs_handle_t *zhandle)
 {
 	if (zhandle != NULL && zhandle->libzfs_sharehdl != NULL) {
+#ifdef sun
 		if (_sa_fini != NULL)
 			_sa_fini(zhandle->libzfs_sharehdl);
+#endif
 		zhandle->libzfs_sharehdl = NULL;
 	}
 }
@@ -646,13 +662,18 @@ zfs_uninit_libshare(libzfs_handle_t *zhandle)
 int
 zfs_parse_options(char *options, zfs_share_proto_t proto)
 {
+#ifdef sun
 	if (_sa_parse_legacy_options != NULL) {
 		return (_sa_parse_legacy_options(NULL, options,
 		    proto_table[proto].p_name));
 	}
 	return (SA_CONFIG_ERR);
+#else
+	return (SA_OK);
+#endif
 }
 
+#ifdef sun
 /*
  * zfs_sa_find_share(handle, path)
  *
@@ -694,6 +715,7 @@ zfs_sa_disable_share(sa_share_t share, char *proto)
 		return (_sa_disable_share(share, proto));
 	return (SA_CONFIG_ERR);
 }
+#endif	/* sun */
 
 /*
  * Share the given filesystem according to the options in the specified
@@ -707,14 +729,14 @@ zfs_share_proto(zfs_handle_t *zhp, zfs_share_proto_t *proto)
 	char shareopts[ZFS_MAXPROPLEN];
 	char sourcestr[ZFS_MAXPROPLEN];
 	libzfs_handle_t *hdl = zhp->zfs_hdl;
-	sa_share_t share;
 	zfs_share_proto_t *curr_proto;
 	zprop_source_t sourcetype;
-	int ret;
+	int error, ret;
 
 	if (!zfs_is_mountable(zhp, mountpoint, sizeof (mountpoint), NULL))
 		return (0);
 
+#ifdef sun
 	if ((ret = zfs_init_libshare(hdl, SA_INIT_SHARE_API)) != SA_OK) {
 		(void) zfs_error_fmt(hdl, EZFS_SHARENFSFAILED,
 		    dgettext(TEXT_DOMAIN, "cannot share '%s': %s"),
@@ -722,6 +744,7 @@ zfs_share_proto(zfs_handle_t *zhp, zfs_share_proto_t *proto)
 		    _sa_errorstr(ret) : "");
 		return (-1);
 	}
+#endif
 
 	for (curr_proto = proto; *curr_proto != PROTO_END; curr_proto++) {
 		/*
@@ -742,6 +765,7 @@ zfs_share_proto(zfs_handle_t *zhp, zfs_share_proto_t *proto)
 		if (zfs_prop_get_int(zhp, ZFS_PROP_ZONED))
 			continue;
 
+#ifdef sun
 		share = zfs_sa_find_share(hdl->libzfs_sharehdl, mountpoint);
 		if (share == NULL) {
 			/*
@@ -778,7 +802,21 @@ zfs_share_proto(zfs_handle_t *zhp, zfs_share_proto_t *proto)
 				    zfs_get_name(zhp));
 				return (-1);
 			}
-		} else {
+		} else
+#else
+		if (*curr_proto != PROTO_NFS) {
+			fprintf(stderr, "Unsupported share protocol: %d.\n",
+			    *curr_proto);
+			continue;
+		}
+
+		if (strcmp(shareopts, "on") == 0)
+			error = fsshare(ZFS_EXPORTS_PATH, mountpoint, "");
+		else
+			error = fsshare(ZFS_EXPORTS_PATH, mountpoint, shareopts);
+		if (error != 0)
+#endif
+		{
 			(void) zfs_error_fmt(hdl,
 			    proto_table[*curr_proto].p_share_err,
 			    dgettext(TEXT_DOMAIN, "cannot share '%s'"),
@@ -816,6 +854,7 @@ static int
 unshare_one(libzfs_handle_t *hdl, const char *name, const char *mountpoint,
     zfs_share_proto_t proto)
 {
+#ifdef sun
 	sa_share_t share;
 	int err;
 	char *mntpt;
@@ -849,6 +888,24 @@ unshare_one(libzfs_handle_t *hdl, const char *name, const char *mountpoint,
 		    dgettext(TEXT_DOMAIN, "cannot unshare '%s': not found"),
 		    name));
 	}
+#else
+	char buf[MAXPATHLEN];
+	FILE *fp;
+	int err;
+
+	if (proto != PROTO_NFS) {
+		fprintf(stderr, "No SMB support in FreeBSD yet.\n");
+		return (EOPNOTSUPP);
+	}
+
+	err = fsunshare(ZFS_EXPORTS_PATH, mountpoint);
+	if (err != 0) {
+		zfs_error_aux(hdl, "%s", strerror(err));
+		return (zfs_error_fmt(hdl, EZFS_UNSHARENFSFAILED,
+		    dgettext(TEXT_DOMAIN,
+		    "cannot unshare '%s'"), name));
+	}
+#endif
 	return (0);
 }
 

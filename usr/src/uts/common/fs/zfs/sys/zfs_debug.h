@@ -43,7 +43,9 @@ extern "C" {
  */
 
 #if defined(DEBUG) || !defined(_KERNEL)
+#if !defined(ZFS_DEBUG)
 #define	ZFS_DEBUG
+#endif
 #endif
 
 extern int zfs_flags;
@@ -76,9 +78,11 @@ extern void zfs_dbgmsg_init(void);
 extern void zfs_dbgmsg_fini(void);
 extern void zfs_dbgmsg(const char *fmt, ...);
 
+#ifdef illumos
 #ifndef _KERNEL
 extern int dprintf_find_string(const char *string);
 #endif
+#endif /* illumos */
 
 #ifdef	__cplusplus
 }

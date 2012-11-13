@@ -25,7 +25,9 @@
 #ifndef	_SYS_REFCOUNT_H
 #define	_SYS_REFCOUNT_H
 
-#include <sys/inttypes.h>
+#include <sys/cdefs.h>
+#include <sys/types.h>
+#include_next <sys/refcount.h>
 #include <sys/list.h>
 #include <sys/zfs_context.h>
 
@@ -69,7 +71,7 @@ int64_t refcount_add_many(refcount_t *rc, uint64_t number, void *holder_tag);
 int64_t refcount_remove_many(refcount_t *rc, uint64_t number, void *holder_tag);
 void refcount_transfer(refcount_t *dst, refcount_t *src);
 
-void refcount_init(void);
+void refcount_sysinit(void);
 void refcount_fini(void);
 
 #else	/* ZFS_DEBUG */
@@ -95,7 +97,7 @@ typedef struct refcount {
 	atomic_add_64(&(dst)->rc_count, __tmp); \
 }
 
-#define	refcount_init()
+#define	refcount_sysinit()
 #define	refcount_fini()
 
 #endif	/* ZFS_DEBUG */

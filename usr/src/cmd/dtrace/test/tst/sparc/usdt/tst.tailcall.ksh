@@ -23,6 +23,7 @@
 # Copyright 2007 Sun Microsystems, Inc.  All rights reserved.
 # Use is subject to license terms.
 #
+# ident	"%Z%%M%	%I%	%E% SMI"
 
 #
 # ASSERTION: Make sure USDT probes work as tail-calls on SPARC.
@@ -75,7 +76,7 @@ provider test {
 };
 EOF
 
-/usr/ccs/bin/as -xregsym=no -P -D_ASM -o test.o test.s
+/usr/bin/as -xregsym=no -P -D_ASM -o test.o test.s
 if [ $? -ne 0 ]; then
 	print -u2 "failed to compile test.s"
 	exit 1
@@ -87,7 +88,7 @@ if [ $? -ne 0 ]; then
 	exit 1
 fi
 
-gcc -o test test.o prov.o
+cc -o test test.o prov.o
 if [ $? -ne 0 ]; then
 	print -u2 "failed to link final executable"
 	exit 1
@@ -126,6 +127,6 @@ EOF
 status=$?
 
 cd /
-/usr/bin/rm -rf $DIR
+/bin/rm -rf $DIR
 
 exit $status

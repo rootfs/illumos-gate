@@ -68,7 +68,11 @@ typedef struct ctf_sect {
 	const char *cts_name;	/* section name (if any) */
 	ulong_t cts_type;	/* section type (ELF SHT_... value) */
 	ulong_t cts_flags;	/* section flags (ELF SHF_... value) */
+#if defined(sun)
 	const void *cts_data;	/* pointer to section data */
+#else
+	void *cts_data;		/* pointer to section data */
+#endif
 	size_t cts_size;	/* size of data in bytes */
 	size_t cts_entsize;	/* size of each section entry (symtab only) */
 	off64_t cts_offset;	/* file offset of this section (if any) */

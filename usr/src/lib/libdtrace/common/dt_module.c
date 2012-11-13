@@ -24,15 +24,23 @@
  */
 
 #include <sys/types.h>
+#if defined(sun)
 #include <sys/modctl.h>
 #include <sys/kobj.h>
 #include <sys/kobj_impl.h>
 #include <sys/sysmacros.h>
 #include <sys/elf.h>
 #include <sys/task.h>
+#else
+#include <sys/param.h>
+#include <sys/linker.h>
+#include <sys/stat.h>
+#endif
 
 #include <unistd.h>
+#if defined(sun)
 #include <project.h>
+#endif
 #include <strings.h>
 #include <stdlib.h>
 #include <libelf.h>
@@ -40,6 +48,9 @@
 #include <assert.h>
 #include <errno.h>
 #include <dirent.h>
+#if !defined(sun)
+#include <fcntl.h>
+#endif
 
 #include <dt_strtab.h>
 #include <dt_module.h>
@@ -68,11 +79,19 @@ dt_module_syminit32(dt_module_t *dmp)
 #error "STT_NUM has grown. update dt_module_syminit32()"
 #endif
 
-	const Elf32_Sym *sym = dmp->dm_symtab.cts_data;
+	Elf32_Sym *sym = dmp->dm_symtab.cts_data;
 	const char *base = dmp->dm_strtab.cts_data;
 	size_t ss_size = dmp->dm_strtab.cts_size;
 	uint_t i, n = dmp->dm_nsymelems;
 	uint_t asrsv = 0;
+
+#if defined(__FreeBSD__)
+	GElf_Ehdr ehdr;
+	int is_elf_obj;
+
+	gelf_getehdr(dmp->dm_elf, &ehdr);
+	is_elf_obj = (ehdr.e_type == ET_REL);
+#endif
 
 	for (i = 0; i < n; i++, sym++) {
 		const char *name = base + sym->st_name;
@@ -85,8 +104,17 @@ dt_module_syminit32(dt_module_t *dmp)
 			continue; /* skip null or invalid names */
 
 		if (sym->st_value != 0 &&
-		    (ELF32_ST_BIND(sym->st_info) != STB_LOCAL || sym->st_size))
+		    (ELF32_ST_BIND(sym->st_info) != STB_LOCAL || sym->st_size)) {
 			asrsv++; /* reserve space in the address map */
+
+#if defined(__FreeBSD__)
+			sym->st_value += (Elf_Addr) dmp->dm_reloc_offset;
+			if (is_elf_obj && sym->st_shndx != SHN_UNDEF &&
+			    sym->st_shndx < ehdr.e_shnum)
+				sym->st_value +=
+				    dmp->dm_sec_offsets[sym->st_shndx];
+#endif
+		}
 
 		dt_module_symhash_insert(dmp, name, i);
 	}
@@ -101,11 +129,19 @@ dt_module_syminit64(dt_module_t *dmp)
 #error "STT_NUM has grown. update dt_module_syminit64()"
 #endif
 
-	const Elf64_Sym *sym = dmp->dm_symtab.cts_data;
+	Elf64_Sym *sym = dmp->dm_symtab.cts_data;
 	const char *base = dmp->dm_strtab.cts_data;
 	size_t ss_size = dmp->dm_strtab.cts_size;
 	uint_t i, n = dmp->dm_nsymelems;
 	uint_t asrsv = 0;
+
+#if defined(__FreeBSD__)
+	GElf_Ehdr ehdr;
+	int is_elf_obj;
+
+	gelf_getehdr(dmp->dm_elf, &ehdr);
+	is_elf_obj = (ehdr.e_type == ET_REL);
+#endif
 
 	for (i = 0; i < n; i++, sym++) {
 		const char *name = base + sym->st_name;
@@ -118,8 +154,16 @@ dt_module_syminit64(dt_module_t *dmp)
 			continue; /* skip null or invalid names */
 
 		if (sym->st_value != 0 &&
-		    (ELF64_ST_BIND(sym->st_info) != STB_LOCAL || sym->st_size))
+		    (ELF64_ST_BIND(sym->st_info) != STB_LOCAL || sym->st_size)) {
 			asrsv++; /* reserve space in the address map */
+#if defined(__FreeBSD__)
+			sym->st_value += (Elf_Addr) dmp->dm_reloc_offset;
+			if (is_elf_obj && sym->st_shndx != SHN_UNDEF &&
+			    sym->st_shndx < ehdr.e_shnum)
+				sym->st_value +=
+				    dmp->dm_sec_offsets[sym->st_shndx];
+#endif
+		}
 
 		dt_module_symhash_insert(dmp, name, i);
 	}
@@ -495,7 +539,13 @@ dt_module_load_sect(dtrace_hdl_t *dtp, dt_module_t *dmp, ctf_sect_t *ctsp)
 	if (sp == NULL || (dp = elf_getdata(sp, NULL)) == NULL)
 		return (0);
 
+#if defined(sun)
 	ctsp->cts_data = dp->d_buf;
+#else
+	if ((ctsp->cts_data = malloc(dp->d_size)) == NULL)
+		return (0);
+	memcpy(ctsp->cts_data, dp->d_buf, dp->d_size);
+#endif
 	ctsp->cts_size = dp->d_size;
 
 	dt_dprintf("loaded %s [%s] (%lu bytes)\n",
@@ -671,6 +721,18 @@ dt_module_unload(dtrace_hdl_t *dtp, dt_module_t *dmp)
 	ctf_close(dmp->dm_ctfp);
 	dmp->dm_ctfp = NULL;
 
+#if !defined(sun)
+	if (dmp->dm_ctdata.cts_data != NULL) {
+		free(dmp->dm_ctdata.cts_data);
+	}
+	if (dmp->dm_symtab.cts_data != NULL) {
+		free(dmp->dm_symtab.cts_data);
+	}
+	if (dmp->dm_strtab.cts_data != NULL) {
+		free(dmp->dm_strtab.cts_data);
+	}
+#endif
+
 	bzero(&dmp->dm_ctdata, sizeof (ctf_sect_t));
 	bzero(&dmp->dm_symtab, sizeof (ctf_sect_t));
 	bzero(&dmp->dm_strtab, sizeof (ctf_sect_t));
@@ -689,18 +751,23 @@ dt_module_unload(dtrace_hdl_t *dtp, dt_module_t *dmp)
 		free(dmp->dm_asmap);
 		dmp->dm_asmap = NULL;
 	}
-
+#if defined(__FreeBSD__)
+	if (dmp->dm_sec_offsets != NULL) {
+		free(dmp->dm_sec_offsets);
+		dmp->dm_sec_offsets = NULL;
+	}
+#endif
 	dmp->dm_symfree = 0;
 	dmp->dm_nsymbuckets = 0;
 	dmp->dm_nsymelems = 0;
 	dmp->dm_asrsv = 0;
 	dmp->dm_aslen = 0;
 
-	dmp->dm_text_va = NULL;
+	dmp->dm_text_va = 0;
 	dmp->dm_text_size = 0;
-	dmp->dm_data_va = NULL;
+	dmp->dm_data_va = 0;
 	dmp->dm_data_size = 0;
-	dmp->dm_bss_va = NULL;
+	dmp->dm_bss_va = 0;
 	dmp->dm_bss_size = 0;
 
 	if (dmp->dm_extern != NULL) {
@@ -802,9 +869,16 @@ dt_module_modelname(dt_module_t *dmp)
 /*
  * Update our module cache by adding an entry for the specified module 'name'.
  * We create the dt_module_t and populate it using /system/object/<name>/.
+ *
+ * On FreeBSD, the module name is passed as the full module file name, 
+ * including the path.
  */
 static void
+#if defined(sun)
 dt_module_update(dtrace_hdl_t *dtp, const char *name)
+#else
+dt_module_update(dtrace_hdl_t *dtp, struct kld_file_stat *k_stat)
+#endif
 {
 	char fname[MAXPATHLEN];
 	struct stat64 st;
@@ -817,8 +891,20 @@ dt_module_update(dtrace_hdl_t *dtp, const char *name)
 	Elf_Data *dp;
 	Elf_Scn *sp;
 
+#if defined(sun)
 	(void) snprintf(fname, sizeof (fname),
 	    "%s/%s/object", OBJFS_ROOT, name);
+#else
+	GElf_Ehdr ehdr;
+	GElf_Phdr ph;
+	char name[MAXPATHLEN];
+	uintptr_t mapbase, alignmask;
+	int i = 0;
+	int is_elf_obj;
+
+	(void) strlcpy(name, k_stat->name, sizeof(name));
+	(void) strlcpy(fname, k_stat->pathname, sizeof(fname));
+#endif
 
 	if ((fd = open(fname, O_RDONLY)) == -1 || fstat64(fd, &st) == -1 ||
 	    (dmp = dt_module_create(dtp, name)) == NULL) {
@@ -859,7 +945,20 @@ dt_module_update(dtrace_hdl_t *dtp, const char *name)
 		dt_module_destroy(dtp, dmp);
 		return;
 	}
-
+#if defined(__FreeBSD__)
+	mapbase = (uintptr_t)k_stat->address;
+	gelf_getehdr(dmp->dm_elf, &ehdr);
+	is_elf_obj = (ehdr.e_type == ET_REL);
+	if (is_elf_obj) {
+		dmp->dm_sec_offsets =
+		    malloc(ehdr.e_shnum * sizeof(*dmp->dm_sec_offsets));
+		if (dmp->dm_sec_offsets == NULL) {
+			dt_dprintf("failed to allocate memory\n");
+			dt_module_destroy(dtp, dmp);
+			return;
+		}
+	}
+#endif
 	/*
 	 * Iterate over the section headers locating various sections of
 	 * interest and use their attributes to flesh out the dt_module_t.
@@ -868,7 +967,19 @@ dt_module_update(dtrace_hdl_t *dtp, const char *name)
 		if (gelf_getshdr(sp, &sh) == NULL || sh.sh_type == SHT_NULL ||
 		    (s = elf_strptr(dmp->dm_elf, shstrs, sh.sh_name)) == NULL)
 			continue; /* skip any malformed sections */
-
+#if defined(__FreeBSD__)
+		if (sh.sh_size == 0)
+			continue;
+		if (is_elf_obj && (sh.sh_type == SHT_PROGBITS ||
+		    sh.sh_type == SHT_NOBITS)) {
+			alignmask = sh.sh_addralign - 1;
+			mapbase += alignmask;
+			mapbase &= ~alignmask;
+			sh.sh_addr = mapbase;
+			dmp->dm_sec_offsets[elf_ndxscn(sp)] = sh.sh_addr;
+			mapbase += sh.sh_size;
+		}
+#endif
 		if (strcmp(s, ".text") == 0) {
 			dmp->dm_text_size = sh.sh_size;
 			dmp->dm_text_va = sh.sh_addr;
@@ -890,7 +1001,30 @@ dt_module_update(dtrace_hdl_t *dtp, const char *name)
 	}
 
 	dmp->dm_flags |= DT_DM_KERNEL;
+#if defined(sun)
 	dmp->dm_modid = (int)OBJFS_MODID(st.st_ino);
+#else
+	/*
+	 * Include .rodata and special sections into .text.
+	 * This depends on default section layout produced by GNU ld
+	 * for ELF objects and libraries:
+	 * [Text][R/O data][R/W data][Dynamic][BSS][Non loadable]
+	 */
+	dmp->dm_text_size = dmp->dm_data_va - dmp->dm_text_va;
+#if defined(__i386__)
+	/*
+	 * Find the first load section and figure out the relocation
+	 * offset for the symbols. The kernel module will not need
+	 * relocation, but the kernel linker modules will.
+	 */
+	for (i = 0; gelf_getphdr(dmp->dm_elf, i, &ph) != NULL; i++) {
+		if (ph.p_type == PT_LOAD) {
+			dmp->dm_reloc_offset = k_stat->address - ph.p_vaddr;
+			break;
+		}
+	}
+#endif
+#endif
 
 	if (dmp->dm_info.objfs_info_primary)
 		dmp->dm_flags |= DT_DM_PRIMARY;
@@ -908,11 +1042,15 @@ dtrace_update(dtrace_hdl_t *dtp)
 {
 	dt_module_t *dmp;
 	DIR *dirp;
+#if defined(__FreeBSD__)
+	int fileid;
+#endif
 
 	for (dmp = dt_list_next(&dtp->dt_modlist);
 	    dmp != NULL; dmp = dt_list_next(dmp))
 		dt_module_unload(dtp, dmp);
 
+#if defined(sun)
 	/*
 	 * Open /system/object and attempt to create a libdtrace module for
 	 * each kernel module that is loaded on the current system.
@@ -928,6 +1066,18 @@ dtrace_update(dtrace_hdl_t *dtp)
 
 		(void) closedir(dirp);
 	}
+#elif defined(__FreeBSD__)
+	/*
+	 * Use FreeBSD's kernel loader interface to discover what kernel
+	 * modules are loaded and create a libdtrace module for each one.
+	 */
+	for (fileid = kldnext(0); fileid > 0; fileid = kldnext(fileid)) {
+		struct kld_file_stat k_stat;
+		k_stat.version = sizeof(k_stat);
+		if (kldstat(fileid, &k_stat) == 0)
+			dt_module_update(dtp, &k_stat);
+	}
+#endif
 
 	/*
 	 * Look up all the macro identifiers and set di_id to the latest value.
@@ -940,9 +1090,13 @@ dtrace_update(dtrace_hdl_t *dtp)
 	dt_idhash_lookup(dtp->dt_macros, "pid")->di_id = getpid();
 	dt_idhash_lookup(dtp->dt_macros, "pgid")->di_id = getpgid(0);
 	dt_idhash_lookup(dtp->dt_macros, "ppid")->di_id = getppid();
+#if defined(sun)
 	dt_idhash_lookup(dtp->dt_macros, "projid")->di_id = getprojid();
+#endif
 	dt_idhash_lookup(dtp->dt_macros, "sid")->di_id = getsid(0);
+#if defined(sun)
 	dt_idhash_lookup(dtp->dt_macros, "taskid")->di_id = gettaskid();
+#endif
 	dt_idhash_lookup(dtp->dt_macros, "uid")->di_id = getuid();
 
 	/*

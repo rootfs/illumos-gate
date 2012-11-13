@@ -63,17 +63,17 @@
 #include <devid.h>
 #include <errno.h>
 #include <fcntl.h>
-#include <libdiskmgt.h>
 #include <libintl.h>
 #include <libnvpair.h>
 #include <limits.h>
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
-#include <sys/efi_partition.h>
+#include <paths.h>
 #include <sys/stat.h>
-#include <sys/vtoc.h>
+#include <sys/disk.h>
 #include <sys/mntent.h>
+#include <libgeom.h>
 
 #include "zpool_util.h"
 
@@ -111,6 +111,7 @@ vdev_error(const char *fmt, ...)
 	va_end(ap);
 }
 
+#ifdef sun
 static void
 libdiskmgt_error(int error)
 {
@@ -272,6 +273,7 @@ check_device(const char *path, boolean_t force, boolean_t isspare)
 
 	return (check_slice(path, force, B_FALSE, isspare));
 }
+#endif	/* sun */
 
 /*
  * Check that a file is valid.  All we can do in this case is check that it's
@@ -287,6 +289,7 @@ check_file(const char *file, boolean_t force, boolean_t isspare)
 	pool_state_t state;
 	boolean_t inuse;
 
+#ifdef sun
 	if (dm_inuse_swap(file, &err)) {
 		if (err)
 			libdiskmgt_error(err);
@@ -295,6 +298,7 @@ check_file(const char *file, boolean_t force, boolean_t isspare)
 			    "Please see swap(1M).\n"), file);
 		return (-1);
 	}
+#endif
 
 	if ((fd = open(file, O_RDONLY)) < 0)
 		return (0);
@@ -348,6 +352,18 @@ check_file(const char *file, boolean_t force, boolean_t isspare)
 	return (ret);
 }
 
+static int
+check_device(const char *name, boolean_t force, boolean_t isspare)
+{
+	char path[MAXPATHLEN];
+
+	if (strncmp(name, _PATH_DEV, sizeof(_PATH_DEV) - 1) != 0)
+		snprintf(path, sizeof(path), "%s%s", _PATH_DEV, name);
+	else
+		strlcpy(path, name, sizeof(path));
+
+	return (check_file(path, force, isspare));
+}
 
 /*
  * By "whole disk" we mean an entire physical disk (something we can
@@ -360,6 +376,7 @@ check_file(const char *file, boolean_t force, boolean_t isspare)
 static boolean_t
 is_whole_disk(const char *arg)
 {
+#ifdef sun
 	struct dk_gpt *label;
 	int	fd;
 	char	path[MAXPATHLEN];
@@ -375,6 +392,16 @@ is_whole_disk(const char *arg)
 	efi_free(label);
 	(void) close(fd);
 	return (B_TRUE);
+#else
+	int fd;
+
+	fd = g_open(arg, 0);
+	if (fd >= 0) {
+		g_close(fd);
+		return (B_TRUE);
+	}
+	return (B_FALSE);
+#endif
 }
 
 /*
@@ -421,8 +448,10 @@ make_leaf_vdev(const char *arg, uint64_t is_log)
 		 * /dev/dsk/.  As part of this check, see if we've been given a
 		 * an entire disk (minus the slice number).
 		 */
-		(void) snprintf(path, sizeof (path), "%s/%s", DISK_ROOT,
-		    arg);
+		if (strncmp(arg, _PATH_DEV, sizeof(_PATH_DEV) - 1) == 0)
+			strlcpy(path, arg, sizeof (path));
+		else
+			snprintf(path, sizeof (path), "%s%s", _PATH_DEV, arg);
 		wholedisk = is_whole_disk(path);
 		if (!wholedisk && (stat64(path, &statbuf) != 0)) {
 			/*
@@ -435,7 +464,7 @@ make_leaf_vdev(const char *arg, uint64_t is_log)
 			if (errno == ENOENT) {
 				(void) fprintf(stderr,
 				    gettext("cannot open '%s': no such "
-				    "device in %s\n"), arg, DISK_ROOT);
+				    "GEOM provider\n"), arg);
 				(void) fprintf(stderr,
 				    gettext("must be a full path or "
 				    "shorthand device name\n"));
@@ -449,6 +478,14 @@ make_leaf_vdev(const char *arg, uint64_t is_log)
 		}
 	}
 
+#ifdef __FreeBSD__
+	if (S_ISCHR(statbuf.st_mode)) {
+		statbuf.st_mode &= ~S_IFCHR;
+		statbuf.st_mode |= S_IFBLK;
+		wholedisk = B_FALSE;
+	}
+#endif
+
 	/*
 	 * Determine whether this is a device or a file.
 	 */
@@ -458,7 +495,7 @@ make_leaf_vdev(const char *arg, uint64_t is_log)
 		type = VDEV_TYPE_FILE;
 	} else {
 		(void) fprintf(stderr, gettext("cannot use '%s': must be a "
-		    "block device or regular file\n"), path);
+		    "GEOM provider or regular file\n"), path);
 		return (NULL);
 	}
 
@@ -871,6 +908,7 @@ check_replication(nvlist_t *config, nvlist_t *newroot)
 	return (ret);
 }
 
+#ifdef sun
 /*
  * Go through and find any whole disks in the vdev specification, labelling them
  * as appropriate.  When constructing the vdev spec, we were unable to open this
@@ -974,6 +1012,7 @@ make_disks(zpool_handle_t *zhp, nvlist_t *nv)
 
 	return (0);
 }
+#endif	/* sun */
 
 /*
  * Determine if the given path is a hot spare within the given configuration.
@@ -1051,11 +1090,13 @@ check_in_use(nvlist_t *config, nvlist_t *nv, boolean_t force,
 		 * regardless of what libdiskmgt or zpool_in_use() says.
 		 */
 		if (replacing) {
+#ifdef sun
 			if (nvlist_lookup_uint64(nv, ZPOOL_CONFIG_WHOLE_DISK,
 			    &wholedisk) == 0 && wholedisk)
 				(void) snprintf(buf, sizeof (buf), "%ss0",
 				    path);
 			else
+#endif
 				(void) strlcpy(buf, path, sizeof (buf));
 
 			if (is_spare(config, buf))
@@ -1374,10 +1415,12 @@ split_mirror_vdev(zpool_handle_t *zhp, char *newname, nvlist_t *props,
 			return (NULL);
 		}
 
+#ifdef sun
 		if (!flags.dryrun && make_disks(zhp, newroot) != 0) {
 			nvlist_free(newroot);
 			return (NULL);
 		}
+#endif
 
 		/* avoid any tricks in the spec */
 		verify(nvlist_lookup_nvlist_array(newroot,
@@ -1457,6 +1500,7 @@ make_root_vdev(zpool_handle_t *zhp, int force, int check_rep,
 		return (NULL);
 	}
 
+#ifdef sun
 	/*
 	 * Run through the vdev specification and label any whole disks found.
 	 */
@@ -1464,6 +1508,7 @@ make_root_vdev(zpool_handle_t *zhp, int force, int check_rep,
 		nvlist_free(newroot);
 		return (NULL);
 	}
+#endif
 
 	return (newroot);
 }

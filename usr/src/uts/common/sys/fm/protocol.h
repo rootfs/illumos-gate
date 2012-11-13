@@ -37,7 +37,6 @@ extern "C" {
 #include <libnvpair.h>
 #include <stdarg.h>
 #endif
-#include <sys/processor.h>
 
 /* FM common member names */
 #define	FM_CLASS			"class"
@@ -358,7 +357,6 @@ extern void fm_fmri_hc_create(nvlist_t *, int, const nvlist_t *, nvlist_t *,
 
 extern uint64_t fm_ena_increment(uint64_t);
 extern uint64_t fm_ena_generate(uint64_t, uchar_t);
-extern uint64_t fm_ena_generate_cpu(uint64_t, processorid_t, uchar_t);
 extern uint64_t fm_ena_generation_get(uint64_t);
 extern uchar_t fm_ena_format_get(uint64_t);
 extern uint64_t fm_ena_id_get(uint64_t);

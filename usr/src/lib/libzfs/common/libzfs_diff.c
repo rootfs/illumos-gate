@@ -33,12 +33,10 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <fcntl.h>
-#include <attr.h>
 #include <stddef.h>
 #include <unistd.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <stropts.h>
 #include <pthread.h>
 #include <sys/zfs_ioctl.h>
 #include <libzfs.h>
@@ -140,8 +138,10 @@ stream_bytes(FILE *fp, const char *string)
 	while (*string) {
 		if (*string > ' ' && *string != '\\' && *string < '\177')
 			(void) fprintf(fp, "%c", *string++);
-		else
-			(void) fprintf(fp, "\\%03o", *string++);
+		else {
+			(void) fprintf(fp, "\\%03hho",
+			    (unsigned char)*string++);
+		}
 	}
 }
 
@@ -160,18 +160,22 @@ print_what(FILE *fp, mode_t what)
 	case S_IFDIR:
 		symbol = '/';
 		break;
+#ifdef S_IFDOOR
 	case S_IFDOOR:
 		symbol = '>';
 		break;
+#endif
 	case S_IFIFO:
 		symbol = '|';
 		break;
 	case S_IFLNK:
 		symbol = '@';
 		break;
+#ifdef S_IFPORT
 	case S_IFPORT:
 		symbol = 'P';
 		break;
+#endif
 	case S_IFSOCK:
 		symbol = '=';
 		break;
@@ -490,9 +494,13 @@ find_shares_object(differ_info_t *di)
 	(void) strlcat(fullpath, ZDIFF_SHARESDIR, MAXPATHLEN);
 
 	if (stat64(fullpath, &sb) != 0) {
+#ifdef sun
 		(void) snprintf(di->errbuf, sizeof (di->errbuf),
 		    dgettext(TEXT_DOMAIN, "Cannot stat %s"), fullpath);
 		return (zfs_error(di->zhp->zfs_hdl, EZFS_DIFF, di->errbuf));
+#else
+		return (0);
+#endif
 	}
 
 	di->shares = (uint64_t)sb.st_ino;

@@ -20,13 +20,13 @@
  */
 /*
  * Copyright (c) 2005, 2010, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2011 Pawel Jakub Dawidek <pawel@dawidek.net>.
+ * All rights reserved.
  */
 
 #ifndef	_SYS_FS_ZFS_VFSOPS_H
 #define	_SYS_FS_ZFS_VFSOPS_H
 
-#include <sys/isa_defs.h>
-#include <sys/types32.h>
 #include <sys/list.h>
 #include <sys/vfs.h>
 #include <sys/zil.h>
@@ -128,13 +128,14 @@ typedef struct zfid_short {
 typedef struct zfid_long {
 	zfid_short_t	z_fid;
 	uint8_t		zf_setid[6];		/* obj[i] = obj >> (8 * i) */
-	uint8_t		zf_setgen[4];		/* gen[i] = gen >> (8 * i) */
+	uint8_t		zf_setgen[2];		/* gen[i] = gen >> (8 * i) */
 } zfid_long_t;
 
 #define	SHORT_FID_LEN	(sizeof (zfid_short_t) - sizeof (uint16_t))
 #define	LONG_FID_LEN	(sizeof (zfid_long_t) - sizeof (uint16_t))
 
 extern uint_t zfs_fsyncer_key;
+extern int zfs_super_owner;
 
 extern int zfs_suspend_fs(zfsvfs_t *zfsvfs);
 extern int zfs_resume_fs(zfsvfs_t *zfsvfs, const char *osname);
@@ -152,6 +153,11 @@ extern int zfs_set_version(zfsvfs_t *zfsvfs, uint64_t newvers);
 extern int zfsvfs_create(const char *name, zfsvfs_t **zfvp);
 extern void zfsvfs_free(zfsvfs_t *zfsvfs);
 extern int zfs_check_global_label(const char *dsname, const char *hexsl);
+extern int zfs_vnode_lock(vnode_t *vp, int flags);
+
+#ifdef _KERNEL
+extern void zfsvfs_update_fromname(const char *oldname, const char *newname);
+#endif
 
 #ifdef	__cplusplus
 }

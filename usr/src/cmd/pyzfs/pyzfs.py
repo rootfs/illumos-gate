@@ -1,4 +1,4 @@
-#! /usr/bin/python2.6 -S
+#! /usr/bin/python2.4 -S
 #
 # CDDL HEADER START
 #
@@ -19,7 +19,8 @@
 #
 # CDDL HEADER END
 #
-# Copyright (c) 2009, 2010, Oracle and/or its affiliates. All rights reserved.
+# Copyright 2009 Sun Microsystems, Inc.  All rights reserved.
+# Use is subject to license terms.
 #
 
 # Note, we want SIGINT (control-c) to exit the process quietly, to mimic
@@ -35,17 +36,13 @@ try:
 	import zfs.ioctl
 	import sys
 	import errno
-	import solaris.misc
 
 	"""This is the main script for doing zfs subcommands.  It doesn't know
 	what subcommands there are, it just looks for a module zfs.<subcommand>
 	that implements that subcommand."""
 
-	try:
-		_ = gettext.translation("SUNW_OST_OSCMD", "/usr/lib/locale",
-		    fallback=True).gettext
-	except:
-		_ = solaris.misc.gettext
+	_ = gettext.translation("SUNW_OST_OSCMD", "/usr/lib/locale",
+	    fallback=True).gettext
 
 	if len(sys.argv) < 2:
 		sys.exit(_("missing subcommand argument"))

@@ -22,13 +22,19 @@
 /*
  * Copyright (c) 2003, 2010, Oracle and/or its affiliates. All rights reserved.
  * Copyright (c) 2011, Joyent, Inc. All rights reserved.
- * Copyright (c) 2012 by Delphix. All rights reserved.
  */
 
+#if defined(sun)
 #include <sys/sysmacros.h>
+#else
+#define	ABS(a)		((a) < 0 ? -(a) : (a))
+#endif
+#include <string.h>
 #include <strings.h>
 #include <stdlib.h>
+#if defined(sun)
 #include <alloca.h>
+#endif
 #include <assert.h>
 #include <ctype.h>
 #include <errno.h>
@@ -155,7 +161,7 @@ static int
 pfcheck_dint(dt_pfargv_t *pfv, dt_pfargd_t *pfd, dt_node_t *dnp)
 {
 	if (dnp->dn_flags & DT_NF_SIGNED)
-		pfd->pfd_fmt[strlen(pfd->pfd_fmt) - 1] = 'i';
+		pfd->pfd_flags |= DT_PFCONV_SIGNED;
 	else
 		pfd->pfd_fmt[strlen(pfd->pfd_fmt) - 1] = 'u';
 
@@ -303,9 +309,11 @@ pfprint_fp(dtrace_hdl_t *dtp, FILE *fp, const char *format,
 	case sizeof (double):
 		return (dt_printf(dtp, fp, format,
 		    *((double *)addr) / n));
+#if !defined(__arm__) && !defined(__powerpc__) && !defined(__mips__)
 	case sizeof (long double):
 		return (dt_printf(dtp, fp, format,
 		    *((long double *)addr) / ldn));
+#endif
 	default:
 		return (dt_set_errno(dtp, EDT_DMISMATCH));
 	}
@@ -458,7 +466,11 @@ pfprint_time(dtrace_hdl_t *dtp, FILE *fp, const char *format,
 	 * Below, we turn this into the canonical adb/mdb /[yY] format,
 	 * "1973 Dec  3 17:20:00".
 	 */
+#if defined(sun)
 	(void) ctime_r(&sec, src, sizeof (src));
+#else
+	(void) ctime_r(&sec, src);
+#endif
 
 	/*
 	 * Place the 4-digit year at the head of the string...
@@ -505,7 +517,11 @@ pfprint_port(dtrace_hdl_t *dtp, FILE *fp, const char *format,
 	char buf[256];
 	struct servent *sv, res;
 
+#if defined(sun)
 	if ((sv = getservbyport_r(port, NULL, &res, buf, sizeof (buf))) != NULL)
+#else
+	if (getservbyport_r(port, NULL, &res, buf, sizeof (buf), &sv) > 0)
+#endif
 		return (dt_printf(dtp, fp, format, sv->s_name));
 
 	(void) snprintf(buf, sizeof (buf), "%d", *((uint16_t *)addr));
@@ -527,8 +543,13 @@ pfprint_inetaddr(dtrace_hdl_t *dtp, FILE *fp, const char *format,
 	s[size] = '\0';
 
 	if (strchr(s, ':') == NULL && inet_pton(AF_INET, s, inetaddr) != -1) {
+#if defined(sun)
 		if ((host = gethostbyaddr_r(inetaddr, NS_INADDRSZ,
 		    AF_INET, &res, buf, sizeof (buf), &e)) != NULL)
+#else
+		if (gethostbyaddr_r(inetaddr, NS_INADDRSZ,
+		    AF_INET, &res, buf, sizeof (buf), &host, &e) > 0)
+#endif
 			return (dt_printf(dtp, fp, format, host->h_name));
 	} else if (inet_pton(AF_INET6, s, inetaddr) != -1) {
 		if ((host = getipnodebyaddr(inetaddr, NS_IN6ADDRSZ,
@@ -643,7 +664,7 @@ static const dt_pfconv_t _dtrace_conversions[] = {
 { "hu", "u", "unsigned short", pfcheck_type, pfprint_uint },
 { "hx", "x", "short", pfcheck_xshort, pfprint_uint },
 { "hX", "X", "short", pfcheck_xshort, pfprint_uint },
-{ "i", "i", pfproto_xint, pfcheck_xint, pfprint_sint },
+{ "i", "i", pfproto_xint, pfcheck_dint, pfprint_dint },
 { "I", "s", pfproto_cstr, pfcheck_str, pfprint_inetaddr },
 { "k", "s", "stack", pfcheck_stack, pfprint_stack },
 { "lc", "lc", "int", pfcheck_type, pfprint_sint }, /* a.k.a. wint_t */
@@ -1630,6 +1651,7 @@ dtrace_freopen(dtrace_hdl_t *dtp, FILE *fp, void *fmtdata,
 	if (rval == -1 || fp == NULL)
 		return (rval);
 
+#if defined(sun)
 	if (pfd->pfd_preflen != 0 &&
 	    strcmp(pfd->pfd_prefix, DT_FREOPEN_RESTORE) == 0) {
 		/*
@@ -1674,7 +1696,8 @@ dtrace_freopen(dtrace_hdl_t *dtp, FILE *fp, void *fmtdata,
 	 * fails, we can fail the operation without destroying stdout.
 	 */
 	if ((nfp = fopen(filename, "aF")) == NULL) {
-		char *msg = strerror(errno), *faultstr;
+		char *msg = strerror(errno);
+		char *faultstr;
 		int len = 80;
 
 		len += strlen(msg) + strlen(filename);
@@ -1710,6 +1733,82 @@ dtrace_freopen(dtrace_hdl_t *dtp, FILE *fp, void *fmtdata,
 	}
 
 	(void) fclose(nfp);
+#else
+	/*
+	 * The 'standard output' (which is not necessarily stdout)
+	 * treatment on FreeBSD is implemented differently than on
+	 * Solaris because FreeBSD's freopen() will attempt to re-use
+	 * the current file descriptor, causing the previous file to
+	 * be closed and thereby preventing it from be re-activated
+	 * later.
+	 *
+	 * For FreeBSD we use the concept of setting an output file
+	 * pointer in the DTrace handle if a dtrace_freopen() has 
+	 * enabled another output file and we leave the caller's
+	 * file pointer untouched. If it was actually stdout, then
+	 * stdout remains open. If it was another file, then that
+	 * file remains open. While a dtrace_freopen() has activated
+	 * another file, we keep a pointer to that which we use in
+	 * the output functions by preference and only use the caller's
+	 * file pointer if no dtrace_freopen() call has been made.
+	 *
+	 * The check to see if we're re-activating the caller's
+	 * output file is much the same as on Solaris.
+	 */
+	if (pfd->pfd_preflen != 0 &&
+	    strcmp(pfd->pfd_prefix, DT_FREOPEN_RESTORE) == 0) {
+		/*
+		 * The only way to have the format string set to the value
+		 * DT_FREOPEN_RESTORE is via the empty freopen() string --
+		 * denoting that we should restore the old stdout.
+		 */
+		assert(strcmp(dtp->dt_sprintf_buf, DT_FREOPEN_RESTORE) == 0);
+
+		if (dtp->dt_freopen_fp == NULL) {
+			/*
+			 * We could complain here by generating an error,
+			 * but it seems like overkill:  it seems that calling
+			 * freopen() to restore stdout when freopen() has
+			 * never before been called should just be a no-op,
+			 * so we just return in this case.
+			 */
+			return (rval);
+		}
+
+		/*
+		 * At this point, to re-active the original output file,
+		 * on FreeBSD we only code the current file that this
+		 * function opened previously.
+		 */
+		(void) fclose(dtp->dt_freopen_fp);
+		dtp->dt_freopen_fp = NULL;
+
+		return (rval);
+	}
+
+	if ((nfp = fopen(dtp->dt_sprintf_buf, "a")) == NULL) {
+		char *msg = strerror(errno);
+		char *faultstr;
+		int len = 80;
+
+		len += strlen(msg) + strlen(dtp->dt_sprintf_buf);
+		faultstr = alloca(len);
+
+		(void) snprintf(faultstr, len, "couldn't freopen() \"%s\": %s",
+		    dtp->dt_sprintf_buf, strerror(errno));
+
+		if ((errval = dt_handle_liberr(dtp, data, faultstr)) == 0)
+			return (rval);
+
+		return (errval);
+	}
+
+	if (dtp->dt_freopen_fp != NULL)
+		(void) fclose(dtp->dt_freopen_fp);
+
+	/* Remember that the output has been redirected to the new file. */
+	dtp->dt_freopen_fp = nfp;
+#endif
 
 	return (rval);
 }

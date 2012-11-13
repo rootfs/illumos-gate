@@ -20,7 +20,7 @@
  */
 
 /*
- * Copyright 2009 Sun Microsystems, Inc.  All rights reserved.
+ * Copyright 2008 Sun Microsystems, Inc.  All rights reserved.
  * Use is subject to license terms.
  *
  * Define an Alist, a list maintained as a reallocable array, and a for() loop
@@ -32,12 +32,18 @@
 #ifndef	_ALIST_H
 #define	_ALIST_H
 
+#pragma ident	"%Z%%M%	%I%	%E% SMI"
+
 #ifdef	__cplusplus
 extern "C" {
 #endif
 
 #include <sys/types.h>
+#if defined(sun)
 #include <sys/machelf.h>
+#else
+#include <sys/elf.h>
+#endif
 
 /*
  * An Alist implements array lists. The functionality is similar to
@@ -136,13 +142,6 @@ typedef struct {
 	void		*apl_data[1];	/* data area: (arrcnt * size) bytes */
 } APlist;
 
-#ifdef	_SYSCALL32			/* required by librtld_db */
-typedef	struct {
-	Elf32_Word	apl_arritems;
-	Elf32_Word	apl_nitems;
-	Elf32_Addr	apl_data[1];
-} APlist32;
-#endif	/* _SYSCALL32 */
 
 /*
  * The ALIST_OFF_DATA and APLIST_OFF_DATA macros give the byte offset
@@ -229,7 +228,7 @@ typedef	struct {
  * Possible values returned by aplist_test()
  */
 typedef enum {
-	ALE_ALLOCFAIL = 0,	/* memory allocation error */
+	ALE_ALLOCFAIL = 0,	/* Memory allocation error */
 	ALE_EXISTS =	1,	/* alist entry already exists */
 	ALE_NOTFND =	2,	/* item not found and insert not required */
 	ALE_CREATE =	3	/* alist entry created */
@@ -249,14 +248,11 @@ typedef enum {
 	((void *)((_off) + (char *)(_lp)))
 
 /*
- * The number of items currently found in a list (nitems), and the total number
- * of slots in the current data allocation (arritems).  These macros handle the
- * case where the list has not been allocated yet.
+ * # of items currently found in a list. These macros handle the case
+ * where the list has not been allocated yet.
  */
-#define	alist_nitems(_lp)	(((_lp) == NULL) ? 0 : (_lp)->al_nitems)
-#define	aplist_nitems(_lp)	(((_lp) == NULL) ? 0 : (_lp)->apl_nitems)
-#define	alist_arritems(_lp)	(((_lp) == NULL) ? 0 : (_lp)->al_arritems)
-#define	aplist_arritems(_lp)	(((_lp) == NULL) ? 0 : (_lp)->apl_arritems)
+#define	alist_nitems(_lp) (((_lp) == NULL) ? 0 : (_lp)->al_nitems)
+#define	aplist_nitems(_lp) (((_lp) == NULL) ? 0 : (_lp)->apl_nitems)
 
 
 extern void		*alist_append(Alist **, const void *, size_t, Aliste);

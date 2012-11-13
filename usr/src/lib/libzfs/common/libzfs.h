@@ -22,8 +22,11 @@
 /*
  * Copyright (c) 2005, 2010, Oracle and/or its affiliates. All rights reserved.
  * Copyright 2011 Nexenta Systems, Inc. All rights reserved.
+ * Copyright (c) 2011 Pawel Jakub Dawidek <pawel@dawidek.net>.
+ * All rights reserved.
  * Copyright (c) 2012 by Delphix. All rights reserved.
  * Copyright (c) 2012, Joyent, Inc. All rights reserved.
+ * Copyright (c) 2012 Martin Matuska <mm@FreeBSD.org>. All rights reserved.
  */
 
 #ifndef	_LIBZFS_H
@@ -37,7 +40,7 @@
 #include <sys/varargs.h>
 #include <sys/fs/zfs.h>
 #include <sys/avl.h>
-#include <ucred.h>
+#include <sys/zfs_ioctl.h>
 
 #ifdef	__cplusplus
 extern "C" {
@@ -54,8 +57,7 @@ extern "C" {
 /*
  * libzfs errors
  */
-typedef enum zfs_error {
-	EZFS_SUCCESS = 0,	/* no error -- success */
+enum {
 	EZFS_NOMEM = 2000,	/* out of memory */
 	EZFS_BADPROP,		/* invalid property value */
 	EZFS_PROPREADONLY,	/* cannot set readonly property */
@@ -127,7 +129,7 @@ typedef enum zfs_error {
 	EZFS_DIFFDATA,		/* bad zfs diff data */
 	EZFS_POOLREADONLY,	/* pool is in read-only mode */
 	EZFS_UNKNOWN
-} zfs_error_t;
+};
 
 /*
  * The following data structures are all part
@@ -183,9 +185,6 @@ extern libzfs_handle_t *zfs_get_handle(zfs_handle_t *);
 
 extern void libzfs_print_on_error(libzfs_handle_t *, boolean_t);
 
-extern void zfs_save_arguments(int argc, char **, char *, int);
-extern int zpool_log_history(libzfs_handle_t *, const char *);
-
 extern int libzfs_errno(libzfs_handle_t *);
 extern const char *libzfs_error_action(libzfs_handle_t *);
 extern const char *libzfs_error_description(libzfs_handle_t *);
@@ -206,7 +205,8 @@ extern zpool_handle_t *zpool_open_canfail(libzfs_handle_t *, const char *);
 extern void zpool_close(zpool_handle_t *);
 extern const char *zpool_get_name(zpool_handle_t *);
 extern int zpool_get_state(zpool_handle_t *);
-extern char *zpool_state_to_name(vdev_state_t, vdev_aux_t);
+extern const char *zpool_state_to_name(vdev_state_t, vdev_aux_t);
+extern const char *zpool_pool_state_to_name(pool_state_t);
 extern void zpool_free_handles(libzfs_handle_t *);
 
 /*
@@ -220,7 +220,7 @@ extern int zpool_iter(libzfs_handle_t *, zpool_iter_f, void *);
  */
 extern int zpool_create(libzfs_handle_t *, const char *, nvlist_t *,
     nvlist_t *, nvlist_t *);
-extern int zpool_destroy(zpool_handle_t *, const char *);
+extern int zpool_destroy(zpool_handle_t *);
 extern int zpool_add(zpool_handle_t *, nvlist_t *);
 
 typedef struct splitflags {
@@ -257,7 +257,7 @@ extern nvlist_t *zpool_find_vdev(zpool_handle_t *, const char *, boolean_t *,
     boolean_t *, boolean_t *);
 extern nvlist_t *zpool_find_vdev_by_physpath(zpool_handle_t *, const char *,
     boolean_t *, boolean_t *, boolean_t *);
-extern int zpool_label_disk(libzfs_handle_t *, zpool_handle_t *, char *);
+extern int zpool_label_disk(libzfs_handle_t *, zpool_handle_t *, const char *);
 
 /*
  * Functions to manage pool properties
@@ -343,8 +343,8 @@ extern int zpool_get_errlog(zpool_handle_t *, nvlist_t **);
 /*
  * Import and export functions
  */
-extern int zpool_export(zpool_handle_t *, boolean_t, const char *);
-extern int zpool_export_force(zpool_handle_t *, const char *);
+extern int zpool_export(zpool_handle_t *, boolean_t);
+extern int zpool_export_force(zpool_handle_t *);
 extern int zpool_import(libzfs_handle_t *, nvlist_t *, const char *,
     char *altroot);
 extern int zpool_import_props(libzfs_handle_t *, nvlist_t *, const char *,
@@ -378,7 +378,7 @@ extern nvlist_t *zpool_find_import_cached(libzfs_handle_t *, const char *,
  */
 struct zfs_cmd;
 
-extern const char *zfs_history_event_names[];
+extern const char *zfs_history_event_names[LOG_END];
 
 extern char *zpool_vdev_name(libzfs_handle_t *, zpool_handle_t *, nvlist_t *,
     boolean_t verbose);
@@ -386,9 +386,12 @@ extern int zpool_upgrade(zpool_handle_t *, uint64_t);
 extern int zpool_get_history(zpool_handle_t *, nvlist_t **);
 extern int zpool_history_unpack(char *, uint64_t, uint64_t *,
     nvlist_t ***, uint_t *);
+extern void zpool_set_history_str(const char *subcommand, int argc,
+    char **argv, char *history_str);
+extern int zpool_stage_history(libzfs_handle_t *, const char *);
 extern void zpool_obj_to_path(zpool_handle_t *, uint64_t, uint64_t, char *,
     size_t len);
-extern int zfs_ioctl(libzfs_handle_t *, int, struct zfs_cmd *);
+extern int zfs_ioctl(libzfs_handle_t *, unsigned long, struct zfs_cmd *);
 extern int zpool_get_physpath(zpool_handle_t *, char *, size_t);
 extern void zpool_explain_recover(libzfs_handle_t *, const char *, int,
     nvlist_t *);
@@ -438,6 +441,8 @@ extern int zfs_prop_get_written(zfs_handle_t *zhp, const char *propname,
     char *propbuf, int proplen, boolean_t literal);
 extern int zfs_prop_get_feature(zfs_handle_t *zhp, const char *propname,
     char *buf, size_t len);
+extern int zfs_get_snapused_int(zfs_handle_t *firstsnap, zfs_handle_t *lastsnap,
+    uint64_t *usedp);
 extern uint64_t zfs_prop_get_int(zfs_handle_t *, zfs_prop_t);
 extern int zfs_prop_inherit(zfs_handle_t *, const char *, boolean_t);
 extern const char *zfs_prop_values(zfs_prop_t);
@@ -527,7 +532,7 @@ extern int zfs_iter_root(libzfs_handle_t *, zfs_iter_f, void *);
 extern int zfs_iter_children(zfs_handle_t *, zfs_iter_f, void *);
 extern int zfs_iter_dependents(zfs_handle_t *, boolean_t, zfs_iter_f, void *);
 extern int zfs_iter_filesystems(zfs_handle_t *, zfs_iter_f, void *);
-extern int zfs_iter_snapshots(zfs_handle_t *, zfs_iter_f, void *);
+extern int zfs_iter_snapshots(zfs_handle_t *, boolean_t, zfs_iter_f, void *);
 extern int zfs_iter_snapshots_sorted(zfs_handle_t *, zfs_iter_f, void *);
 extern int zfs_iter_snapspec(zfs_handle_t *, const char *, zfs_iter_f, void *);
 
@@ -553,10 +558,21 @@ extern int zfs_destroy_snaps(zfs_handle_t *, char *, boolean_t);
 extern int zfs_destroy_snaps_nvl(zfs_handle_t *, nvlist_t *, boolean_t);
 extern int zfs_clone(zfs_handle_t *, const char *, nvlist_t *);
 extern int zfs_snapshot(libzfs_handle_t *, const char *, boolean_t, nvlist_t *);
-extern int zfs_snapshot_nvl(libzfs_handle_t *hdl, nvlist_t *snaps,
-    nvlist_t *props);
 extern int zfs_rollback(zfs_handle_t *, zfs_handle_t *, boolean_t);
-extern int zfs_rename(zfs_handle_t *, const char *, boolean_t, boolean_t);
+
+typedef struct renameflags {
+	/* recursive rename */
+	int recurse : 1;
+
+	/* don't unmount file systems */
+	int nounmount : 1;
+
+	/* force unmount file systems */
+	int forceunmount : 1;
+} renameflags_t;
+
+extern int zfs_rename(zfs_handle_t *, const char *, const char *,
+    renameflags_t flags);
 
 typedef struct sendflags {
 	/* print informational messages (ie, -v was specified) */
@@ -694,12 +710,19 @@ extern int zfs_deleg_share_nfs(libzfs_handle_t *, char *, char *, char *,
     void *, void *, int, zfs_share_op_t);
 
 /*
+ * FreeBSD-specific jail support function.
+ */
+extern int zfs_jail(zfs_handle_t *, int, int);
+
+/*
  * When dealing with nvlists, verify() is extremely useful
  */
+#ifndef verify
 #ifdef NDEBUG
 #define	verify(EX)	((void)(EX))
 #else
 #define	verify(EX)	assert(EX)
+#endif
 #endif
 
 /*
@@ -749,6 +772,11 @@ extern boolean_t libzfs_fru_compare(libzfs_handle_t *, const char *,
     const char *);
 extern boolean_t libzfs_fru_notself(libzfs_handle_t *, const char *);
 extern int zpool_fru_set(zpool_handle_t *, uint64_t, const char *);
+
+#ifndef sun
+extern int zmount(const char *, const char *, int, char *, char *, int, char *,
+    int);
+#endif	/* !sun */
 
 #ifdef	__cplusplus
 }

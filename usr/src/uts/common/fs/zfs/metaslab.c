@@ -51,7 +51,13 @@ uint64_t metaslab_gang_bang = SPA_MAXBLOCKSIZE + 1;	/* force gang blocks */
  * If a device reaches this threshold in a given txg then we consider skipping
  * allocations on that device.
  */
-int zfs_mg_alloc_failures;
+int zfs_mg_alloc_failures = 0;
+
+SYSCTL_DECL(_vfs_zfs);
+SYSCTL_INT(_vfs_zfs, OID_AUTO, mg_alloc_failures, CTLFLAG_RDTUN,
+    &zfs_mg_alloc_failures, 0,
+    "Number of allowed allocation failures per vdev");
+TUNABLE_INT("vfs.zfs.mg_alloc_failures", &zfs_mg_alloc_failures);
 
 /*
  * Metaslab debugging: when set, keeps all space maps in core to verify frees.
@@ -875,9 +881,8 @@ metaslab_activate(metaslab_t *msp, uint64_t activation_weight)
 	if ((msp->ms_weight & METASLAB_ACTIVE_MASK) == 0) {
 		space_map_load_wait(sm);
 		if (!sm->sm_loaded) {
-			space_map_obj_t *smo = &msp->ms_smo;
-
-			int error = space_map_load(sm, sm_ops, SM_FREE, smo,
+			int error = space_map_load(sm, sm_ops, SM_FREE,
+			    &msp->ms_smo,
 			    spa_meta_objset(msp->ms_group->mg_vd->vdev_spa));
 			if (error)  {
 				metaslab_group_sort(msp->ms_group, msp, 0);

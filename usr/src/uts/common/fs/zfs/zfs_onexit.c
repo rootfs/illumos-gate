@@ -25,13 +25,10 @@
 #include <sys/types.h>
 #include <sys/param.h>
 #include <sys/errno.h>
-#include <sys/open.h>
 #include <sys/kmem.h>
 #include <sys/conf.h>
-#include <sys/ddi.h>
 #include <sys/sunddi.h>
 #include <sys/zfs_ioctl.h>
-#include <sys/mkdev.h>
 #include <sys/zfs_onexit.h>
 #include <sys/zvol.h>
 
@@ -122,14 +119,23 @@ zfs_onexit_minor_to_state(minor_t minor, zfs_onexit_t **zo)
 int
 zfs_onexit_fd_hold(int fd, minor_t *minorp)
 {
-	file_t *fp;
+	file_t *fp, *tmpfp;
 	zfs_onexit_t *zo;
+	void *data;
+	int error;
 
 	fp = getf(fd);
 	if (fp == NULL)
 		return (EBADF);
 
-	*minorp = getminor(fp->f_vnode->v_rdev);
+	tmpfp = curthread->td_fpop;
+	curthread->td_fpop = fp;
+	error = devfs_get_cdevpriv(&data);
+	if (error == 0)
+		*minorp = (minor_t)(uintptr_t)data;
+	curthread->td_fpop = tmpfp;
+	if (error != 0)
+		return (error);
 	return (zfs_onexit_minor_to_state(*minorp, &zo));
 }
 

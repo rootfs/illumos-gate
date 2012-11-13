@@ -23,13 +23,12 @@
  * Copyright (c) 2012 by Delphix. All rights reserved.
  */
 
+#include <solaris.h>
+#include <inttypes.h>
 #include <unistd.h>
 #include <strings.h>
 #include <libintl.h>
-#include <sys/types.h>
-#include <sys/inttypes.h>
 #include <stdarg.h>
-#include <note.h>
 #include "libnvpair.h"
 
 /*

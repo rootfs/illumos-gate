@@ -32,25 +32,15 @@
 
 #include <sys/types.h>
 #include <sys/vnode.h>
-#include <sys/vfs_opreg.h>
 #include <sys/mutex.h>
 #include <sys/dirent.h>
 #include <sys/extdirent.h>
 #include <sys/uio.h>
 #include <sys/list.h>
-#include <sys/pathname.h>
 
 #ifdef	__cplusplus
 extern "C" {
 #endif
-
-typedef struct gfs_opsvec {
-	const char		*gfsv_name;	/* vnode description */
-	const fs_operation_def_t *gfsv_template; /* ops template */
-	vnodeops_t		**gfsv_ops;	/* ptr to result */
-} gfs_opsvec_t;
-
-int gfs_make_opsvec(gfs_opsvec_t *);
 
 #define	GFS_CACHE_VNODE		0x1
 
@@ -95,10 +85,10 @@ typedef struct gfs_dir {
 
 struct vfs;
 
-extern vnode_t *gfs_file_create(size_t, vnode_t *, vnodeops_t *);
-extern vnode_t *gfs_dir_create(size_t, vnode_t *, vnodeops_t *,
+extern vnode_t *gfs_file_create(size_t, vnode_t *, vfs_t *, vnodeops_t *);
+extern vnode_t *gfs_dir_create(size_t, vnode_t *, vfs_t *, vnodeops_t *,
     gfs_dirent_t *, gfs_inode_cb, int, gfs_readdir_cb, gfs_lookup_cb);
-extern vnode_t *gfs_root_create(size_t, struct vfs *, vnodeops_t *, ino64_t,
+extern vnode_t *gfs_root_create(size_t, vfs_t *, vnodeops_t *, ino64_t,
     gfs_dirent_t *, gfs_inode_cb, int, gfs_readdir_cb, gfs_lookup_cb);
 extern vnode_t *gfs_root_create_file(size_t, struct vfs *, vnodeops_t *,
     ino64_t);
@@ -110,8 +100,10 @@ extern int gfs_dir_case_lookup(vnode_t *, const char *, vnode_t **, cred_t *,
     int, int *, pathname_t *);
 extern int gfs_dir_lookup(vnode_t *, const char *, vnode_t **, cred_t *,
     int, int *, pathname_t *);
-extern int gfs_dir_readdir(vnode_t *, uio_t *, int *, void *, cred_t *,
-    caller_context_t *, int flags);
+extern int gfs_vop_lookup(vnode_t *, char *, vnode_t **, pathname_t *,
+    int, vnode_t *, cred_t *, caller_context_t *, int *, pathname_t *);
+extern int gfs_dir_readdir(vnode_t *, uio_t *, int *, int *, u_long **, void *,
+    cred_t *, int flags);
 
 #define	gfs_dir_lock(gd)	mutex_enter(&(gd)->gfsd_lock)
 #define	gfs_dir_unlock(gd)	mutex_exit(&(gd)->gfsd_lock)
@@ -140,10 +132,9 @@ typedef struct gfs_readdir_state {
 extern int gfs_readdir_init(gfs_readdir_state_t *, int, int, uio_t *, ino64_t,
     ino64_t, int);
 extern int gfs_readdir_emit(gfs_readdir_state_t *, uio_t *, offset_t, ino64_t,
-    const char *, int);
-extern int gfs_readdir_emitn(gfs_readdir_state_t *, uio_t *, offset_t, ino64_t,
-    unsigned long);
-extern int gfs_readdir_pred(gfs_readdir_state_t *, uio_t *, offset_t *);
+    const char *, int, int *, u_long **);
+extern int gfs_readdir_pred(gfs_readdir_state_t *, uio_t *, offset_t *, int *,
+    u_long **);
 extern int gfs_readdir_fini(gfs_readdir_state_t *, int, int *, int);
 extern int gfs_get_parent_ino(vnode_t *, cred_t *, caller_context_t *,
     ino64_t *, ino64_t *);
@@ -157,13 +148,8 @@ extern int gfs_get_parent_ino(vnode_t *, cred_t *, caller_context_t *,
 
 extern int gfs_lookup_dot(vnode_t **, vnode_t *, vnode_t *, const char *);
 
-extern int gfs_vop_lookup(vnode_t *, char *, vnode_t **, pathname_t *,
-    int, vnode_t *, cred_t *, caller_context_t *, int *, pathname_t *);
-extern int gfs_vop_readdir(vnode_t *, uio_t *, cred_t *, int *,
-    caller_context_t *, int);
-extern int gfs_vop_map(vnode_t *, offset_t, struct as *, caddr_t *,
-    size_t, uchar_t, uchar_t, uint_t, cred_t *, caller_context_t *);
-extern void gfs_vop_inactive(vnode_t *, cred_t *, caller_context_t *);
+extern int gfs_vop_readdir(struct vop_readdir_args *);
+extern int gfs_vop_inactive(struct vop_inactive_args *);
 
 
 #ifdef	__cplusplus
