@@ -36,8 +36,9 @@
 #endif
 #include <sys/zfs_fuid.h>
 
-/*
- * FUID Domain table(s).
+/**
+ * \file zfs_fuid.c
+ * \brief FUID Domain table(s).
  *
  * The FUID table is stored as a packed nvlist of an array
  * of nvlists which contain an index, domain string and offset
@@ -65,7 +66,7 @@ typedef struct fuid_domain {
 
 static char *nulldomain = "";
 
-/*
+/**
  * Compare two indexes.
  */
 static int
@@ -81,7 +82,7 @@ idx_compare(const void *arg1, const void *arg2)
 	return (0);
 }
 
-/*
+/**
  * Compare two domain strings.
  */
 static int
@@ -106,9 +107,10 @@ zfs_fuid_avl_tree_create(avl_tree_t *idx_tree, avl_tree_t *domain_tree)
 	    sizeof (fuid_domain_t), offsetof(fuid_domain_t, f_domnode));
 }
 
-/*
- * load initial fuid domain and idx trees.  This function is used by
- * both the kernel and zdb.
+/**
+ * \brief load initial fuid domain and idx trees.
+ *
+ * This function is used by both the kernel and zdb.
  */
 uint64_t
 zfs_fuid_table_load(objset_t *os, uint64_t fuid_obj, avl_tree_t *idx_tree,
@@ -132,7 +134,7 @@ zfs_fuid_table_load(objset_t *os, uint64_t fuid_obj, avl_tree_t *idx_tree,
 
 		packed = kmem_alloc(fuid_size, KM_SLEEP);
 		VERIFY(dmu_read(os, fuid_obj, 0,
-		    fuid_size, packed, DMU_READ_PREFETCH) == 0);
+		    fuid_size, packed, DMU_CTX_FLAG_PREFETCH) == 0);
 		VERIFY(nvlist_unpack(packed, fuid_size,
 		    &nvp, 0) == 0);
 		VERIFY(nvlist_lookup_nvlist_array(nvp, FUID_NVP_ARRAY,
@@ -192,8 +194,8 @@ zfs_fuid_idx_domain(avl_tree_t *idx_tree, uint32_t idx)
 }
 
 #ifdef _KERNEL
-/*
- * Load the fuid table(s) into memory.
+/**
+ * \brief Load the fuid table(s) into memory.
  */
 static void
 zfs_fuid_init(zfsvfs_t *zfsvfs)
@@ -219,8 +221,8 @@ zfs_fuid_init(zfsvfs_t *zfsvfs)
 	rw_exit(&zfsvfs->z_fuid_lock);
 }
 
-/*
- * sync out AVL trees to persistent storage.
+/**
+ * \brief sync out AVL trees to persistent storage.
  */
 void
 zfs_fuid_sync(zfsvfs_t *zfsvfs, dmu_tx_t *tx)
@@ -289,8 +291,8 @@ zfs_fuid_sync(zfsvfs_t *zfsvfs, dmu_tx_t *tx)
 	rw_exit(&zfsvfs->z_fuid_lock);
 }
 
-/*
- * Query domain table for a given domain.
+/**
+ * \brief Query domain table for a given domain.
  *
  * If domain isn't found and addok is set, it is added to AVL trees and
  * the zfsvfs->z_fuid_dirty flag will be set to TRUE.  It will then be
@@ -356,10 +358,10 @@ retry:
 	}
 }
 
-/*
- * Query domain table by index, returning domain string
+/**
+ * \brief Query domain table by index, returning domain string
  *
- * Returns a pointer from an avl node of the domain string.
+ * \return A pointer from an avl node of the domain string.
  *
  */
 const char *
@@ -420,9 +422,8 @@ zfs_fuid_map_id(zfsvfs_t *zfsvfs, uint64_t fuid,
 	return (id);
 }
 
-/*
- * Add a FUID node to the list of fuid's being created for this
- * ACL
+/**
+ * \brief Add a FUID node to the list of fuid's being created for this ACL
  *
  * If ACL has multiple domains, then keep only one copy of each unique
  * domain.
@@ -486,8 +487,8 @@ zfs_fuid_node_add(zfs_fuid_info_t **fuidpp, const char *domain, uint32_t rid,
 	}
 }
 
-/*
- * Create a file system FUID, based on information in the users cred
+/**
+ * \brief Create a file system FUID, based on information in the users cred
  *
  * If cred contains KSID_OWNER then it should be used to determine
  * the uid otherwise cred's uid will be used. By default cred's gid
@@ -539,17 +540,17 @@ zfs_fuid_create_cred(zfsvfs_t *zfsvfs, zfs_fuid_type_t type,
 	return (FUID_ENCODE(idx, rid));
 }
 
-/*
- * Create a file system FUID for an ACL ace
- * or a chown/chgrp of the file.
- * This is similar to zfs_fuid_create_cred, except that
- * we can't find the domain + rid information in the
- * cred.  Instead we have to query Winchester for the
- * domain and rid.
+/**
+ * \brief  Create a file system FUID for an ACL ace or a chown/chgrp of the
+ * file.
  *
- * During replay operations the domain+rid information is
- * found in the zfs_fuid_info_t that the replay code has
- * attached to the zfsvfs of the file system.
+ * This is similar to zfs_fuid_create_cred, except that we can't find the
+ * domain + rid information in the cred.  Instead we have to query Winchester
+ * for the domain and rid.
+ *
+ * During replay operations the domain+rid information is found in the
+ * zfs_fuid_info_t that the replay code has attached to the zfsvfs of the file
+ * system.
  */
 uint64_t
 zfs_fuid_create(zfsvfs_t *zfsvfs, uint64_t id, cred_t *cr,
@@ -647,7 +648,7 @@ zfs_fuid_destroy(zfsvfs_t *zfsvfs)
 	rw_exit(&zfsvfs->z_fuid_lock);
 }
 
-/*
+/**
  * Allocate zfs_fuid_info for tracking FUIDs created during
  * zfs_mknode, VOP_SETATTR() or VOP_SETSECATTR()
  */
@@ -664,8 +665,8 @@ zfs_fuid_info_alloc(void)
 	return (fuidp);
 }
 
-/*
- * Release all memory associated with zfs_fuid_info_t
+/**
+ * \brief Release all memory associated with zfs_fuid_info_t
  */
 void
 zfs_fuid_info_free(zfs_fuid_info_t *fuidp)
@@ -690,7 +691,7 @@ zfs_fuid_info_free(zfs_fuid_info_t *fuidp)
 	kmem_free(fuidp, sizeof (zfs_fuid_info_t));
 }
 
-/*
+/**
  * Check to see if id is a groupmember.  If cred
  * has ksid info then sidlist is checked first
  * and if still not found then POSIX groups are checked

@@ -22,7 +22,8 @@
  * Copyright (c) 2005, 2010, Oracle and/or its affiliates. All rights reserved.
  */
 
-/*
+/**
+ * \file zap_leaf.c
  * The 512-byte leaf is broken into 32 16-byte chunks.
  * chunk number n means l_chunk[n], even though the header precedes it.
  * the names are stored null-terminated.
@@ -105,7 +106,6 @@ zap_leaf_byteswap(zap_leaf_phys_t *buf, int size)
 	int i;
 	zap_leaf_t l;
 	l.l_bs = highbit(size)-1;
-	l.l_phys = buf;
 
 	buf->l_hdr.lh_block_type = 	BSWAP_64(buf->l_hdr.lh_block_type);
 	buf->l_hdr.lh_prefix = 		BSWAP_64(buf->l_hdr.lh_prefix);
@@ -269,7 +269,10 @@ zap_leaf_array_free(zap_leaf_t *l, uint16_t *chunkp)
 	}
 }
 
-/* array_len and buf_len are in integers, not bytes */
+/**
+ * \param	array_len	In units of integers, not bytes	
+ * \param	buf_len		In units of integers, not bytes
+ */
 static void
 zap_leaf_array_read(zap_leaf_t *l, uint16_t chunk,
     int array_int_len, int array_len, int buf_int_len, uint64_t buf_len,
@@ -382,10 +385,12 @@ zap_leaf_array_match(zap_leaf_t *l, zap_name_t *zn,
 	return (bseen == array_numints);
 }
 
-/*
- * Routines which manipulate leaf entries.
+/**
+ * \brief Lookup a ZAP Leaf
+ *
+ * The hash value must equal zap_hash(name).
+ * \return a handle to the named entry, or ENOENT if not found.  
  */
-
 int
 zap_leaf_lookup(zap_leaf_t *l, zap_name_t *zn, zap_entry_handle_t *zeh)
 {
@@ -441,6 +446,10 @@ again:
 #define	HCD_GTEQ(h1, cd1, h2, cd2) \
 	((h1 > h2) ? TRUE : ((h1 == h2 && cd1 >= cd2) ? TRUE : FALSE))
 
+/**
+ * \return a handle to the entry with this hash+cd, or the entry with the
+ * next closest hash+cd.
+ */
 int
 zap_leaf_lookup_closest(zap_leaf_t *l,
     uint64_t h, uint32_t cd, zap_entry_handle_t *zeh)
@@ -483,6 +492,14 @@ zap_leaf_lookup_closest(zap_leaf_t *l,
 	return (bestcd == -1U ? ENOENT : 0);
 }
 
+/**
+ * \brief Read the first num_integers in the attribute.
+ *
+ * Integer size conversion will be done without sign extension.
+ * \retval 0 Success
+ * \retval EINVAL integer_size is too small
+ * \retval EOVERFLOW There are more than num_integers in the attribute.
+ */
 int
 zap_entry_read(const zap_entry_handle_t *zeh,
     uint8_t integer_size, uint64_t num_integers, void *buf)
@@ -524,6 +541,11 @@ zap_entry_read_name(zap_t *zap, const zap_entry_handle_t *zeh, uint16_t buflen,
 	return (0);
 }
 
+/**
+ * \brief Replace the value of an existing entry.
+ *
+ * May fail if it runs out of space (ENOSPC).
+ */
 int
 zap_entry_update(zap_entry_handle_t *zeh,
 	uint8_t integer_size, uint64_t num_integers, const void *buf)
@@ -546,6 +568,9 @@ zap_entry_update(zap_entry_handle_t *zeh,
 	return (0);
 }
 
+/**
+ * \brief Remove an entry.
+ */
 void
 zap_entry_remove(zap_entry_handle_t *zeh)
 {
@@ -568,6 +593,13 @@ zap_entry_remove(zap_entry_handle_t *zeh)
 	l->l_phys->l_hdr.lh_nentries--;
 }
 
+/**
+ * \brief Create an entry.
+ *
+ * An equal entry must not exist, and this entry must belong in this leaf
+ * (according to its hash value).  Fills in the entry handle on success.
+ * \returns 0 on success or an error code on failure
+ */
 int
 zap_entry_create(zap_leaf_t *l, zap_name_t *zn, uint32_t cd,
     uint8_t integer_size, uint64_t num_integers, const void *buf,
@@ -658,8 +690,9 @@ zap_entry_create(zap_leaf_t *l, zap_name_t *zn, uint32_t cd,
 	return (0);
 }
 
-/*
- * Determine if there is another entry with the same normalized form.
+/**
+ * \brief Determine if there is another entry with the same normalized form.
+ *
  * For performance purposes, either zn or name must be provided (the
  * other can be NULL).  Note, there usually won't be any hash
  * conflicts, in which case we don't need the concatenated/normalized
@@ -784,8 +817,8 @@ zap_leaf_transfer_entry(zap_leaf_t *l, int entry, zap_leaf_t *nl)
 	nl->l_phys->l_hdr.lh_nentries++;
 }
 
-/*
- * Transfer the entries whose hash prefix ends in 1 to the new leaf.
+/**
+ * \brief Transfer the entries whose hash prefix ends in 1 to the new leaf.
  */
 void
 zap_leaf_split(zap_leaf_t *l, zap_leaf_t *nl, boolean_t sort)
@@ -831,7 +864,7 @@ zap_leaf_stats(zap_t *zap, zap_leaf_t *l, zap_stats_t *zs)
 {
 	int i, n;
 
-	n = zap->zap_f.zap_phys->zap_ptrtbl.zt_shift -
+	n = zap->zap_f_phys->zap_ptrtbl.zt_shift -
 	    l->l_phys->l_hdr.lh_prefix_len;
 	n = MIN(n, ZAP_HISTOGRAM_SIZE-1);
 	zs->zs_leafs_with_2n_pointers[n]++;

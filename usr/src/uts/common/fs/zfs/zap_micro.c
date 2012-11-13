@@ -45,7 +45,7 @@ zap_getflags(zap_t *zap)
 {
 	if (zap->zap_ismicro)
 		return (0);
-	return (zap->zap_u.zap_fat.zap_phys->zap_flags);
+	return (zap->zap_f_phys->zap_flags);
 }
 
 int
@@ -390,7 +390,8 @@ mzap_open(objset_t *os, uint64_t obj, dmu_buf_t *db)
 	 * it, because zap_lockdir() checks zap_ismicro without the lock
 	 * held.
 	 */
-	winner = dmu_buf_set_user(db, zap, &zap->zap_m.zap_phys, zap_evict);
+	dmu_buf_init_user(&zap->db_evict, zap_evict);
+	winner = (zap_t *)dmu_buf_set_user(db, &zap->db_evict);
 
 	if (winner != NULL) {
 		rw_exit(&zap->zap_rwlock);
@@ -402,15 +403,14 @@ mzap_open(objset_t *os, uint64_t obj, dmu_buf_t *db)
 	}
 
 	if (zap->zap_ismicro) {
-		zap->zap_salt = zap->zap_m.zap_phys->mz_salt;
-		zap->zap_normflags = zap->zap_m.zap_phys->mz_normflags;
+		zap->zap_salt = zap->zap_m_phys->mz_salt;
+		zap->zap_normflags = zap->zap_m_phys->mz_normflags;
 		zap->zap_m.zap_num_chunks = db->db_size / MZAP_ENT_LEN - 1;
 		avl_create(&zap->zap_m.zap_avl, mze_compare,
 		    sizeof (mzap_ent_t), offsetof(mzap_ent_t, mze_node));
 
 		for (i = 0; i < zap->zap_m.zap_num_chunks; i++) {
-			mzap_ent_phys_t *mze =
-			    &zap->zap_m.zap_phys->mz_chunk[i];
+			mzap_ent_phys_t *mze = &zap->zap_m_phys->mz_chunk[i];
 			if (mze->mze_name[0]) {
 				zap_name_t *zn;
 
@@ -427,8 +427,8 @@ mzap_open(objset_t *os, uint64_t obj, dmu_buf_t *db)
 			}
 		}
 	} else {
-		zap->zap_salt = zap->zap_f.zap_phys->zap_salt;
-		zap->zap_normflags = zap->zap_f.zap_phys->zap_normflags;
+		zap->zap_salt = zap->zap_f_phys->zap_salt;
+		zap->zap_normflags = zap->zap_f_phys->zap_normflags;
 
 		ASSERT3U(sizeof (struct zap_leaf_header), ==,
 		    2*ZAP_LEAF_CHUNKSIZE);
@@ -438,7 +438,7 @@ mzap_open(objset_t *os, uint64_t obj, dmu_buf_t *db)
 		 * other members.
 		 */
 		ASSERT3P(&ZAP_EMBEDDED_PTRTBL_ENT(zap, 0), >,
-		    &zap->zap_f.zap_phys->zap_salt);
+		    &zap->zap_f_phys->zap_salt);
 
 		/*
 		 * The embedded pointer table should end at the end of
@@ -446,8 +446,7 @@ mzap_open(objset_t *os, uint64_t obj, dmu_buf_t *db)
 		 */
 		ASSERT3U((uintptr_t)&ZAP_EMBEDDED_PTRTBL_ENT(zap,
 		    1<<ZAP_EMBEDDED_PTRTBL_SHIFT(zap)) -
-		    (uintptr_t)zap->zap_f.zap_phys, ==,
-		    zap->zap_dbuf->db_size);
+		    (uintptr_t)zap->zap_f_phys, ==, zap->zap_dbuf->db_size);
 	}
 	rw_exit(&zap->zap_rwlock);
 	return (zap);
@@ -476,7 +475,7 @@ zap_lockdir(objset_t *os, uint64_t obj, dmu_tx_t *tx,
 	}
 #endif
 
-	zap = dmu_buf_get_user(db);
+	zap = (zap_t *)dmu_buf_get_user(db);
 	if (zap == NULL)
 		zap = mzap_open(os, obj, db);
 
@@ -617,6 +616,10 @@ mzap_create_impl(objset_t *os, uint64_t obj, int normflags, zap_flags_t flags,
 	}
 }
 
+/**
+ * \brief Create a new zapobj with no attributes from the given (unallocated)
+ * object number.
+ */
 int
 zap_create_claim(objset_t *os, uint64_t obj, dmu_object_type_t ot,
     dmu_object_type_t bonustype, int bonuslen, dmu_tx_t *tx)
@@ -639,6 +642,20 @@ zap_create_claim_norm(objset_t *os, uint64_t obj, int normflags,
 	return (0);
 }
 
+/**
+ * \brief Create a new zapobj with no attributes and return its object number.
+ *
+ * MT_EXACT will cause the zap object to only support MT_EXACT lookups,
+ * otherwise any matchtype can be used for lookups.
+ *
+ * normflags specifies what normalization will be done.  values are:
+ * 0: no normalization (legacy on-disk format, supports MT_EXACT matching
+ *     only)
+ * U8_TEXTPREP_TOLOWER: case normalization will be performed.
+ *     MT_FIRST/MT_BEST matching will find entries that match without
+ *     regard to case (eg. looking for "foo" can find an entry "Foo").
+ * Eventually, other flags will permit unicode normalization as well.
+ */
 uint64_t
 zap_create(objset_t *os, dmu_object_type_t ot,
     dmu_object_type_t bonustype, int bonuslen, dmu_tx_t *tx)
@@ -675,6 +692,11 @@ zap_create_flags(objset_t *os, int normflags, zap_flags_t flags,
 	return (obj);
 }
 
+/**
+ * \brief Destroy this zapobj and all its attributes.
+ *
+ * Frees the object number using dmu_object_free.
+ */
 int
 zap_destroy(objset_t *os, uint64_t zapobj, dmu_tx_t *tx)
 {
@@ -687,11 +709,10 @@ zap_destroy(objset_t *os, uint64_t zapobj, dmu_tx_t *tx)
 	return (dmu_object_free(os, zapobj, tx));
 }
 
-_NOTE(ARGSUSED(0))
 void
-zap_evict(dmu_buf_t *db, void *vzap)
+zap_evict(dmu_buf_user_t *dbu)
 {
-	zap_t *zap = vzap;
+	zap_t *zap = (zap_t *)dbu;
 
 	rw_destroy(&zap->zap_rwlock);
 
@@ -703,6 +724,11 @@ zap_evict(dmu_buf_t *db, void *vzap)
 	kmem_free(zap, sizeof (zap_t));
 }
 
+/**
+ * \brief Get the number of attributes in the specified zap object.
+ *
+ * \param[out]	count	The number of attributes
+ */
 int
 zap_count(objset_t *os, uint64_t zapobj, uint64_t *count)
 {
@@ -721,7 +747,7 @@ zap_count(objset_t *os, uint64_t zapobj, uint64_t *count)
 	return (err);
 }
 
-/*
+/**
  * zn may be NULL; if not specified, it will be computed if needed.
  * See also the comment above zap_entry_normalization_conflict().
  */
@@ -762,10 +788,27 @@ again:
 	return (B_FALSE);
 }
 
-/*
+/**
  * Routines for manipulating attributes.
  */
 
+/**
+ * \brief Retrieve the contents of the attribute with the given name.
+ *
+ * When converting to a larger integer size, the integers will be treated as
+ * unsigned (ie. no sign-extension will be performed).
+ *
+ * If the attribute is longer than the buffer, as many integers as will
+ * fit will be transferred to 'buf'.
+ *
+ * \param[in] num_integers the length (in integers) of 'buf'
+ *
+ * \retval 0 		Success
+ * \retval ENOENT	The requested attribute does not exist
+ * \retval EINVAL	integer_size is smaller than the attribute's integer 
+ * 			size
+ * \retval EOVERFLOW	The entire attribute was not transferred
+ */
 int
 zap_lookup(objset_t *os, uint64_t zapobj, const char *name,
     uint64_t integer_size, uint64_t num_integers, void *buf)
@@ -774,6 +817,13 @@ zap_lookup(objset_t *os, uint64_t zapobj, const char *name,
 	    num_integers, buf, MT_EXACT, NULL, 0, NULL));
 }
 
+/**
+ * \param[in] rn_len	If nonzero, realname will be set to the name of the 
+ * 			found entry (which may be different from the requested
+ * 			name if matchtype is not MT_EXACT).
+ * \param[in,out] ncp	If not NULL, it will be set if there is another name 
+ * 			with the same case/unicode normalized form.
+ */
 int
 zap_lookup_norm(objset_t *os, uint64_t zapobj, const char *name,
     uint64_t integer_size, uint64_t num_integers, void *buf,
@@ -880,6 +930,12 @@ zap_contains(objset_t *os, uint64_t zapobj, const char *name)
 	return (err);
 }
 
+/**
+ * \brief Get the length (in integers) and the integer size of the specified
+ * attribute.
+ *
+ * \retval ENOENT	The requested attribute does not exist
+ */
 int
 zap_length(objset_t *os, uint64_t zapobj, const char *name,
     uint64_t *integer_size, uint64_t *num_integers)
@@ -949,7 +1005,7 @@ mzap_addent(zap_name_t *zn, uint64_t value)
 
 #ifdef ZFS_DEBUG
 	for (i = 0; i < zap->zap_m.zap_num_chunks; i++) {
-		mzap_ent_phys_t *mze = &zap->zap_m.zap_phys->mz_chunk[i];
+		mzap_ent_phys_t *mze = &zap->zap_m_phys->mz_chunk[i];
 		ASSERT(strcmp(zn->zn_key_orig, mze->mze_name) != 0);
 	}
 #endif
@@ -960,7 +1016,7 @@ mzap_addent(zap_name_t *zn, uint64_t value)
 
 again:
 	for (i = start; i < zap->zap_m.zap_num_chunks; i++) {
-		mzap_ent_phys_t *mze = &zap->zap_m.zap_phys->mz_chunk[i];
+		mzap_ent_phys_t *mze = &zap->zap_m_phys->mz_chunk[i];
 		if (mze->mze_name[0] == 0) {
 			mze->mze_value = value;
 			mze->mze_cd = cd;
@@ -981,6 +1037,11 @@ again:
 	ASSERT(!"out of entries!");
 }
 
+/**
+ * \brief Create an attribute with the given name and value.
+ *
+ * \retval EEXIST An attribute with the given name already exists
+ */
 int
 zap_add(objset_t *os, uint64_t zapobj, const char *key,
     int integer_size, uint64_t num_integers,
@@ -1049,6 +1110,15 @@ zap_add_uint64(objset_t *os, uint64_t zapobj, const uint64_t *key,
 	return (err);
 }
 
+/**
+ * \brief Set the attribute with the given name to the given value.  
+ *
+ * If an attribute with the given name does not exist, it will be created.  If
+ * an attribute with the given name already exists, the previous value will be
+ * overwritten.  The integer_size may be different from the existing
+ * attribute's integer size, in which case the attribute's integer size will be
+ * updated to the new value.
+ */
 int
 zap_update(objset_t *os, uint64_t zapobj, const char *name,
     int integer_size, uint64_t num_integers, const void *val, dmu_tx_t *tx)
@@ -1130,6 +1200,11 @@ zap_update_uint64(objset_t *os, uint64_t zapobj, const uint64_t *key,
 	return (err);
 }
 
+/**
+ * \brief Remove the specified attribute.
+ *
+ * \retval ENOENT The specified attribute does not exist
+ */
 int
 zap_remove(objset_t *os, uint64_t zapobj, const char *name, dmu_tx_t *tx)
 {
@@ -1161,7 +1236,7 @@ zap_remove_norm(objset_t *os, uint64_t zapobj, const char *name,
 			err = ENOENT;
 		} else {
 			zap->zap_m.zap_num_entries--;
-			bzero(&zap->zap_m.zap_phys->mz_chunk[mze->mze_chunkid],
+			bzero(&zap->zap_m_phys->mz_chunk[mze->mze_chunkid],
 			    sizeof (mzap_ent_phys_t));
 			mze_remove(zap, mze);
 		}
@@ -1210,6 +1285,12 @@ zap_cursor_init_serialized(zap_cursor_t *zc, objset_t *os, uint64_t zapobj,
 	zc->zc_cd = 0;
 }
 
+/**
+ * \brief Initialize a zap cursor, pointing to the "first" attribute of the
+ * zapobj.  
+ *
+ * You must _fini the cursor when you are done with it.
+ */
 void
 zap_cursor_init(zap_cursor_t *zc, objset_t *os, uint64_t zapobj)
 {
@@ -1232,6 +1313,15 @@ zap_cursor_fini(zap_cursor_t *zc)
 	zc->zc_objset = NULL;
 }
 
+/**
+ * \brief Get a persistent cookie pointing to the current position of the zap
+ * cursor.
+ *
+ * The low 4 bits in the cookie are always zero, and thus can be used as to
+ * differentiate a serialized cookie from a different type of value.  The
+ * cookie will be less than 2^32 as long as there are fewer than 2^22 (4.2
+ * million) entries in the zap object.
+ */
 uint64_t
 zap_cursor_serialize(zap_cursor_t *zc)
 {
@@ -1254,6 +1344,11 @@ zap_cursor_serialize(zap_cursor_t *zc)
 	    ((uint64_t)zc->zc_cd << zap_hashbits(zc->zc_zap)));
 }
 
+/**
+ * \brief Get the attribute currently pointed to by the cursor.  
+ *
+ * \retval ENOENT At the end of the attributes.
+ */
 int
 zap_cursor_retrieve(zap_cursor_t *zc, zap_attribute_t *za)
 {
@@ -1319,6 +1414,9 @@ zap_cursor_retrieve(zap_cursor_t *zc, zap_attribute_t *za)
 	return (err);
 }
 
+/**
+ * \brief Advance the cursor to the next attribute.
+ */
 void
 zap_cursor_advance(zap_cursor_t *zc)
 {
@@ -1367,6 +1465,13 @@ out:
 	return (err);
 }
 
+/**
+ * \brief Get statistics about a ZAP object.  
+ *
+ * \note You need to be aware of the internal implementation of the ZAP to
+ * correctly interpret some of the statistics.  This interface shouldn't be
+ * relied on unless you really know what you're doing.
+ */
 int
 zap_get_stats(objset_t *os, uint64_t zapobj, zap_stats_t *zs)
 {

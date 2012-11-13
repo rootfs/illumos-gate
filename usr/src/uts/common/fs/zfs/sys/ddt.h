@@ -35,16 +35,20 @@
 extern "C" {
 #endif
 
-/*
- * On-disk DDT formats, in the desired search order (newest version first).
+/**
+ * \brief On-disk DDT formats
+ *
+ * In the desired search order (newest version first).
  */
 enum ddt_type {
 	DDT_TYPE_ZAP = 0,
 	DDT_TYPES
 };
 
-/*
- * DDT classes, in the desired search order (highest replication level first).
+/**
+ * \brief DDT classes
+ *
+ * In the desired search order (highest replication level first).
  */
 enum ddt_class {
 	DDT_CLASS_DITTO = 0,
@@ -58,21 +62,26 @@ enum ddt_class {
 #define	DDT_COMPRESS_BYTEORDER_MASK	0x80
 #define	DDT_COMPRESS_FUNCTION_MASK	0x7f
 
-/*
- * On-disk ddt entry:  key (name) and physical storage (value).
+/**
+ * \brief On-disk ddt entry
+ *
+ * Key (name) and physical storage (value).
  */
 typedef struct ddt_key {
-	zio_cksum_t	ddk_cksum;	/* 256-bit block checksum */
-	uint64_t	ddk_prop;	/* LSIZE, PSIZE, compression */
+	zio_cksum_t	ddk_cksum;	/**< 256-bit block checksum */
+	/**
+	 * LSIZE, PSIZE, compression
+	 *
+	 * layout:
+	 \verbatim
++-------+-------+-------+-------+-------+-------+-------+-------+
+|   0	|   0	|   0	| comp	|     PSIZE	|     LSIZE	|
++-------+-------+-------+-------+-------+-------+-------+-------+
+\endverbatim
+	 */
+	uint64_t	ddk_prop;	/**< LSIZE, PSIZE, compression */
 } ddt_key_t;
 
-/*
- * ddk_prop layout:
- *
- *	+-------+-------+-------+-------+-------+-------+-------+-------+
- *	|   0	|   0	|   0	| comp	|     PSIZE	|     LSIZE	|
- *	+-------+-------+-------+-------+-------+-------+-------+-------+
- */
 #define	DDK_GET_LSIZE(ddk)	\
 	BF64_GET_SB((ddk)->ddk_prop, 0, 16, SPA_MINBLOCKSHIFT, 1)
 #define	DDK_SET_LSIZE(ddk, x)	\
@@ -102,8 +111,8 @@ enum ddt_phys_type {
 	DDT_PHYS_TYPES
 };
 
-/*
- * In-core ddt entry
+/**
+ * \brief In-core ddt entry
  */
 struct ddt_entry {
 	ddt_key_t	dde_key;
@@ -118,8 +127,8 @@ struct ddt_entry {
 	avl_node_t	dde_node;
 };
 
-/*
- * In-core ddt
+/**
+ * \brief In-core ddt
  */
 struct ddt {
 	kmutex_t	ddt_lock;
@@ -136,8 +145,8 @@ struct ddt {
 	avl_node_t	ddt_node;
 };
 
-/*
- * In-core and on-disk bookmark for DDT walks
+/**
+ * \brief In-core and on-disk bookmark for DDT walks
  */
 typedef struct ddt_bookmark {
 	uint64_t	ddb_class;
@@ -146,8 +155,8 @@ typedef struct ddt_bookmark {
 	uint64_t	ddb_cursor;
 } ddt_bookmark_t;
 
-/*
- * Ops vector to access a specific DDT object type.
+/**
+ * \brief Ops vector to access a specific DDT object type.
  */
 typedef struct ddt_ops {
 	char ddt_op_name[32];

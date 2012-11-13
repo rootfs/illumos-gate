@@ -237,9 +237,10 @@ dsl_deadlist_insert(dsl_deadlist_t *dl, const blkptr_t *bp, dmu_tx_t *tx)
 	dle_enqueue(dl, dle, bp, tx);
 }
 
-/*
- * Insert new key in deadlist, which must be > all current entries.
- * mintxg is not inclusive.
+/**
+ * \brief Insert new key in deadlist
+ *
+ * key must be > all current entries.  mintxg is not inclusive.
  */
 void
 dsl_deadlist_add_key(dsl_deadlist_t *dl, uint64_t mintxg, dmu_tx_t *tx)
@@ -262,8 +263,10 @@ dsl_deadlist_add_key(dsl_deadlist_t *dl, uint64_t mintxg, dmu_tx_t *tx)
 	    mintxg, obj, tx));
 }
 
-/*
- * Remove this key, merging its entries into the previous key.
+/**
+ * \brief Remove this key
+ *
+ * Merge its entries into the previous key.
  */
 void
 dsl_deadlist_remove_key(dsl_deadlist_t *dl, uint64_t mintxg, dmu_tx_t *tx)
@@ -289,8 +292,8 @@ dsl_deadlist_remove_key(dsl_deadlist_t *dl, uint64_t mintxg, dmu_tx_t *tx)
 	VERIFY3U(0, ==, zap_remove_int(dl->dl_os, dl->dl_object, mintxg, tx));
 }
 
-/*
- * Walk ds's snapshots to regenerate generate ZAP & AVL.
+/**
+ * \brief Walk ds's snapshots to regenerate generate ZAP & AVL.
  */
 static void
 dsl_deadlist_regenerate(objset_t *os, uint64_t dlobj,
@@ -362,8 +365,9 @@ dsl_deadlist_space(dsl_deadlist_t *dl,
 	mutex_exit(&dl->dl_lock);
 }
 
-/*
- * return space used in the range (mintxg, maxtxg].
+/**
+ * \brief return space used in the range (mintxg, maxtxg].
+ *
  * Includes maxtxg, does not include mintxg.
  * mintxg and maxtxg must both be keys in the deadlist (unless maxtxg is
  * larger than any bp in the deadlist (eg. UINT64_MAX)).
@@ -447,9 +451,10 @@ dsl_deadlist_insert_cb(void *arg, const blkptr_t *bp, dmu_tx_t *tx)
 	return (0);
 }
 
-/*
- * Merge the deadlist pointed to by 'obj' into dl.  obj will be left as
- * an empty deadlist.
+/**
+ * \brief Merge the deadlist pointed to by 'obj' into dl
+ *
+ * obj will be left as an empty deadlist.
  */
 void
 dsl_deadlist_merge(dsl_deadlist_t *dl, uint64_t obj, dmu_tx_t *tx)
@@ -486,8 +491,10 @@ dsl_deadlist_merge(dsl_deadlist_t *dl, uint64_t obj, dmu_tx_t *tx)
 	dmu_buf_rele(bonus, FTAG);
 }
 
-/*
- * Remove entries on dl that are >= mintxg, and put them on the bpobj.
+/**
+ * \brief Remove entries on dl that are >= mintxg
+ *
+ * Put them on the bpobj.
  */
 void
 dsl_deadlist_move_bpobj(dsl_deadlist_t *dl, bpobj_t *bpo, uint64_t mintxg,

@@ -41,12 +41,12 @@ struct dsl_pool;
 struct dnode;
 struct dsl_dir;
 
+/**
+ * No synchronization is needed because a tx can only be handled
+ * by one thread.
+ */
 struct dmu_tx {
-	/*
-	 * No synchronization is needed because a tx can only be handled
-	 * by one thread.
-	 */
-	list_t tx_holds; /* list of dmu_tx_hold_t */
+	list_t tx_holds; /**< list of dmu_tx_hold_t */
 	objset_t *tx_objset;
 	struct dsl_dir *tx_dir;
 	struct dsl_pool *tx_pool;
@@ -56,7 +56,7 @@ struct dmu_tx {
 	txg_handle_t tx_txgh;
 	void *tx_tempreserve_cookie;
 	struct dmu_tx_hold *tx_needassign_txh;
-	list_t tx_callbacks; /* list of dmu_tx_callback_t on this dmu_tx */
+	list_t tx_callbacks; /**< list of dmu_tx_callback_t on this dmu_tx */
 	uint8_t tx_anyobj;
 	int tx_err;
 #ifdef ZFS_DEBUG
@@ -98,9 +98,9 @@ typedef struct dmu_tx_hold {
 } dmu_tx_hold_t;
 
 typedef struct dmu_tx_callback {
-	list_node_t		dcb_node;    /* linked to tx_callbacks list */
-	dmu_tx_callback_func_t	*dcb_func;   /* caller function pointer */
-	void			*dcb_data;   /* caller private data */
+	list_node_t		dcb_node;    /**< linked to tx_callbacks list */
+	dmu_tx_callback_func_t	*dcb_func;   /**< caller function pointer */
+	void			*dcb_data;   /**< caller private data */
 } dmu_tx_callback_t;
 
 /*
@@ -130,14 +130,14 @@ int dmu_tx_is_syncing(dmu_tx_t *tx);
 int dmu_tx_private_ok(dmu_tx_t *tx);
 void dmu_tx_add_new_object(dmu_tx_t *tx, objset_t *os, uint64_t object);
 void dmu_tx_willuse_space(dmu_tx_t *tx, int64_t delta);
-void dmu_tx_dirty_buf(dmu_tx_t *tx, struct dmu_buf_impl *db);
+void dmu_tx_verify_dirty_buf(dmu_tx_t *tx, struct dmu_buf_impl *db);
 int dmu_tx_holds(dmu_tx_t *tx, uint64_t object);
 void dmu_tx_hold_space(dmu_tx_t *tx, uint64_t space);
 
 #ifdef ZFS_DEBUG
-#define	DMU_TX_DIRTY_BUF(tx, db)	dmu_tx_dirty_buf(tx, db)
+#define	DMU_TX_VERIFY_DIRTY_BUF(tx, db)	dmu_tx_verify_dirty_buf(tx, db)
 #else
-#define	DMU_TX_DIRTY_BUF(tx, db)
+#define	DMU_TX_VERIFY_DIRTY_BUF(tx, db)
 #endif
 
 #ifdef	__cplusplus

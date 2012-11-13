@@ -26,9 +26,9 @@
 #include <sys/refcount.h>
 #include <sys/rrwlock.h>
 
-/*
- * This file contains the implementation of a re-entrant read
- * reader/writer lock (aka "rrwlock").
+/**
+ * \file rrwlock.c
+ * \brief A re-entrant read reader/writer lock (aka "rrwlock").
  *
  * This is a normal reader/writer lock with the additional feature
  * of allowing threads who have already obtained a read lock to
@@ -68,7 +68,7 @@
  * waiting writers.  Hence, we do not starve writers.
  */
 
-/* global key for TSD */
+/** \brief global key for TSD */
 uint_t rrw_tsd_key;
 
 typedef struct rrw_node {
@@ -91,8 +91,8 @@ rrn_find(rrwlock_t *rrl)
 	return (NULL);
 }
 
-/*
- * Add a node to the head of the singly linked list.
+/**
+ * \brief Add a node to the head of the singly linked list.
  */
 static void
 rrn_add(rrwlock_t *rrl)
@@ -105,7 +105,7 @@ rrn_add(rrwlock_t *rrl)
 	VERIFY(tsd_set(rrw_tsd_key, rn) == 0);
 }
 
-/*
+/**
  * If a node is found for 'rrl', then remove the node from this
  * thread's list and return TRUE; otherwise return FALSE.
  */
@@ -201,6 +201,11 @@ rrw_enter_write(rrwlock_t *rrl)
 	mutex_exit(&rrl->rr_lock);
 }
 
+/**
+ * \param[in]	tag	Used in reference counting tracking.  It must be the 
+ * 			same in a rrw_enter() as in its corresponding
+ * 			rrw_exit().
+ */
 void
 rrw_enter(rrwlock_t *rrl, krw_t rw, void *tag)
 {
@@ -210,6 +215,11 @@ rrw_enter(rrwlock_t *rrl, krw_t rw, void *tag)
 		rrw_enter_write(rrl);
 }
 
+/**
+ * \param[in]	tag	Used in reference counting tracking.  It must be the 
+ * 			same in a rrw_enter() as in its corresponding
+ * 			rrw_exit().
+ */
 void
 rrw_exit(rrwlock_t *rrl, void *tag)
 {

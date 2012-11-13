@@ -27,13 +27,16 @@
  * Copyright (c) 2012 by Delphix. All rights reserved.
  */
 
-/*
+/**
+ * \file vdev_missing.c
+ * \brief Routines for handling the special "missing" vdev
+ *
  * The 'missing' vdev is a special vdev type used only during import.  It
  * signifies a placeholder in the root vdev for some vdev that we know is
  * missing.  We pass it down to the kernel to allow the rest of the
  * configuration to parsed and an attempt made to open all available devices.
- * Because its GUID is always 0, we know that the guid sum will mismatch and we
- * won't be able to open the pool anyway.
+ * Because its GUID is always 0, we know that the guid sum will mismatch and
+ * we won't be able to open the pool anyway.
  */
 
 #include <sys/zfs_context.h>
@@ -69,7 +72,7 @@ vdev_missing_close(vdev_t *vd)
 static int
 vdev_missing_io_start(zio_t *zio)
 {
-	zio->io_error = ENOTSUP;
+	ZIO_SET_ERROR(zio, ENOTSUP);
 	return (ZIO_PIPELINE_CONTINUE);
 }
 

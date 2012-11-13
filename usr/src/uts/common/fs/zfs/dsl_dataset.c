@@ -69,7 +69,7 @@ static dsl_syncfunc_t dsl_dataset_set_reservation_sync;
 #define	DSL_DATASET_IS_DESTROYED(ds)	((ds)->ds_owner == dsl_reaper)
 
 
-/*
+/**
  * Figure out how much of this delta should be propogated to the dsl_dir
  * layer.  If there's a refreservation, that space has already been
  * partially accounted for in our ancestors.
@@ -156,7 +156,7 @@ dsl_dataset_block_kill(dsl_dataset_t *ds, const blkptr_t *bp, dmu_tx_t *tx,
 	if (bp->blk_birth > ds->ds_phys->ds_prev_snap_txg) {
 		int64_t delta;
 
-		dprintf_bp(bp, "freeing ds=%llu", ds->ds_object);
+		dprintf_bp(bp, "freeing ds=%llu\n", ds->ds_object);
 		dsl_free(tx->tx_pool, tx->tx_txg, bp);
 
 		mutex_enter(&ds->ds_dir->dd_lock);
@@ -249,13 +249,13 @@ dsl_dataset_block_freeable(dsl_dataset_t *ds, const blkptr_t *bp,
 	return (B_TRUE);
 }
 
-/* ARGSUSED */
 static void
-dsl_dataset_evict(dmu_buf_t *db, void *dsv)
+dsl_dataset_evict_impl(dsl_dataset_t *ds, boolean_t evict_deadlist)
 {
-	dsl_dataset_t *ds = dsv;
 
 	ASSERT(ds->ds_owner == NULL || DSL_DATASET_IS_DESTROYED(ds));
+
+	ds->ds_dbuf = NULL;
 
 	unique_remove(ds->ds_fsid_guid);
 
@@ -268,7 +268,7 @@ dsl_dataset_evict(dmu_buf_t *db, void *dsv)
 	}
 
 	bplist_destroy(&ds->ds_pending_deadlist);
-	if (db != NULL) {
+	if (evict_deadlist) {
 		dsl_deadlist_close(&ds->ds_deadlist);
 	} else {
 		ASSERT(ds->ds_deadlist.dl_dbuf == NULL);
@@ -290,6 +290,13 @@ dsl_dataset_evict(dmu_buf_t *db, void *dsv)
 	cv_destroy(&ds->ds_exclusive_cv);
 
 	kmem_free(ds, sizeof (dsl_dataset_t));
+}
+
+/* ARGSUSED */
+static void
+dsl_dataset_evict(dmu_buf_user_t *dbu)
+{
+	dsl_dataset_evict_impl((dsl_dataset_t *)dbu, B_TRUE);
 }
 
 static int
@@ -380,14 +387,13 @@ dsl_dataset_get_ref(dsl_pool_t *dp, uint64_t dsobj, void *tag,
 	if (doi.doi_type != DMU_OT_DSL_DATASET)
 		return (EINVAL);
 
-	ds = dmu_buf_get_user(dbuf);
+	ds = (dsl_dataset_t *)dmu_buf_get_user(dbuf);
 	if (ds == NULL) {
 		dsl_dataset_t *winner;
 
 		ds = kmem_zalloc(sizeof (dsl_dataset_t), KM_SLEEP);
 		ds->ds_dbuf = dbuf;
 		ds->ds_object = dsobj;
-		ds->ds_phys = dbuf->db_data;
 
 		mutex_init(&ds->ds_lock, NULL, MUTEX_DEFAULT, NULL);
 		mutex_init(&ds->ds_recvlock, NULL, MUTEX_DEFAULT, NULL);
@@ -467,10 +473,11 @@ dsl_dataset_get_ref(dsl_pool_t *dp, uint64_t dsobj, void *tag,
 			ds->ds_reserved = ds->ds_quota = 0;
 		}
 
-		if (err == 0) {
-			winner = dmu_buf_set_user_ie(dbuf, ds, &ds->ds_phys,
-			    dsl_dataset_evict);
-		}
+		dmu_buf_init_user(&ds->db_evict, dsl_dataset_evict);
+		if (err == 0)
+			winner = (dsl_dataset_t *)
+			    dmu_buf_set_user_ie(dbuf, &ds->db_evict);
+
 		if (err || winner) {
 			bplist_destroy(&ds->ds_pending_deadlist);
 			dsl_deadlist_close(&ds->ds_deadlist);
@@ -743,7 +750,7 @@ dsl_dataset_disown(dsl_dataset_t *ds, void *tag)
 	if (ds->ds_dbuf)
 		dsl_dataset_drop_ref(ds, tag);
 	else
-		dsl_dataset_evict(NULL, ds);
+		dsl_dataset_evict_impl(ds, B_FALSE);
 }
 
 boolean_t
@@ -946,7 +953,9 @@ dmu_get_recursive_snaps_nvl(const char *fsname, const char *snapname,
 /* FreeBSD ioctl compat end */
 #endif /* __FreeBSD__ */
 
-/*
+/**
+ * \brief Destroy 'snapname' in all descendants of 'fsname'.
+ *
  * The snapshots must all be in the same pool.
  */
 int
@@ -1029,11 +1038,12 @@ dsl_dataset_might_destroy_origin(dsl_dataset_t *ds)
 	return (might_destroy);
 }
 
-/*
+/**
  * If we're removing a clone, and these three conditions are true:
- *	1) the clone's origin has no other children
- *	2) the clone's origin has no user references
- *	3) the clone's origin has been marked for deferred destruction
+ *	-# the clone's origin has no other children
+ *	-# the clone's origin has no user references
+ *	-# the clone's origin has been marked for deferred destruction
+ *
  * Then, prepare to remove the origin as part of this sync task group.
  */
 static int
@@ -1068,7 +1078,7 @@ dsl_dataset_origin_rm_prep(struct dsl_ds_destroyarg *dsda, void *tag)
 	return (0);
 }
 
-/*
+/**
  * ds must be opened as OWNER.  On return (whether successful or not),
  * ds will be closed and caller can no longer dereference it.
  */
@@ -1416,7 +1426,7 @@ dsl_dataset_origin_check(struct dsl_ds_destroyarg *dsda, void *tag,
 	return (0);
 }
 
-/*
+/**
  * If you add new checks here, you may need to add
  * additional checks to the "temporary" case in
  * snapshot_check() in dmu_objset.c.
@@ -1489,6 +1499,7 @@ dsl_dataset_destroy_check(void *arg1, void *arg2, dmu_tx_t *tx)
 }
 
 struct refsarg {
+	dmu_buf_user_t db_evict;
 	kmutex_t lock;
 	boolean_t gone;
 	kcondvar_t cv;
@@ -1496,9 +1507,9 @@ struct refsarg {
 
 /* ARGSUSED */
 static void
-dsl_dataset_refs_gone(dmu_buf_t *db, void *argv)
+dsl_dataset_refs_gone(dmu_buf_user_t *dbu)
 {
-	struct refsarg *arg = argv;
+	struct refsarg *arg = (struct refsarg *)dbu;
 
 	mutex_enter(&arg->lock);
 	arg->gone = TRUE;
@@ -1509,14 +1520,16 @@ dsl_dataset_refs_gone(dmu_buf_t *db, void *argv)
 static void
 dsl_dataset_drain_refs(dsl_dataset_t *ds, void *tag)
 {
-	struct refsarg arg;
+	struct refsarg arg = { 0 };
+	dmu_buf_user_t *old_user = &ds->db_evict;
 
-	bzero(&arg, sizeof(arg));
 	mutex_init(&arg.lock, NULL, MUTEX_DEFAULT, NULL);
 	cv_init(&arg.cv, NULL, CV_DEFAULT, NULL);
 	arg.gone = FALSE;
-	(void) dmu_buf_update_user(ds->ds_dbuf, ds, &arg, &ds->ds_phys,
-	    dsl_dataset_refs_gone);
+	dmu_buf_init_user(&arg.db_evict, dsl_dataset_refs_gone);
+	VERIFY(dmu_buf_replace_user(ds->ds_dbuf, old_user,
+	    &arg.db_evict) == old_user);
+
 	dmu_buf_rele(ds->ds_dbuf, tag);
 	mutex_enter(&arg.lock);
 	while (!arg.gone)
@@ -1524,7 +1537,6 @@ dsl_dataset_drain_refs(dsl_dataset_t *ds, void *tag)
 	ASSERT(arg.gone);
 	mutex_exit(&arg.lock);
 	ds->ds_dbuf = NULL;
-	ds->ds_phys = NULL;
 	mutex_destroy(&arg.lock);
 	cv_destroy(&arg.cv);
 }
@@ -1668,8 +1680,7 @@ old_synchronous_dataset_destroy(dsl_dataset_t *ds, dmu_tx_t *tx)
 	 */
 	ka.ds = ds;
 	ka.tx = tx;
-	err = traverse_dataset(ds,
-	    ds->ds_phys->ds_prev_snap_txg, TRAVERSE_POST,
+	err = traverse_dataset(ds, ds->ds_phys->ds_prev_snap_txg, TRAVERSE_POST,
 	    kill_blkptr, &ka);
 	ASSERT0(err);
 	ASSERT(!DS_UNIQUE_IS_ACCURATE(ds) || ds->ds_phys->ds_unique_bytes == 0);
@@ -1942,7 +1953,8 @@ dsl_dataset_destroy_sync(void *arg1, void *tag, dmu_tx_t *tx)
 			    ds->ds_phys->ds_unique_bytes == used);
 
 			bptree_add(mos, dp->dp_bptree_obj,
-			    &ds->ds_phys->ds_bp, ds->ds_phys->ds_prev_snap_txg,
+			    &ds->ds_phys->ds_bp,
+			    ds->ds_phys->ds_prev_snap_txg,
 			    used, comp, uncomp, tx);
 			dsl_dir_diduse_space(ds->ds_dir, DD_USED_HEAD,
 			    -used, -comp, -uncomp, tx);
@@ -3004,7 +3016,7 @@ dsl_dataset_promote_sync(void *arg1, void *arg2, dmu_tx_t *tx)
 }
 
 static char *snaplist_tag = "snaplist";
-/*
+/**
  * Make a list of dsl_dataset_t's for the snapshots between first_obj
  * (exclusive) and last_obj (inclusive).  The list will be in reverse
  * order (last_obj will be the list_head()).  If first_obj == 0, do all
@@ -3090,14 +3102,16 @@ snaplist_destroy(list_t *l, boolean_t own)
 	list_destroy(l);
 }
 
-/*
- * Promote a clone.  Nomenclature note:
- * "clone" or "cds": the original clone which is being promoted
- * "origin" or "ods": the snapshot which is originally clone's origin
- * "origin head" or "ohds": the dataset which is the head
- * (filesystem/volume) for the origin
- * "origin origin": the origin of the origin's filesystem (typically
- * NULL, indicating that the clone is not a clone of a clone).
+/**
+ * \brief Promote a clone.
+ *
+ * Nomenclature note:
+ * 	- "clone" or "cds": the original clone which is being promoted
+	- "origin" or "ods": the snapshot which is originally clone's origin
+	- "origin head" or "ohds": the dataset which is the head
+	  (filesystem/volume) for the origin
+	- "origin origin": the origin of the origin's filesystem (typically 
+	  NULL, indicating that the clone is not a clone of a clone).
  */
 int
 dsl_dataset_promote(const char *name, char *conflsnap)
@@ -3358,10 +3372,11 @@ dsl_dataset_clone_swap_sync(void *arg1, void *arg2, dmu_tx_t *tx)
 	dsl_scan_ds_clone_swapped(csa->ohds, csa->cds, tx);
 }
 
-/*
- * Swap 'clone' with its origin head datasets.  Used at the end of "zfs
- * recv" into an existing fs to swizzle the file system to the new
- * version, and by "zfs rollback".  Can also be used to swap two
+/**
+ * \brief Swap 'clone' with its origin head datasets.
+ *
+ * Used at the end of "zfs recv" into an existing fs to swizzle the file system
+ * to the new version, and by "zfs rollback".  Can also be used to swap two
  * independent head datasets if neither has any snapshots.
  */
 int
@@ -3398,7 +3413,9 @@ retry:
 	return (error);
 }
 
-/*
+/**
+ * \brief Find the name of a dataset
+ *
  * Given a pool name and a dataset object number in that pool,
  * return the name of that dataset.
  */
@@ -3461,8 +3478,7 @@ dsl_dataset_check_quota(dsl_dataset_t *ds, boolean_t check_quota,
 	 * may free up space for us).
 	 */
 	if (ds->ds_phys->ds_referenced_bytes + inflight >= ds->ds_quota) {
-		if (inflight > 0 ||
-		    ds->ds_phys->ds_referenced_bytes < ds->ds_quota)
+		if (inflight > 0 || ds->ds_phys->ds_referenced_bytes < ds->ds_quota)
 			error = ERESTART;
 		else
 			error = EDQUOT;
@@ -3669,7 +3685,7 @@ dsl_register_onexit_hold_cleanup(dsl_dataset_t *ds, const char *htag,
 	    dsl_dataset_user_release_onexit, ca, NULL));
 }
 
-/*
+/**
  * If you add new checks here, you may need to add
  * additional checks to the "temporary" case in
  * snapshot_check() in dmu_objset.c.
@@ -4013,9 +4029,7 @@ dsl_dataset_user_release_one(const char *dsname, void *arg)
 
 	if (might_destroy) {
 #ifdef _KERNEL
-		name = kmem_asprintf("%s@%s", dsname, ha->snapname);
-		error = zfs_unmount_snap(name, NULL);
-		strfree(name);
+		error = zfs_unmount_snap(dsname, ha->snapname);
 		if (error) {
 			dsl_dataset_rele(ds, dtag);
 			return (error);
@@ -4113,9 +4127,11 @@ top:
 	return (error);
 }
 
-/*
- * Called at spa_load time (with retry == B_FALSE) to release a stale
- * temporary user hold. Also called by the onexit code (with retry == B_TRUE).
+/**
+ * \brief Called at spa_load time (with retry == B_FALSE) to release a stale
+ * temporary user hold. 
+ *
+ * Also called by the onexit code (with retry == B_TRUE).
  */
 int
 dsl_dataset_user_release_tmp(dsl_pool_t *dp, uint64_t dsobj, char *htag,
@@ -4189,11 +4205,11 @@ dsl_dataset_get_holds(const char *dsname, nvlist_t **nvp)
 	return (0);
 }
 
-/*
- * Note, this function is used as the callback for dmu_objset_find().  We
- * always return 0 so that we will continue to find and process
- * inconsistent datasets, even if we encounter an error trying to
- * process one of them.
+/**
+ * \note  This function is used as the callback for dmu_objset_find().  We
+ *        always return 0 so that we will continue to find and process
+ *        inconsistent datasets, even if we encounter an error trying to
+ *        process one of them.
  */
 /* ARGSUSED */
 int

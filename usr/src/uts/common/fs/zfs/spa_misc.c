@@ -50,45 +50,40 @@
 #include "zfs_prop.h"
 #include "zfeature_common.h"
 
-/*
- * SPA locking
+/**
+ * \file spa_misc.c
+ * \brief SPA locking
  *
  * There are four basic locks for managing spa_t structures:
  *
- * spa_namespace_lock (global mutex)
+ * - <b>spa_namespace_lock (global mutex)</b>
+ *      This lock does not need to handle recursion.  A create or destroy may
+ *      reference objects (files or zvols) in other pools, but by
+ *      definition they must have an existing reference, and will never need
+ *      to lookup a spa_t by name.
+ *      This lock must be acquired to do any of the following:
+ *      	- Lookup a spa_t by name
+ *      	- Add or remove a spa_t from the namespace
+ *      	- Increase spa_refcount from non-zero
+ *      	- Check if spa_refcount is zero
+ *      	- Rename a spa_t
+ *      	- add/remove/attach/detach devices
+ *      	- Held for the duration of create/destroy/import/export
+ * - <b>spa_refcount (per-spa refcount_t protected by mutex)</b>
+ *      This reference count keep track of any active users of the spa_t.  The
+ *      spa_t cannot be destroyed or freed while this is non-zero.  Internally,
+ *      the refcount is never really 'zero' - opening a pool implicitly keeps
+ *      some references in the DMU.  Internally we check against spa_minref, but
+ *      present the image of a zero/non-zero value to consumers.
+ * - <b>spa_config_lock[] (per-spa array of rwlocks)</b>
+ *      This protects the spa_t from config changes, and must be held in
+ *      the following circumstances:
+ *      	- RW_READER to perform I/O to the spa
+ *      	- RW_WRITER to change the vdev config
+ * - <b>spa_spare_lock (local mutex)</b>
+ *      Protects the AVL tree that stores spare vdevs
  *
- *	This lock must be acquired to do any of the following:
- *
- *		- Lookup a spa_t by name
- *		- Add or remove a spa_t from the namespace
- *		- Increase spa_refcount from non-zero
- *		- Check if spa_refcount is zero
- *		- Rename a spa_t
- *		- add/remove/attach/detach devices
- *		- Held for the duration of create/destroy/import/export
- *
- *	It does not need to handle recursion.  A create or destroy may
- *	reference objects (files or zvols) in other pools, but by
- *	definition they must have an existing reference, and will never need
- *	to lookup a spa_t by name.
- *
- * spa_refcount (per-spa refcount_t protected by mutex)
- *
- *	This reference count keep track of any active users of the spa_t.  The
- *	spa_t cannot be destroyed or freed while this is non-zero.  Internally,
- *	the refcount is never really 'zero' - opening a pool implicitly keeps
- *	some references in the DMU.  Internally we check against spa_minref, but
- *	present the image of a zero/non-zero value to consumers.
- *
- * spa_config_lock[] (per-spa array of rwlocks)
- *
- *	This protects the spa_t from config changes, and must be held in
- *	the following circumstances:
- *
- *		- RW_READER to perform I/O to the spa
- *		- RW_WRITER to change the vdev config
- *
- * The locking order is fairly straightforward:
+ *  The locking order is fairly straightforward:
  *
  *		spa_namespace_lock	->	spa_refcount
  *
@@ -104,40 +99,33 @@
  *
  *	The namespace lock must always be taken before the config lock.
  *
- *
  * The spa_namespace_lock can be acquired directly and is globally visible.
  *
  * The namespace is manipulated using the following functions, all of which
  * require the spa_namespace_lock to be held.
- *
- *	spa_lookup()		Lookup a spa_t by name.
- *
- *	spa_add()		Create a new spa_t in the namespace.
- *
- *	spa_remove()		Remove a spa_t from the namespace.  This also
- *				frees up any memory associated with the spa_t.
- *
- *	spa_next()		Returns the next spa_t in the system, or the
- *				first if NULL is passed.
- *
- *	spa_evict_all()		Shutdown and remove all spa_t structures in
- *				the system.
- *
- *	spa_guid_exists()	Determine whether a pool/device guid exists.
+ *	- <b>spa_lookup()</b>		Lookup a spa_t by name.
+ *	- <b>spa_add()</b>		Create a new spa_t in the namespace.
+ *	- <b>spa_remove()</b>		Remove a spa_t from the namespace.
+ *					This also frees up any memory associated
+ *					with the spa_t.
+ *	- <b>spa_next()</b>		Returns the next spa_t in the system,
+ *					or the first if NULL is passed.
+ *	- <b>spa_evict_all()</b>	Shutdown and remove all spa_t structures
+ *					in the system.
+ *	- <b>spa_guid_exists()</b>	Determine whether a pool/device guid
+ *					exists.
  *
  * The spa_refcount is manipulated using the following functions:
- *
- *	spa_open_ref()		Adds a reference to the given spa_t.  Must be
- *				called with spa_namespace_lock held if the
- *				refcount is currently zero.
- *
- *	spa_close()		Remove a reference from the spa_t.  This will
- *				not free the spa_t or remove it from the
- *				namespace.  No locking is required.
- *
- *	spa_refcount_zero()	Returns true if the refcount is currently
- *				zero.  Must be called with spa_namespace_lock
- *				held.
+ *	- <b>spa_open_ref()</b>		Adds a reference to the given spa_t.
+ *					Must be called with spa_namespace_lock
+ *					held if the refcount is currently zero.
+ *	- <b>spa_close()</b>		Remove a reference from the spa_t.
+ *					This will not free the spa_t or remove
+ *					it from the namespace.  No locking is
+ *					required.
+ *	- <b>spa_refcount_zero()</b>	Returns true if the refcount is
+ *					currently zero.  Must be called with
+ *					spa_namespace_lock held.
  *
  * The spa_config_lock[] is an array of rwlocks, ordered as follows:
  * SCL_CONFIG > SCL_STATE > SCL_ALLOC > SCL_ZIO > SCL_FREE > SCL_VDEV.
@@ -161,33 +149,28 @@
  *
  * The lock acquisition rules are as follows:
  *
- * SCL_CONFIG
+ * - <b>SCL_CONFIG</b>
  *	Protects changes to the vdev tree topology, such as vdev
  *	add/remove/attach/detach.  Protects the dirty config list
  *	(spa_config_dirty_list) and the set of spares and l2arc devices.
- *
- * SCL_STATE
+ * - <b>SCL_STATE</b>
  *	Protects changes to pool state and vdev state, such as vdev
  *	online/offline/fault/degrade/clear.  Protects the dirty state list
  *	(spa_state_dirty_list) and global pool state (spa_state).
- *
- * SCL_ALLOC
+ * - <b>SCL_ALLOC</b>
  *	Protects changes to metaslab groups and classes.
  *	Held as reader by metaslab_alloc() and metaslab_claim().
- *
- * SCL_ZIO
+ * - <b>SCL_ZIO</b>
  *	Held by bp-level zios (those which have no io_vd upon entry)
  *	to prevent changes to the vdev tree.  The bp-level zio implicitly
  *	protects all of its vdev child zios, which do not hold SCL_ZIO.
- *
- * SCL_FREE
+ * - <b>SCL_FREE</b>
  *	Protects changes to metaslab groups and classes.
  *	Held as reader by metaslab_free().  SCL_FREE is distinct from
  *	SCL_ALLOC, and lower than SCL_ZIO, so that we can safely free
  *	blocks in zio_done() while another i/o that holds either
  *	SCL_ALLOC or SCL_ZIO is waiting for this i/o to complete.
- *
- * SCL_VDEV
+ * - <b>SCL_VDEV</b>
  *	Held as reader to prevent changes to the vdev tree during trivial
  *	inquiries such as bp_get_dsize().  SCL_VDEV is distinct from the
  *	other locks, and lower than all of them, to ensure that it's safe
@@ -195,10 +178,9 @@
  *
  * In addition, the following rules apply:
  *
- * (a)	spa_props_lock protects pool properties, spa_config and spa_config_list.
+ * -#	spa_props_lock protects pool properties, spa_config and spa_config_list.
  *	The lock ordering is SCL_CONFIG > spa_props_lock.
- *
- * (b)	I/O operations on leaf vdevs.  For any zio operation that takes
+ * -#	I/O operations on leaf vdevs.  For any zio operation that takes
  *	an explicit vdev_t argument -- such as zio_ioctl(), zio_read_phys(),
  *	or zio_write_phys() -- the caller must ensure that the config cannot
  *	cannot change in the interim, and that the vdev cannot be reopened.
@@ -206,12 +188,12 @@
  *
  * The vdev configuration is protected by spa_vdev_enter() / spa_vdev_exit().
  *
- *	spa_vdev_enter()	Acquire the namespace lock and the config lock
- *				for writing.
- *
- *	spa_vdev_exit()		Release the config lock, wait for all I/O
- *				to complete, sync the updated configs to the
- *				cache, and release the namespace lock.
+ *	- <b>spa_vdev_enter()</b>	Acquire the namespace lock and the
+ *					config lock for writing.
+ *	- <b>spa_vdev_exit()</b>	Release the config lock, wait for all
+ *					I/O to complete, sync the updated
+ *					configs to the cache, and release the
+ *					namespace lock.
  *
  * vdev state is protected by spa_vdev_state_enter() / spa_vdev_state_exit().
  * Like spa_vdev_enter/exit, these are convenience wrappers -- the actual
@@ -222,17 +204,50 @@
  */
 
 static avl_tree_t spa_namespace_avl;
+/** spa namespace global mutex */
 kmutex_t spa_namespace_lock;
 static kcondvar_t spa_namespace_cv;
 static int spa_active_count;
 int spa_max_replication_override = SPA_DVAS_PER_BP;
 
 static kmutex_t spa_spare_lock;
+
+/**
+ * \brief Spare VDev list
+ *
+ * Spares are tracked globally due to the following constraints:
+ *
+ * 	- A spare may be part of multiple pools.
+ * 	- A spare may be added to a pool even if it's actively in use within
+ *	  another pool.
+ * 	- A spare in use in any pool can only be the source of a replacement if
+ *	  the target is a spare in the same pool.
+ *
+ * We keep track of all spares on the system through the use of a reference
+ * counted AVL tree.  When a vdev is added as a spare, or used as a replacement
+ * spare, then we bump the reference count in the AVL tree.  In addition, we set
+ * the 'vdev_isspare' member to indicate that the device is a spare (active or
+ * inactive).  When a spare is made active (used to replace a device in the
+ * pool), we also keep track of which pool its been made a part of.
+ *
+ * The 'spa_spare_lock' protects the AVL tree.  These functions are normally
+ * called under the spa_namespace lock as part of vdev reconfiguration.  The
+ * separate spare lock exists for the status query path, which does not need to
+ * be completely consistent with respect to other vdev configuration changes.
+ */
 static avl_tree_t spa_spare_avl;
 static kmutex_t spa_l2cache_lock;
+/**
+ * \brief Level 2 ARC cache vdev list
+ *
+ * Level 2 ARC devices are tracked globally for the same reasons as spares.
+ * Cache devices currently only support one pool per cache device, and so
+ * for these devices the aux reference count is currently unused beyond 1.
+ */
 static avl_tree_t spa_l2cache_avl;
 
 kmem_cache_t *spa_buffer_pool;
+/** mode, e.g. FREAD | FWRITE */
 int spa_mode_global;
 
 #ifdef ZFS_DEBUG
@@ -242,17 +257,23 @@ int zfs_flags = ~ZFS_DEBUG_DPRINTF;
 int zfs_flags = 0;
 #endif
 
-/*
+/**
+ * \addtogroup tunables
+ * \{ */
+/**
  * zfs_recover can be set to nonzero to attempt to recover from
  * otherwise-fatal errors, typically caused by on-disk corruption.  When
  * set, calls to zfs_panic_recover() will turn into warning messages.
  */
 int zfs_recover = 0;
+/* \} */
 SYSCTL_DECL(_vfs_zfs);
 TUNABLE_INT("vfs.zfs.recover", &zfs_recover);
 SYSCTL_INT(_vfs_zfs, OID_AUTO, recover, CTLFLAG_RDTUN, &zfs_recover, 0,
     "Try to recover from otherwise-fatal errors.");
 
+SYSCTL_INT(_vfs_zfs, OID_AUTO, debug_flags, CTLFLAG_RW, &zfs_flags, 0,
+    "Debug flags for ZFS testing.");
 
 /*
  * ==========================================================================
@@ -387,9 +408,11 @@ spa_config_held(spa_t *spa, int locks, krw_t rw)
  * ==========================================================================
  */
 
-/*
- * Lookup the named spa_t in the AVL tree.  The spa_namespace_lock must be held.
- * Returns NULL if no matching spa_t is found.
+/**
+ * \brief Lookup the named spa_t in the AVL tree.
+ *
+ * The spa_namespace_lock must be held.  Returns NULL if no matching spa_t is
+ * found.
  */
 spa_t *
 spa_lookup(const char *name)
@@ -421,10 +444,11 @@ spa_lookup(const char *name)
 	return (spa);
 }
 
-/*
- * Create an uninitialized spa_t with the given name.  Requires
- * spa_namespace_lock.  The caller must ensure that the spa_t doesn't already
- * exist by calling spa_lookup() first.
+/**
+ * \brief Create an uninitialized spa_t with the given name.
+ *
+ * Requires spa_namespace_lock.  The caller must ensure that the spa_t doesn't
+ * already exist by calling spa_lookup() first.
  */
 spa_t *
 spa_add(const char *name, nvlist_t *config, const char *altroot)
@@ -508,10 +532,11 @@ spa_add(const char *name, nvlist_t *config, const char *altroot)
 	return (spa);
 }
 
-/*
- * Removes a spa_t from the namespace, freeing up any memory used.  Requires
- * spa_namespace_lock.  This is called only after the spa_t has been closed and
- * deactivated.
+/**
+ * \brief Removes a spa_t from the namespace, freeing up any memory used.
+ *
+ * Requires spa_namespace_lock.  This is called only after the spa_t has been
+ * closed and deactivated.
  */
 void
 spa_remove(spa_t *spa)
@@ -569,7 +594,9 @@ spa_remove(spa_t *spa)
 	kmem_free(spa, sizeof (spa_t));
 }
 
-/*
+/**
+ * \brief Find the next pool
+ *
  * Given a pool, return the next pool in the namespace, or NULL if there is
  * none.  If 'prev' is NULL, return the first pool.
  */
@@ -590,9 +617,10 @@ spa_next(spa_t *prev)
  * ==========================================================================
  */
 
-/*
- * Add a reference to the given spa_t.  Must have at least one reference, or
- * have the namespace lock held.
+/**
+ * \brief Add a reference to the given spa_t.
+ *
+ * Must have at least one reference, or have the namespace lock held.
  */
 void
 spa_open_ref(spa_t *spa, void *tag)
@@ -602,9 +630,10 @@ spa_open_ref(spa_t *spa, void *tag)
 	(void) refcount_add(&spa->spa_refcount, tag);
 }
 
-/*
- * Remove a reference to the given spa_t.  Must have at least one reference, or
- * have the namespace lock held.
+/**
+ * \brief Remove a reference to the given spa_t.
+ *
+ * Must have at least one reference, or have the namespace lock held.
  */
 void
 spa_close(spa_t *spa, void *tag)
@@ -614,10 +643,11 @@ spa_close(spa_t *spa, void *tag)
 	(void) refcount_remove(&spa->spa_refcount, tag);
 }
 
-/*
- * Check to see if the spa refcount is zero.  Must be called with
- * spa_namespace_lock held.  We really compare against spa_minref, which is the
- * number of references acquired when opening a pool
+/**
+ * \brief Check to see if the spa refcount is zero.
+ *
+ * Must be called with spa_namespace_lock held.  We really compare against
+ * spa_minref, which is the number of references acquired when opening a pool
  */
 boolean_t
 spa_refcount_zero(spa_t *spa)
@@ -736,28 +766,6 @@ spa_aux_activate(vdev_t *vd, avl_tree_t *avl)
 	found->aux_pool = spa_guid(vd->vdev_spa);
 }
 
-/*
- * Spares are tracked globally due to the following constraints:
- *
- * 	- A spare may be part of multiple pools.
- * 	- A spare may be added to a pool even if it's actively in use within
- *	  another pool.
- * 	- A spare in use in any pool can only be the source of a replacement if
- *	  the target is a spare in the same pool.
- *
- * We keep track of all spares on the system through the use of a reference
- * counted AVL tree.  When a vdev is added as a spare, or used as a replacement
- * spare, then we bump the reference count in the AVL tree.  In addition, we set
- * the 'vdev_isspare' member to indicate that the device is a spare (active or
- * inactive).  When a spare is made active (used to replace a device in the
- * pool), we also keep track of which pool its been made a part of.
- *
- * The 'spa_spare_lock' protects the AVL tree.  These functions are normally
- * called under the spa_namespace lock as part of vdev reconfiguration.  The
- * separate spare lock exists for the status query path, which does not need to
- * be completely consistent with respect to other vdev configuration changes.
- */
-
 static int
 spa_spare_compare(const void *a, const void *b)
 {
@@ -804,12 +812,6 @@ spa_spare_activate(vdev_t *vd)
 	spa_aux_activate(vd, &spa_spare_avl);
 	mutex_exit(&spa_spare_lock);
 }
-
-/*
- * Level 2 ARC devices are tracked globally for the same reasons as spares.
- * Cache devices currently only support one pool per cache device, and so
- * for these devices the aux reference count is currently unused beyond 1.
- */
 
 static int
 spa_l2cache_compare(const void *a, const void *b)
@@ -864,8 +866,9 @@ spa_l2cache_activate(vdev_t *vd)
  * ==========================================================================
  */
 
-/*
- * Lock the given spa_t for the purpose of adding or removing a vdev.
+/**
+ * \brief Lock the given spa_t for the purpose of adding or removing a vdev.
+ *
  * Grabs the global spa_namespace_lock plus the spa config lock for writing.
  * It returns the next transaction group for the spa_t.
  */
@@ -877,10 +880,11 @@ spa_vdev_enter(spa_t *spa)
 	return (spa_vdev_config_enter(spa));
 }
 
-/*
- * Internal implementation for spa_vdev_enter().  Used when a vdev
- * operation requires multiple syncs (i.e. removing a device) while
- * keeping the spa_namespace_lock held.
+/**
+ * \brief Internal implementation for spa_vdev_enter().
+ *
+ * Used when a vdev operation requires multiple syncs (i.e. removing a device)
+ * while keeping the spa_namespace_lock held.
  */
 uint64_t
 spa_vdev_config_enter(spa_t *spa)
@@ -892,7 +896,7 @@ spa_vdev_config_enter(spa_t *spa)
 	return (spa_last_synced_txg(spa) + 1);
 }
 
-/*
+/**
  * Used in combination with spa_vdev_config_enter() to allow the syncing
  * of multiple transactions without releasing the spa_namespace_lock.
  */
@@ -915,6 +919,8 @@ spa_vdev_config_exit(spa_t *spa, vdev_t *vd, uint64_t txg, int error, char *tag)
 	if (error == 0 && !list_is_empty(&spa->spa_config_dirty_list)) {
 		config_changed = B_TRUE;
 		spa->spa_config_generation++;
+		ASSERT(txg > spa->spa_config_update_txg);
+		spa->spa_config_update_txg = txg;
 	}
 
 	/*
@@ -955,11 +961,12 @@ spa_vdev_config_exit(spa_t *spa, vdev_t *vd, uint64_t txg, int error, char *tag)
 		spa_config_sync(spa, B_FALSE, B_TRUE);
 }
 
-/*
- * Unlock the spa_t after adding or removing a vdev.  Besides undoing the
- * locking of spa_vdev_enter(), we also want make sure the transactions have
- * synced to disk, and then update the global configuration cache with the new
- * information.
+/**
+ * \brief Unlock the spa_t after adding or removing a vdev.
+ *
+ * Besides undoing the locking of spa_vdev_enter(), we also want make sure the
+ * transactions have synced to disk, and then update the global configuration
+ * cache with the new information.
  */
 int
 spa_vdev_exit(spa_t *spa, vdev_t *vd, uint64_t txg, int error)
@@ -971,8 +978,8 @@ spa_vdev_exit(spa_t *spa, vdev_t *vd, uint64_t txg, int error)
 	return (error);
 }
 
-/*
- * Lock the given spa_t for the purpose of changing vdev state.
+/**
+ * \brief Lock the given spa_t for the purpose of changing vdev state.
  */
 void
 spa_vdev_state_enter(spa_t *spa, int oplocks)
@@ -980,25 +987,43 @@ spa_vdev_state_enter(spa_t *spa, int oplocks)
 	int locks = SCL_STATE_ALL | oplocks;
 
 	/*
-	 * Root pools may need to read of the underlying devfs filesystem
-	 * when opening up a vdev.  Unfortunately if we're holding the
-	 * SCL_ZIO lock it will result in a deadlock when we try to issue
-	 * the read from the root filesystem.  Instead we "prefetch"
-	 * the associated vnodes that we need prior to opening the
-	 * underlying devices and cache them so that we can prevent
-	 * any I/O when we are doing the actual open.
+	 * In order for vdev state changes to be atomic, it is necessary to
+	 * wait until any previous changes have been committed to disk and
+	 * synchronized in-core.  This is because some operations that
+	 * affect the in-core config attempt to reload it from the vdev
+	 * labels directly, then panic if they don't match the in-core config.
 	 */
-	if (spa_is_root(spa)) {
-		int low = locks & ~(SCL_ZIO - 1);
-		int high = locks & ~low;
+	for (;;) {
+		uint64_t updated_txg;
 
-		spa_config_enter(spa, high, spa, RW_WRITER);
-		vdev_hold(spa->spa_root_vdev);
-		spa_config_enter(spa, low, spa, RW_WRITER);
-	} else {
-		spa_config_enter(spa, locks, spa, RW_WRITER);
+		/*
+		 * Root pools may need to read the underlying devfs when
+		 * opening up a vdev.  Unfortunately if we're holding the
+		 * SCL_ZIO lock it will result in a deadlock when we try to
+		 * issue the read from the root filesystem.  Instead we
+		 * "prefetch" the associated vnodes that we need prior to
+		 * opening the underlying devices and cache them so that we
+		 * can prevent any I/O when we are doing the actual open.
+		 */
+		if (spa_is_root(spa)) {
+			int low = locks & ~(SCL_ZIO - 1);
+			int high = locks & ~low;
+
+			spa_config_enter(spa, high, spa, RW_WRITER);
+			vdev_hold(spa->spa_root_vdev);
+			spa_config_enter(spa, low, spa, RW_WRITER);
+		} else {
+			spa_config_enter(spa, locks, spa, RW_WRITER);
+		}
+		spa->spa_vdev_locks = locks;
+
+		updated_txg = spa->spa_config_update_txg;
+		ASSERT(updated_txg >= spa->spa_config_txg);
+		if (spa->spa_config_txg == updated_txg)
+			break;
+		spa_config_exit(spa, locks, spa);
+		txg_wait_synced(spa_get_dsl(spa), updated_txg);
 	}
-	spa->spa_vdev_locks = locks;
 }
 
 int
@@ -1113,9 +1138,10 @@ spa_rename(const char *name, const char *newname)
 	return (0);
 }
 
-/*
- * Return the spa_t associated with given pool_guid, if it exists.  If
- * device_guid is non-zero, determine whether the pool exists *and* contains
+/**
+ * \brief Return the spa_t associated with given pool_guid, if it exists.
+ *
+ * If device_guid is non-zero, determine whether the pool exists *and* contains
  * a device with the specified device_guid.
  */
 spa_t *
@@ -1153,8 +1179,8 @@ spa_by_guid(uint64_t pool_guid, uint64_t device_guid)
 	return (spa);
 }
 
-/*
- * Determine whether a pool with the given pool_guid exists.
+/**
+ * \brief Determine whether a pool with the given pool_guid exists.
  */
 boolean_t
 spa_guid_exists(uint64_t pool_guid, uint64_t device_guid)
@@ -1261,9 +1287,9 @@ zfs_panic_recover(const char *fmt, ...)
 	va_end(adx);
 }
 
-/*
+/**
  * This is a stripped-down version of strtoull, suitable only for converting
- * lowercase hexidecimal numbers that don't overflow.
+ * lowercase hexadecimal numbers that don't overflow.
  */
 uint64_t
 zfs_strtonum(const char *str, char **nptr)
@@ -1451,9 +1477,11 @@ spa_update_dspace(spa_t *spa)
 	    ddt_get_dedup_dspace(spa);
 }
 
-/*
- * Return the failure mode that has been set to this pool. The default
- * behavior will be to block all I/Os when a complete failure occurs.
+/**
+ * \brief Return the failure mode that has been set to this pool.
+ *
+ * The default behavior will be to block all I/Os when a complete failure
+ * occurs.
  */
 uint8_t
 spa_get_failmode(spa_t *spa)
@@ -1654,10 +1682,11 @@ spa_fini(void)
 	mutex_destroy(&spa_l2cache_lock);
 }
 
-/*
- * Return whether this pool has slogs. No locking needed.
- * It's not a problem if the wrong answer is returned as it's only for
- * performance and not correctness
+/**
+ * \brief Return whether this pool has slogs.
+ *
+ * No locking needed.  It's not a problem if the wrong answer is returned as
+ * it's only for performance and not correctness
  */
 boolean_t
 spa_has_slogs(spa_t *spa)
@@ -1719,8 +1748,8 @@ spa_dedup_checksum(spa_t *spa)
 	return (spa->spa_dedup_checksum);
 }
 
-/*
- * Reset pool scan stat per scan pass (or reboot).
+/**
+ * \brief Reset pool scan stat per scan pass (or reboot).
  */
 void
 spa_scan_stat_init(spa_t *spa)
@@ -1731,8 +1760,8 @@ spa_scan_stat_init(spa_t *spa)
 	vdev_scan_stat_init(spa->spa_root_vdev);
 }
 
-/*
- * Get scan stats for zpool status reports
+/**
+ * \brief Get scan stats for zpool status reports
  */
 int
 spa_scan_get_stats(spa_t *spa, pool_scan_stat_t *ps)

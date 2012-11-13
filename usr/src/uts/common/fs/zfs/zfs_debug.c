@@ -27,7 +27,7 @@
 
 list_t zfs_dbgmsgs;
 int zfs_dbgmsg_size;
-kmutex_t zfs_dbgmsgs_lock;
+kmutex_t zfs_dbgmsgs_lock = { 0 };
 int zfs_dbgmsg_maxsize = 1<<20; /* 1MB */
 
 void
@@ -52,7 +52,7 @@ zfs_dbgmsg_fini(void)
 	ASSERT0(zfs_dbgmsg_size);
 }
 
-/*
+/**
  * Print these messages by running:
  * echo ::zfs_dbgmsg | mdb -k
  *

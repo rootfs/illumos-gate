@@ -22,9 +22,13 @@
 /*
  * Copyright (c) 2005, 2010, Oracle and/or its affiliates. All rights reserved.
  * Copyright (c) 2012 by Delphix. All rights reserved.
+ * Copyright (c) 2011-2012 Spectra Logic Corporation.  All rights reserved.
  */
 
-/*
+/**
+ * \file spa.c
+ * \brief Storage Pool Allocator
+ *
  * This file contains all the routines used when modifying on-disk SPA state.
  * This includes opening, importing, destroying, exporting a pool, and syncing a
  * pool.
@@ -73,14 +77,19 @@
 #include "zfs_prop.h"
 #include "zfs_comutil.h"
 
-/* Check hostid on import? */
-static int check_hostid = 1;
+/**
+ * \addtogroup tunables
+ * \{
+ */
+/** \brief Check hostid on import? */
+int check_hostid = 1;
 
-/*
- * The interval at which failed configuration cache file writes
+/**
+ * \brief The interval at which failed configuration cache file writes
  * should be retried.
  */
-static int zfs_ccw_retry_interval = 300;
+int zfs_ccw_retry_interval = 300;
+/** \} */
 
 SYSCTL_DECL(_vfs_zfs);
 TUNABLE_INT("vfs.zfs.check_hostid", &check_hostid);
@@ -92,10 +101,10 @@ SYSCTL_INT(_vfs_zfs, OID_AUTO, ccw_retry_interval, CTLFLAG_RW,
     "Configuration cache file write, retry after failure, interval (seconds)");
 
 typedef enum zti_modes {
-	zti_mode_fixed,			/* value is # of threads (min 1) */
-	zti_mode_online_percent,	/* value is % of online CPUs */
-	zti_mode_batch,			/* cpu-intensive; value is ignored */
-	zti_mode_null,			/* don't create a taskq */
+	zti_mode_fixed,			/**< value is # of threads (min 1) */
+	zti_mode_online_percent,	/**< value is % of online CPUs */
+	zti_mode_batch,			/**< cpu-intensive; value is ignored */
+	zti_mode_null,			/**< don't create a taskq */
 	zti_nmodes
 } zti_modes_t;
 
@@ -115,7 +124,7 @@ static const char *const zio_taskq_types[ZIO_TASKQ_TYPES] = {
 	"issue", "issue_high", "intr", "intr_high"
 };
 
-/*
+/**
  * Define the taskq threads for the following I/O types:
  * 	NULL, READ, WRITE, FREE, CLAIM, and IOCTL
  */
@@ -138,19 +147,20 @@ static int spa_load_impl(spa_t *spa, uint64_t, nvlist_t *config,
     spa_load_state_t state, spa_import_type_t type, boolean_t mosconfig,
     char **ereport);
 static void spa_vdev_resilver_done(spa_t *spa);
+static void spa_vdev_remove_from_namespace(spa_t *spa, vdev_t *vd);
 
-uint_t		zio_taskq_batch_pct = 100;	/* 1 thread per cpu in pset */
+uint_t		zio_taskq_batch_pct = 100;	/**< 1 thread per cpu in pset */
 #ifdef PSRSET_BIND
 id_t		zio_taskq_psrset_bind = PS_NONE;
 #endif
 #ifdef SYSDC
-boolean_t	zio_taskq_sysdc = B_TRUE;	/* use SDC scheduling class */
+boolean_t	zio_taskq_sysdc = B_TRUE;	/**< use SDC scheduling class */
 #endif
-uint_t		zio_taskq_basedc = 80;		/* base duty cycle */
+uint_t		zio_taskq_basedc = 80;		/**< base duty cycle */
 
-boolean_t	spa_create_process = B_TRUE;	/* no process ==> no sysdc */
+boolean_t	spa_create_process = B_TRUE;	/**< no process ==> no sysdc */
 
-/*
+/**
  * This (illegal) pool name is used when temporarily importing a spa_t in order
  * to get the vdev stats associated with the imported devices.
  */
@@ -162,7 +172,7 @@ boolean_t	spa_create_process = B_TRUE;	/* no process ==> no sysdc */
  * ==========================================================================
  */
 
-/*
+/**
  * Add a (source=src, propname=propval) list to an nvlist.
  */
 static void
@@ -184,7 +194,7 @@ spa_prop_add_list(nvlist_t *nvl, zpool_prop_t prop, char *strval,
 	nvlist_free(propval);
 }
 
-/*
+/**
  * Get property values from the spa configuration.
  */
 static void
@@ -276,8 +286,8 @@ spa_prop_get_config(spa_t *spa, nvlist_t **nvp)
 	}
 }
 
-/*
- * Get zpool property values.
+/**
+ * \brief Get zpool property values.
  */
 int
 spa_prop_get(spa_t *spa, nvlist_t **nvp)
@@ -383,7 +393,7 @@ out:
 	return (0);
 }
 
-/*
+/**
  * Validate the given pool properties nvlist and modify the list
  * for the property values to be set.
  */
@@ -682,8 +692,8 @@ spa_prop_set(spa_t *spa, nvlist_t *nvp)
 	return (0);
 }
 
-/*
- * If the bootfs property value is dsobj, clear it.
+/**
+ * \brief If the bootfs property value is dsobj, clear it.
  */
 void
 spa_prop_clear_bootfs(spa_t *spa, uint64_t dsobj, dmu_tx_t *tx)
@@ -801,8 +811,8 @@ spa_error_entry_compare(const void *a, const void *b)
 		return (0);
 }
 
-/*
- * Utility function which retrieves copies of the current logs and
+/**
+ * \brief Utility function which retrieves copies of the current logs and
  * re-initializes them in the process.
  */
 void
@@ -819,6 +829,20 @@ spa_get_errlists(spa_t *spa, avl_tree_t *last, avl_tree_t *scrub)
 	avl_create(&spa->spa_errlist_last,
 	    spa_error_entry_compare, sizeof (spa_error_entry_t),
 	    offsetof(spa_error_entry_t, se_avl));
+}
+
+static void
+spa_zio_thread_init(void *context __unused)
+{
+
+	VERIFY(0 == dmu_thread_context_create());
+}
+
+static void
+spa_zio_thread_destroy(void *context)
+{
+
+	dmu_thread_context_destroy(context/*NOTUSED*/);
 }
 
 static taskq_t *
@@ -864,7 +888,7 @@ spa_taskq_create(spa_t *spa, const char *name, enum zti_modes mode,
 	}
 #endif
 	return (taskq_create_proc(name, value, maxclsyspri, 50, INT_MAX,
-	    spa->spa_proc, flags));
+	    spa->spa_proc, flags, spa_zio_thread_init, spa_zio_thread_destroy));
 }
 
 static void
@@ -962,8 +986,8 @@ spa_thread(void *arg)
 #endif	/* SPA_PROCESS */
 #endif
 
-/*
- * Activate an uninitialized pool.
+/**
+ * \brief Activate an uninitialized pool.
  */
 static void
 spa_activate(spa_t *spa, int mode)
@@ -1033,8 +1057,8 @@ spa_activate(spa_t *spa, int mode)
 	    offsetof(spa_error_entry_t, se_avl));
 }
 
-/*
- * Opposite of spa_activate().
+/**
+ * \brief Opposite of spa_activate().
  */
 static void
 spa_deactivate(spa_t *spa)
@@ -1109,11 +1133,14 @@ spa_deactivate(spa_t *spa)
 #endif	/* SPA_PROCESS */
 }
 
-/*
- * Verify a pool configuration, and construct the vdev tree appropriately.  This
- * will create all the necessary vdevs in the appropriate layout, with each vdev
- * in the CLOSED state.  This will prep the pool before open/creation/import.
- * All vdev validation is done by the vdev_alloc() routine.
+/**
+ * \brief Verify a pool configuration, and construct the vdev tree
+ * appropriately.  
+ *
+ * This will create all the necessary vdevs in the appropriate layout, with
+ * each vdev in the CLOSED state.  This will prep the pool before
+ * open/creation/import.  All vdev validation is done by the vdev_alloc()
+ * routine.
  */
 static int
 spa_config_parse(spa_t *spa, vdev_t **vdp, nvlist_t *nv, vdev_t *parent,
@@ -1156,8 +1183,8 @@ spa_config_parse(spa_t *spa, vdev_t **vdp, nvlist_t *nv, vdev_t *parent,
 	return (0);
 }
 
-/*
- * Opposite of spa_load().
+/**
+ * \brief Opposite of spa_load().
  */
 static void
 spa_unload(spa_t *spa)
@@ -1257,9 +1284,11 @@ spa_unload(spa_t *spa)
 	spa_config_exit(spa, SCL_ALL, FTAG);
 }
 
-/*
- * Load (or re-load) the current list of vdevs describing the active spares for
- * this pool.  When this is called, we have some form of basic information in
+/**
+ * \brief Load (or re-load) the current list of vdevs describing the active
+ * spares for this pool.
+ *
+ * When this is called, we have some form of basic information in
  * 'spa_spares.sav_config'.  We parse this into vdevs, try to open them, and
  * then re-generate a more complete list including status information.
  */
@@ -1372,13 +1401,15 @@ spa_load_spares(spa_t *spa)
 	kmem_free(spares, spa->spa_spares.sav_count * sizeof (void *));
 }
 
-/*
- * Load (or re-load) the current list of vdevs describing the active l2cache for
- * this pool.  When this is called, we have some form of basic information in
+/**
+ * \brief Load (or re-load) the current list of vdevs describing the active
+ * l2cache for this pool.
+ *
+ * When this is called, we have some form of basic information in
  * 'spa_l2cache.sav_config'.  We parse this into vdevs, try to open them, and
- * then re-generate a more complete list including status information.
- * Devices which are already active have their details maintained, and are
- * not re-opened.
+ * then re-generate a more complete list including status information.  Devices
+ * which are already active have their details maintained, and are not
+ * re-opened.
  */
 static void
 spa_load_l2cache(spa_t *spa)
@@ -1469,6 +1500,8 @@ spa_load_l2cache(spa_t *spa)
 			    pool != 0ULL && l2arc_vdev_present(vd))
 				l2arc_remove_vdev(vd);
 			vdev_clear_stats(vd);
+			if (list_link_active(&vd->vdev_state_dirty_node))
+				vdev_state_clean(vd);
 			vdev_free(vd);
 		}
 	}
@@ -1511,13 +1544,15 @@ load_nvlist(spa_t *spa, uint64_t obj, nvlist_t **value)
 	int error;
 	*value = NULL;
 
-	VERIFY(0 == dmu_bonus_hold(spa->spa_meta_objset, obj, FTAG, &db));
+	error = dmu_bonus_hold(spa->spa_meta_objset, obj, FTAG, &db);
+	if (error)
+		return error;
 	nvsize = *(uint64_t *)db->db_data;
 	dmu_buf_rele(db, FTAG);
 
 	packed = kmem_alloc(nvsize, KM_SLEEP);
 	error = dmu_read(spa->spa_meta_objset, obj, 0, nvsize, packed,
-	    DMU_READ_PREFETCH);
+	    DMU_CTX_FLAG_PREFETCH);
 	if (error == 0)
 		error = nvlist_unpack(packed, nvsize, value, 0);
 	kmem_free(packed, nvsize);
@@ -1525,7 +1560,7 @@ load_nvlist(spa_t *spa, uint64_t obj, nvlist_t **value)
 	return (error);
 }
 
-/*
+/**
  * Checks to see if the given vdev could not be opened, in which case we post a
  * sysevent to notify the autoreplace code that the device has been removed.
  */
@@ -1541,8 +1576,8 @@ spa_check_removed(vdev_t *vd)
 	}
 }
 
-/*
- * Validate the current config against the MOS config
+/**
+ * \brief Validate the current config against the MOS config
  */
 static boolean_t
 spa_config_valid(spa_t *spa, nvlist_t *config)
@@ -1663,8 +1698,8 @@ spa_config_valid(spa_t *spa, nvlist_t *config)
 	return (rvd->vdev_guid_sum == spa->spa_uberblock.ub_guid_sum);
 }
 
-/*
- * Check for missing log devices
+/**
+ * \brief Check for missing log devices
  */
 static int
 spa_check_logs(spa_t *spa)
@@ -1750,6 +1785,9 @@ spa_aux_check_removed(spa_aux_vdev_t *sav)
 		spa_check_removed(sav->sav_vdevs[i]);
 }
 
+/**
+ * \brief Log claim callback
+ */
 void
 spa_claim_notify(zio_t *zio)
 {
@@ -1858,8 +1896,8 @@ spa_load_verify(spa_t *spa)
 	return (verify_ok ? 0 : EIO);
 }
 
-/*
- * Find a value in the pool props object.
+/**
+ * \brief Find a value in the pool props object.
  */
 static void
 spa_prop_find(spa_t *spa, zpool_prop_t prop, uint64_t *val)
@@ -1868,8 +1906,8 @@ spa_prop_find(spa_t *spa, zpool_prop_t prop, uint64_t *val)
 	    zpool_prop_to_name(prop), sizeof (uint64_t), 1, val);
 }
 
-/*
- * Find a value in the pool directory object.
+/**
+ * \brief Find a value in the pool directory object.
  */
 static int
 spa_dir_prop(spa_t *spa, const char *name, uint64_t *val)
@@ -1885,21 +1923,23 @@ spa_vdev_err(vdev_t *vdev, vdev_aux_t aux, int err)
 	return (err);
 }
 
-/*
- * Fix up config after a partly-completed split.  This is done with the
- * ZPOOL_CONFIG_SPLIT nvlist.  Both the splitting pool and the split-off
- * pool have that entry in their config, but only the splitting one contains
- * a list of all the guids of the vdevs that are being split off.
+/**
+ * \brief Fix up config after a partly-completed split.  
  *
- * This function determines what to do with that list: either rejoin
- * all the disks to the pool, or complete the splitting process.  To attempt
- * the rejoin, each disk that is offlined is marked online again, and
- * we do a reopen() call.  If the vdev label for every disk that was
- * marked online indicates it was successfully split off (VDEV_AUX_SPLIT_POOL)
- * then we call vdev_split() on each disk, and complete the split.
+ * This is done with the ZPOOL_CONFIG_SPLIT nvlist.  Both the splitting pool
+ * and the split-off pool have that entry in their config, but only the
+ * splitting one contains a list of all the guids of the vdevs that are being
+ * split off.
  *
- * Otherwise we leave the config alone, with all the vdevs in place in
- * the original pool.
+ * This function determines what to do with that list: either rejoin all the
+ * disks to the pool, or complete the splitting process.  To attempt the
+ * rejoin, each disk that is offlined is marked online again, and we do a
+ * reopen() call.  If the vdev label for every disk that was marked online
+ * indicates it was successfully split off (VDEV_AUX_SPLIT_POOL) then we call
+ * vdev_split() on each disk, and complete the split.
+ *
+ * Otherwise we leave the config alone, with all the vdevs in place in the
+ * original pool.
  */
 static void
 spa_try_repair(spa_t *spa, nvlist_t *config)
@@ -1995,6 +2035,7 @@ spa_load(spa_t *spa, spa_load_state_t state, spa_import_type_t type,
 
 	(void) nvlist_lookup_uint64(config, ZPOOL_CONFIG_POOL_TXG,
 	    &spa->spa_config_txg);
+	spa->spa_config_update_txg = spa->spa_config_txg;
 
 	if ((state == SPA_LOAD_IMPORT || state == SPA_LOAD_TRYIMPORT) &&
 	    spa_guid_exists(pool_guid, 0)) {
@@ -2032,7 +2073,7 @@ spa_load(spa_t *spa, spa_load_state_t state, spa_import_type_t type,
 	return (error);
 }
 
-/*
+/**
  * Load an existing storage pool, using the pool's builtin spa_config as a
  * source of configuration information.
  */
@@ -2767,8 +2808,8 @@ spa_load_best(spa_t *spa, spa_load_state_t state, int mosconfig,
 	}
 }
 
-/*
- * Pool Open/Import
+/**
+ * \brief Pool Open/Import
  *
  * The import case is identical to an open except that the configuration is sent
  * down from userland, instead of grabbed from the configuration cache.  For the
@@ -2785,7 +2826,7 @@ spa_open_common(const char *pool, spa_t **spapp, void *tag, nvlist_t *nvpolicy,
 {
 	spa_t *spa;
 	spa_load_state_t state = SPA_LOAD_OPEN;
-	int error;
+	int error = 0;
 	int locked = B_FALSE;
 	int firstopen = B_FALSE;
 
@@ -2887,15 +2928,23 @@ spa_open_common(const char *pool, spa_t **spapp, void *tag, nvlist_t *nvpolicy,
 		mutex_exit(&spa_namespace_lock);
 #ifdef __FreeBSD__
 #ifdef _KERNEL
-		if (firstopen)
-			zvol_create_minors(pool);
+		if (firstopen) {
+			/*
+			 * Don't pass up errors from here.  The SPA was
+			 * still created and we can't reasonably unwind it
+			 * at this point.
+			 */
+			if (zvol_create_minors(pool))
+				printf("ZFS WARNING: ZVOL device nodes for "
+				    "pool %s could not be created\n", pool);
+		}
 #endif
 #endif
 	}
 
 	*spapp = spa;
 
-	return (0);
+	return (error);
 }
 
 int
@@ -2911,7 +2960,9 @@ spa_open(const char *name, spa_t **spapp, void *tag)
 	return (spa_open_common(name, spapp, tag, NULL, NULL));
 }
 
-/*
+/**
+ * \brief Increment a SPA's inject count
+ *
  * Lookup the given spa_t, incrementing the inject count in the process,
  * preventing it from being exported or destroyed.
  */
@@ -2939,8 +2990,8 @@ spa_inject_delref(spa_t *spa)
 	mutex_exit(&spa_namespace_lock);
 }
 
-/*
- * Add spares device information to the nvlist.
+/**
+ * \brief Add spares device information to the nvlist.
  */
 static void
 spa_add_spares(spa_t *spa, nvlist_t *config)
@@ -2988,8 +3039,8 @@ spa_add_spares(spa_t *spa, nvlist_t *config)
 	}
 }
 
-/*
- * Add l2cache device information to the nvlist, including vdev stats.
+/**
+ * \brief Add l2cache device information to the nvlist, including vdev stats.
  */
 static void
 spa_add_l2cache(spa_t *spa, nvlist_t *config)
@@ -3152,11 +3203,12 @@ spa_get_stats(const char *name, nvlist_t **config,
 	return (error);
 }
 
-/*
- * Validate that the auxiliary device array is well formed.  We must have an
- * array of nvlists, each which describes a valid leaf vdev.  If this is an
- * import (mode is VDEV_ALLOC_SPARE), then we allow corrupted spares to be
- * specified, as long as they are well-formed.
+/**
+ * \brief Validate that the auxiliary device array is well formed.
+ *
+ * We must have an array of nvlists, each which describes a valid leaf vdev.
+ * If this is an import (mode is VDEV_ALLOC_SPARE), then we allow corrupted
+ * spares to be specified, as long as they are well-formed.
  */
 static int
 spa_validate_aux_devs(spa_t *spa, nvlist_t *nvroot, uint64_t crtxg, int mode,
@@ -3303,8 +3355,8 @@ spa_set_aux_vdevs(spa_aux_vdev_t *sav, nvlist_t **devs, int ndevs,
 	}
 }
 
-/*
- * Stop and drop level 2 ARC devices
+/**
+ * \brief Stop and drop level 2 ARC devices
  */
 void
 spa_l2cache_drop(spa_t *spa)
@@ -3325,8 +3377,8 @@ spa_l2cache_drop(spa_t *spa)
 	}
 }
 
-/*
- * Pool Creation
+/**
+ * \brief Pool Creation
  */
 int
 spa_create(const char *pool, nvlist_t *nvroot, nvlist_t *props,
@@ -3607,10 +3659,12 @@ spa_generate_rootconf(char *devpath, char *devid, uint64_t *guid)
 	return (config);
 }
 
-/*
- * Walk the vdev tree and see if we can find a device with "better"
- * configuration. A configuration is "better" if the label on that
- * device has a more recent txg.
+/**
+ * \brief Walk the vdev tree and see if we can find a device with "better"
+ * configuration.
+ *
+ * A configuration is "better" if the label on that device has a more recent
+ * txg.
  */
 static void
 spa_alt_rootvdev(vdev_t *vd, vdev_t **avd, uint64_t *txg)
@@ -3640,8 +3694,8 @@ spa_alt_rootvdev(vdev_t *vd, vdev_t **avd, uint64_t *txg)
 	}
 }
 
-/*
- * Import a root pool.
+/**
+ * \brief Import a root pool.
  *
  * For x86. devpath_list will consist of devid and/or physpath name of
  * the vdev (e.g. "id1,sd@SSEAGATE..." or "/pci@1f,0/ide@d/disk@0,0:a").
@@ -3873,8 +3927,8 @@ out:
 #endif	/* sun */
 #endif
 
-/*
- * Import a non-root pool into the system.
+/**
+ * \brief Import a non-root pool into the system.
  */
 int
 spa_import(const char *pool, nvlist_t *config, nvlist_t *props, uint64_t flags)
@@ -4053,13 +4107,23 @@ spa_import(const char *pool, nvlist_t *config, nvlist_t *props, uint64_t flags)
 	spa_async_request(spa, SPA_ASYNC_AUTOEXPAND);
 
 	mutex_exit(&spa_namespace_lock);
-	spa_history_log_version(spa, LOG_POOL_IMPORT);
 
 #ifdef __FreeBSD__
 #ifdef _KERNEL
-	zvol_create_minors(pool);
+	if (zvol_create_minors(pool)) {
+		/*
+		 * Don't pass up errors from here.  The SPA was
+		 * still created and we can't reasonably unwind it
+		 * at this point.
+		 */
+		printf("ZFS WARNING: Unable to create ZVOL block devices "
+		    "for pool %s\n", pool);
+	}
 #endif
 #endif
+
+	spa_history_log_version(spa, LOG_POOL_IMPORT);
+
 	return (0);
 }
 
@@ -4155,8 +4219,8 @@ spa_tryimport(nvlist_t *tryconfig)
 	return (config);
 }
 
-/*
- * Pool export/destroy
+/**
+ * \brief Pool export/destroy
  *
  * The act of destroying or exporting a pool is very simple.  We make sure there
  * is no more pending I/O and any references to the pool are gone.  Then, we
@@ -4264,8 +4328,8 @@ spa_export_common(char *pool, int new_state, nvlist_t **oldconfig,
 	return (0);
 }
 
-/*
- * Destroy a storage pool.
+/**
+ * \brief Destroy a storage pool.
  */
 int
 spa_destroy(char *pool)
@@ -4274,8 +4338,8 @@ spa_destroy(char *pool)
 	    B_FALSE, B_FALSE));
 }
 
-/*
- * Export a storage pool.
+/**
+ * \brief Export a storage pool.
  */
 int
 spa_export(char *pool, nvlist_t **oldconfig, boolean_t force,
@@ -4285,7 +4349,9 @@ spa_export(char *pool, nvlist_t **oldconfig, boolean_t force,
 	    force, hardforce));
 }
 
-/*
+/**
+ * Reset a storage pool
+ *
  * Similar to spa_export(), this unloads the spa_t without actually removing it
  * from the namespace in any way.
  */
@@ -4302,8 +4368,8 @@ spa_reset(char *pool)
  * ==========================================================================
  */
 
-/*
- * Add a device to a storage pool.
+/**
+ * \brief Add a device to a storage pool.
  */
 int
 spa_vdev_add(spa_t *spa, nvlist_t *nvroot)
@@ -4404,18 +4470,20 @@ spa_vdev_add(spa_t *spa, nvlist_t *nvroot)
 	return (0);
 }
 
-/*
- * Attach a device to a mirror.  The arguments are the path to any device
- * in the mirror, and the nvroot for the new device.  If the path specifies
- * a device that is not mirrored, we automatically insert the mirror vdev.
+/**
+ * \brief Attach a device to a mirror.
+ *
+ * The arguments are the path to any device in the mirror, and the nvroot for
+ * the new device.  If the path specifies a device that is not mirrored, we
+ * automatically insert the mirror vdev.
  *
  * If 'replacing' is specified, the new device is intended to replace the
- * existing device; in this case the two devices are made into their own
- * mirror using the 'replacing' vdev, which is functionally identical to
- * the mirror vdev (it actually reuses all the same ops) but has a few
- * extra rules: you can't attach to it after it's been created, and upon
- * completion of resilvering, the first disk (the one being replaced)
- * is automatically detached.
+ * existing device; in this case the two devices are made into their own mirror
+ * using the 'replacing' vdev, which is functionally identical to the mirror
+ * vdev (it actually reuses all the same ops) but has a few extra rules: you
+ * can't attach to it after it's been created, and upon completion of
+ * resilvering, the first disk (the one being replaced) is automatically
+ * detached.
  */
 int
 spa_vdev_attach(spa_t *spa, uint64_t guid, nvlist_t *nvroot, int replacing)
@@ -4611,8 +4679,9 @@ spa_vdev_attach(spa_t *spa, uint64_t guid, nvlist_t *nvroot, int replacing)
 	return (0);
 }
 
-/*
- * Detach a device from a mirror or replacing vdev.
+/**
+ * \brief Detach a device from a mirror or replacing vdev.
+ *
  * If 'replace_done' is specified, only detach if the parent
  * is a replacing vdev.
  */
@@ -4851,8 +4920,9 @@ spa_vdev_detach(spa_t *spa, uint64_t guid, uint64_t pguid, int replace_done)
 	return (error);
 }
 
-/*
- * Split a set of devices from their mirrors, and create a new pool from them.
+/**
+ * \brief Split a set of devices from their mirrors, and create a new pool
+ * from them.
  */
 int
 spa_vdev_split_mirror(spa_t *spa, char *newname, nvlist_t *config,
@@ -5028,6 +5098,7 @@ spa_vdev_split_mirror(spa_t *spa, char *newname, nvlist_t *config,
 	/* add the new pool to the namespace */
 	newspa = spa_add(newname, config, altroot);
 	newspa->spa_config_txg = spa->spa_config_txg;
+	newspa->spa_config_update_txg = spa->spa_config_txg;
 	spa_set_log_state(newspa, SPA_LOG_CLEAR);
 
 	/* release the spa config lock, retaining the namespace lock */
@@ -5181,8 +5252,8 @@ spa_vdev_remove_aux(nvlist_t *config, char *name, nvlist_t **dev, int count,
 		kmem_free(newdev, (count - 1) * sizeof (void *));
 }
 
-/*
- * Evacuate the device.
+/**
+ * \brief Evacuate the device.
  */
 static int
 spa_vdev_remove_evacuate(spa_t *spa, vdev_t *vd)
@@ -5224,8 +5295,8 @@ spa_vdev_remove_evacuate(spa_t *spa, vdev_t *vd)
 	return (0);
 }
 
-/*
- * Complete the removal by cleaning up the namespace.
+/**
+ * \brief Complete the removal by cleaning up the namespace.
  */
 static void
 spa_vdev_remove_from_namespace(spa_t *spa, vdev_t *vd)
@@ -5267,19 +5338,17 @@ spa_vdev_remove_from_namespace(spa_t *spa, vdev_t *vd)
 	vdev_reopen(rvd);
 }
 
-/*
- * Remove a device from the pool -
+/**
+ * \brief Remove a device from the pool -
  *
  * Removing a device from the vdev namespace requires several steps
  * and can take a significant amount of time.  As a result we use
  * the spa_vdev_config_[enter/exit] functions which allow us to
  * grab and release the spa_config_lock while still holding the namespace
  * lock.  During each step the configuration is synced out.
- */
-
-/*
- * Remove a device from the pool.  Currently, this supports removing only hot
- * spares, slogs, and level 2 ARC devices.
+ *
+ * Currently, this supports removing only hot spares, slogs, and level 2 ARC
+ * devices.
  */
 int
 spa_vdev_remove(spa_t *spa, uint64_t guid, boolean_t unspare)
@@ -5387,9 +5456,9 @@ spa_vdev_remove(spa_t *spa, uint64_t guid, boolean_t unspare)
 	return (error);
 }
 
-/*
- * Find any device that's done replacing, or a vdev marked 'unspare' that's
- * current spared, so we can detach it.
+/**
+ * \brief Find any device that's done replacing, or a vdev marked 'unspare'
+ * that's current spared, so we can detach it.
  */
 static vdev_t *
 spa_vdev_resilver_done_hunt(vdev_t *vd)
@@ -5502,8 +5571,8 @@ spa_vdev_resilver_done(spa_t *spa)
 	spa_config_exit(spa, SCL_ALL, FTAG);
 }
 
-/*
- * Update the stored path or FRU for this vdev.
+/**
+ * \brief Update the stored path or FRU for this vdev.
  */
 int
 spa_vdev_set_common(spa_t *spa, uint64_t guid, const char *value,
@@ -5615,6 +5684,8 @@ spa_async_remove(spa_t *spa, vdev_t *vd)
 		vd->vdev_stat.vs_checksum_errors = 0;
 
 		vdev_state_dirty(vd->vdev_top);
+		/* Tell userspace that the vdev is gone. */
+		zfs_post_remove(spa, vd);
 	}
 
 	for (int c = 0; c < vd->vdev_children; c++)
@@ -5913,15 +5984,18 @@ static void
 spa_sync_config_object(spa_t *spa, dmu_tx_t *tx)
 {
 	nvlist_t *config;
+	uint64_t txg = dmu_tx_get_txg(tx);
 
 	if (list_is_empty(&spa->spa_config_dirty_list))
 		return;
 
 	spa_config_enter(spa, SCL_STATE, FTAG, RW_READER);
+	ASSERT(spa->spa_config_txg <= spa->spa_config_update_txg);
+	/* The target update txg may have already gone by. */
+	if (txg > spa->spa_config_update_txg)
+		spa->spa_config_update_txg = txg;
 
-	config = spa_config_generate(spa, spa->spa_root_vdev,
-	    dmu_tx_get_txg(tx), B_FALSE);
-
+	config = spa_config_generate(spa, spa->spa_root_vdev, txg, B_FALSE);
 	spa_config_exit(spa, SCL_STATE, FTAG);
 
 	if (spa->spa_config_syncing)
@@ -6094,11 +6168,12 @@ spa_sync_props(void *arg1, void *arg2, dmu_tx_t *tx)
 	mutex_exit(&spa->spa_props_lock);
 }
 
-/*
- * Perform one-time upgrade on-disk changes.  spa_version() does not
- * reflect the new version this txg, so there must be no changes this
- * txg to anything that the upgrade code depends on after it executes.
- * Therefore this must be called after dsl_pool_sync() does the sync
+/**
+ * \brief Perform one-time upgrade on-disk changes.
+ *
+ * spa_version() does not reflect the new version this txg, so there must be no
+ * changes this txg to anything that the upgrade code depends on after it
+ * executes.  Therefore this must be called after dsl_pool_sync() does the sync
  * tasks.
  */
 static void
@@ -6135,9 +6210,13 @@ spa_sync_upgrades(spa_t *spa, dmu_tx_t *tx)
 	}
 }
 
-/*
- * Sync the specified transaction group.  New blocks may be dirtied as
- * part of the process, so we iterate until it converges.
+/**
+ * \brief Sync the specified transaction group.
+ *
+ * New blocks may be dirtied as part of the process, so we iterate until it
+ * converges.
+ *
+ * Only for DMU use 
  */
 void
 spa_sync(spa_t *spa, uint64_t txg)
@@ -6328,6 +6407,7 @@ spa_sync(spa_t *spa, uint64_t txg)
 	if (spa->spa_config_syncing != NULL) {
 		spa_config_set(spa, spa->spa_config_syncing);
 		spa->spa_config_txg = txg;
+		ASSERT(spa->spa_config_txg <= spa->spa_config_update_txg);
 		spa->spa_config_syncing = NULL;
 	}
 
@@ -6363,10 +6443,11 @@ spa_sync(spa_t *spa, uint64_t txg)
 	spa_async_dispatch(spa);
 }
 
-/*
- * Sync all pools.  We don't want to hold the namespace lock across these
- * operations, so we take a reference on the spa_t and drop the lock during the
- * sync.
+/**
+ * \brief Sync all pools.
+ *
+ * We don't want to hold the namespace lock across these operations, so we take
+ * a reference on the spa_t and drop the lock during the sync.
  */
 void
 spa_sync_allpools(void)
@@ -6392,8 +6473,8 @@ spa_sync_allpools(void)
  * ==========================================================================
  */
 
-/*
- * Remove all pools in the system.
+/**
+ * \brief Remove all pools in the system.
  */
 void
 spa_evict_all(void)
@@ -6495,8 +6576,9 @@ spa_has_spare(spa_t *spa, uint64_t guid)
 	return (B_FALSE);
 }
 
-/*
- * Check if a pool has an active shared spare device.
+/**
+ * \brief Check if a pool has an active shared spare device.
+ *
  * Note: reference count of an active spare is 2, as a spare and as a replace
  */
 static boolean_t
@@ -6516,12 +6598,16 @@ spa_has_active_shared_spare(spa_t *spa)
 	return (B_FALSE);
 }
 
-/*
- * Post a sysevent corresponding to the given event.  The 'name' must be one of
- * the event definitions in sys/sysevent/eventdefs.h.  The payload will be
- * filled in from the spa and (optionally) the vdev.  This doesn't do anything
- * in the userland libzpool, as we don't want consumers to misinterpret ztest
- * or zdb as real changes.
+/**
+ * \brief Post a sysevent corresponding to the given event.
+ *
+ * \param[in]	spa	Provides information for the event payload
+ * \param[in]	vd 	Optional.  If not null, provides informationfor the 
+ * 			event payload
+ * \param[in]	name	must be one of the event definitions in 
+ * 			sys/sysevent/eventdefs.h
+ * This doesn't do anything in the userland libzpool, as we don't want
+ * consumers to misinterpret ztest or zdb as real changes.
  */
 void
 spa_event_notify(spa_t *spa, vdev_t *vd, const char *name)

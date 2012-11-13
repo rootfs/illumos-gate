@@ -27,6 +27,18 @@
 #include <sys/dmu_tx.h>
 #include <sys/dnode.h>
 
+/**
+ * \brief Choose an object and returns it in *objectp.
+ *
+ * Allocate an object from this objset.  The range of object numbers
+ * available is (0, DN_MAX_OBJECT).  Object 0 is the meta-dnode.
+ *
+ * The transaction must be assigned to a txg.  The newly allocated
+ * object will be "held" in the transaction (ie. you can modify the
+ * newly allocated object in this transaction).
+ *
+ * \return 0 on success or an error code on failure
+ */
 uint64_t
 dmu_object_alloc(objset_t *os, dmu_object_type_t ot, int blocksize,
     dmu_object_type_t bonustype, int bonuslen, dmu_tx_t *tx)
@@ -82,6 +94,14 @@ dmu_object_alloc(objset_t *os, dmu_object_type_t ot, int blocksize,
 	return (object);
 }
 
+/**
+ * allocates a specific object number.  
+ *
+ * If that number is already allocated, it fails.
+ *
+ * \retval 0 Success
+ * \retval EEXIST The object number is already allocated
+ */
 int
 dmu_object_claim(objset_t *os, uint64_t object, dmu_object_type_t ot,
     int blocksize, dmu_object_type_t bonustype, int bonuslen, dmu_tx_t *tx)
@@ -160,6 +180,20 @@ out:
 	return (err);
 }
 
+/**
+ * \brief Free an object from this objset.
+ *
+ * The object's data will be freed as well (ie. you don't need to call
+ * dmu_free(object, 0, -1, tx)).
+ *
+ * The object need not be held in the transaction.
+ *
+ * \retval 0 Success
+ * \retval EBUSY There are holds on this object's buffers (via dmu_buf_hold()) 
+ *         or tx holds on the object (via dmu-tx_hold_object()) so it cannot
+ *         be freed
+ * \retval ENOENT The object is not allocated
+ */
 int
 dmu_object_free(objset_t *os, uint64_t object, dmu_tx_t *tx)
 {
@@ -181,6 +215,18 @@ dmu_object_free(objset_t *os, uint64_t object, dmu_tx_t *tx)
 	return (0);
 }
 
+/**
+ * \brief Find the next allocated or free object.
+ *
+ * \param[in,out] objectp	Will be updated to the next object which is 
+ * 				allocated
+ * \param[in]     txg		ignore objects which have not been modified 
+ * 				since txt
+ * \note Can only be called on a objset with no dirty data.
+ *
+ * \retval 0 Success
+ * \retval ENOENT There are no more objects
+ */
 int
 dmu_object_next(objset_t *os, uint64_t *objectp, boolean_t hole, uint64_t txg)
 {

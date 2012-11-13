@@ -29,8 +29,9 @@
 #include <sys/zio.h>
 #include <sys/kstat.h>
 
-/*
- * Virtual device read-ahead caching.
+/**
+ * \file vdev_cache.c
+ * \brief Virtual device read-ahead caching.
  *
  * This file implements a simple LRU read-ahead cache.  When the DMU reads
  * a given block, it will often want other, nearby blocks soon thereafter.
@@ -66,13 +67,17 @@
 /*
  * These tunables are for performance analysis.
  */
-/*
+/**
+ * \addtogroup tunables
+ * \{
+ */
+/**
  * All i/os smaller than zfs_vdev_cache_max will be turned into
  * 1<<zfs_vdev_cache_bshift byte reads by the vdev_cache (aka software
  * track buffer).  At most zfs_vdev_cache_size bytes will be kept in each
  * vdev's vdev_cache.
  *
- * TODO: Note that with the current ZFS code, it turns out that the
+ * \todo Note that with the current ZFS code, it turns out that the
  * vdev cache is not helpful, and in some cases actually harmful.  It
  * is better if we disable this.  Once some time has passed, we should
  * actually remove this to simplify the code.  For now we just disable
@@ -82,6 +87,7 @@
 int zfs_vdev_cache_max = 1<<14;			/* 16KB */
 int zfs_vdev_cache_size = 0;
 int zfs_vdev_cache_bshift = 16;
+/* \} */
 
 #define	VCBS (1 << zfs_vdev_cache_bshift)	/* 64KB */
 
@@ -143,8 +149,8 @@ vdev_cache_lastused_compare(const void *a1, const void *a2)
 	return (vdev_cache_offset_compare(a1, a2));
 }
 
-/*
- * Evict the specified entry from the cache.
+/**
+ * \brief Evict the specified entry from the cache.
  */
 static void
 vdev_cache_evict(vdev_cache_t *vc, vdev_cache_entry_t *ve)
@@ -159,10 +165,10 @@ vdev_cache_evict(vdev_cache_t *vc, vdev_cache_entry_t *ve)
 	kmem_free(ve, sizeof (vdev_cache_entry_t));
 }
 
-/*
- * Allocate an entry in the cache.  At the point we don't have the data,
- * we're just creating a placeholder so that multiple threads don't all
- * go off and read the same blocks.
+/**
+ * \brief  Allocate an entry in the cache.  At the point we don't have the data,
+ * we're just creating a placeholder so that multiple threads don't all go off
+ * and read the same blocks.
  */
 static vdev_cache_entry_t *
 vdev_cache_allocate(zio_t *zio)
@@ -218,8 +224,8 @@ vdev_cache_hit(vdev_cache_t *vc, vdev_cache_entry_t *ve, zio_t *zio)
 	bcopy(ve->ve_data + cache_phase, zio->io_data, zio->io_size);
 }
 
-/*
- * Fill a previously allocated cache entry with data.
+/**
+ * \brief Fill a previously allocated cache entry with data.
  */
 static void
 vdev_cache_fill(zio_t *fio)
@@ -256,8 +262,10 @@ vdev_cache_fill(zio_t *fio)
 	mutex_exit(&vc->vc_lock);
 }
 
-/*
- * Read data from the cache.  Returns 0 on cache hit, errno on a miss.
+/**
+ * \brief Read data from the cache.  
+ *
+ * Returns 0 on cache hit, errno on a miss.
  */
 int
 vdev_cache_read(zio_t *zio)
@@ -333,8 +341,8 @@ vdev_cache_read(zio_t *zio)
 	return (0);
 }
 
-/*
- * Update cache contents upon write completion.
+/**
+ * \brief Update cache contents upon write completion.
  */
 void
 vdev_cache_write(zio_t *zio)

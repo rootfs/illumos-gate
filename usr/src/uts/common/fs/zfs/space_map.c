@@ -39,9 +39,12 @@ SYSCTL_INT(_vfs_zfs, OID_AUTO, space_map_last_hope, CTLFLAG_RDTUN,
     &space_map_last_hope, 0,
     "If kernel panic in space_map code on pool import, import the pool in readonly mode and backup all your data before trying this option.");
 
-/*
- * Space map routines.
- * NOTE: caller is responsible for all locking.
+/**
+ * \file space_map.c
+ *
+ * \brief Space map routines.
+ *
+ * \note  Caller is responsible for all locking.
  */
 static int
 space_map_seg_compare(const void *x1, const void *x2)
@@ -276,8 +279,8 @@ space_map_walk(space_map_t *sm, space_map_func_t *func, space_map_t *mdest)
 		func(mdest, ss->ss_start, ss->ss_end - ss->ss_start);
 }
 
-/*
- * Wait for any in-progress space_map_load() to complete.
+/**
+ * \brief Wait for any in-progress space_map_load() to complete.
  */
 void
 space_map_load_wait(space_map_t *sm)
@@ -290,7 +293,7 @@ space_map_load_wait(space_map_t *sm)
 	}
 }
 
-/*
+/**
  * Note: space_map_load() will drop sm_lock across dmu_read() calls.
  * The caller must be OK with this.
  */
@@ -337,7 +340,7 @@ space_map_load(space_map_t *sm, space_map_ops_t *ops, uint8_t maptype,
 
 		mutex_exit(sm->sm_lock);
 		error = dmu_read(os, smo->smo_object, offset, size, entry_map,
-		    DMU_READ_PREFETCH);
+		    DMU_CTX_FLAG_PREFETCH);
 		mutex_enter(sm->sm_lock);
 		if (error != 0)
 			break;
@@ -422,7 +425,7 @@ space_map_free(space_map_t *sm, uint64_t start, uint64_t size)
 	sm->sm_ops->smop_free(sm, start, size);
 }
 
-/*
+/**
  * Note: space_map_sync() will drop sm_lock across dmu_write() calls.
  */
 void
@@ -513,8 +516,8 @@ space_map_truncate(space_map_obj_t *smo, objset_t *os, dmu_tx_t *tx)
 	smo->smo_alloc = 0;
 }
 
-/*
- * Space map reference trees.
+/**
+ * \brief Space map reference trees.
  *
  * A space map is a collection of integers.  Every integer is either
  * in the map, or it's not.  A space map reference tree generalizes
@@ -592,8 +595,8 @@ space_map_ref_add_seg(avl_tree_t *t, uint64_t start, uint64_t end,
 	space_map_ref_add_node(t, end, -refcnt);
 }
 
-/*
- * Convert (or add) a space map into a reference tree.
+/**
+ * \brief Convert (or add) a space map into a reference tree.
  */
 void
 space_map_ref_add_map(avl_tree_t *t, space_map_t *sm, int64_t refcnt)
@@ -606,9 +609,11 @@ space_map_ref_add_map(avl_tree_t *t, space_map_t *sm, int64_t refcnt)
 		space_map_ref_add_seg(t, ss->ss_start, ss->ss_end, refcnt);
 }
 
-/*
- * Convert a reference tree into a space map.  The space map will contain
- * all members of the reference tree for which refcnt >= minref.
+/**
+ * \brief Convert a reference tree into a space map.  
+ *
+ * The space map will contain all members of the reference tree for which
+ * refcnt >= minref.
  */
 void
 space_map_ref_generate_map(avl_tree_t *t, space_map_t *sm, int64_t minref)

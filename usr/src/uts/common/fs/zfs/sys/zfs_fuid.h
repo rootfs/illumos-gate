@@ -39,23 +39,9 @@
 extern "C" {
 #endif
 
-typedef enum {
-	ZFS_OWNER,
-	ZFS_GROUP,
-	ZFS_ACE_USER,
-	ZFS_ACE_GROUP
-} zfs_fuid_type_t;
-
-/*
- * Estimate space needed for one more fuid table entry.
- * for now assume its current size + 1K
- */
-#define	FUID_SIZE_ESTIMATE(z) ((z)->z_fuid_size + (SPA_MINBLOCKSIZE << 1))
-
-#define	FUID_INDEX(x)	((x) >> 32)
-#define	FUID_RID(x)	((x) & 0xffffffff)
-#define	FUID_ENCODE(idx, rid) (((uint64_t)(idx) << 32) | (rid))
-/*
+/**
+ * \file zfs_fuid.h
+ *
  * FUIDs cause problems for the intent log
  * we need to replay the creation of the FUID,
  * but we can't count on the idmapper to be around
@@ -65,26 +51,44 @@ typedef enum {
  * just the unique 12.
  */
 
-/*
+typedef enum {
+	ZFS_OWNER,
+	ZFS_GROUP,
+	ZFS_ACE_USER,
+	ZFS_ACE_GROUP
+} zfs_fuid_type_t;
+
+/**
+ * \brief Estimate space needed for one more fuid table entry.
+ *
+ * For now assume its current size + 1K
+ */
+#define	FUID_SIZE_ESTIMATE(z) ((z)->z_fuid_size + (SPA_MINBLOCKSIZE << 1))
+
+#define	FUID_INDEX(x)	((x) >> 32)
+#define	FUID_RID(x)	((x) & 0xffffffff)
+#define	FUID_ENCODE(idx, rid) (((uint64_t)(idx) << 32) | (rid))
+
+/**
  * The FUIDs in the log will index into
  * domain string table and the bottom half will be the rid.
  * Used for mapping ephemeral uid/gid during ACL setting to FUIDs
  */
 typedef struct zfs_fuid {
 	list_node_t 	z_next;
-	uint64_t 	z_id;		/* uid/gid being converted to fuid */
-	uint64_t	z_domidx;	/* index in AVL domain table */
-	uint64_t	z_logfuid;	/* index for domain in log */
+	uint64_t 	z_id;		/**< uid/gid being converted to fuid */
+	uint64_t	z_domidx;	/**< index in AVL domain table */
+	uint64_t	z_logfuid;	/**< index for domain in log */
 } zfs_fuid_t;
 
-/* list of unique domains */
+/** list of unique domains */
 typedef struct zfs_fuid_domain {
 	list_node_t	z_next;
-	uint64_t	z_domidx;	/* AVL tree idx */
-	const char	*z_domain;	/* domain string */
+	uint64_t	z_domidx;	/**< AVL tree idx */
+	const char	*z_domain;	/**< domain string */
 } zfs_fuid_domain_t;
 
-/*
+/**
  * FUID information necessary for logging create, setattr, and setacl.
  */
 typedef struct zfs_fuid_info {
@@ -92,10 +96,10 @@ typedef struct zfs_fuid_info {
 	list_t	z_domains;
 	uint64_t z_fuid_owner;
 	uint64_t z_fuid_group;
-	char **z_domain_table;  /* Used during replay */
-	uint32_t z_fuid_cnt;	/* How many fuids in z_fuids */
-	uint32_t z_domain_cnt;	/* How many domains */
-	size_t	z_domain_str_sz; /* len of domain strings z_domain list */
+	char **z_domain_table;  /**< Used during replay */
+	uint32_t z_fuid_cnt;	/**< How many fuids in z_fuids */
+	uint32_t z_domain_cnt;	/**< How many domains */
+	size_t	z_domain_str_sz; /**< len of domain strings z_domain list */
 } zfs_fuid_info_t;
 
 #ifdef _KERNEL

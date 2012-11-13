@@ -24,26 +24,22 @@
  * Copyright (c) 2012 by Delphix. All rights reserved.
  */
 
-/*
- * Virtual Device Labels
- * ---------------------
+/**
+ * \file vdev_label.c
+ * \brief Virtual Device Labels
  *
  * The vdev label serves several distinct purposes:
  *
- *	1. Uniquely identify this device as part of a ZFS pool and confirm its
- *	   identity within the pool.
- *
- * 	2. Verify that all the devices given in a configuration are present
- *         within the pool.
- *
- * 	3. Determine the uberblock for the pool.
- *
- * 	4. In case of an import operation, determine the configuration of the
- *         toplevel vdev of which it is a part.
- *
- * 	5. If an import operation cannot find all the devices in the pool,
- *         provide enough information to the administrator to determine which
- *         devices are missing.
+ * -# Uniquely identify this device as part of a ZFS pool and confirm its
+ *    identity within the pool.
+ * -# Verify that all the devices given in a configuration are present
+ *    within the pool.
+ * -# Determine the uberblock for the pool.
+ * -# In case of an import operation, determine the configuration of the
+ *    toplevel vdev of which it is a part.
+ * -# If an import operation cannot find all the devices in the pool,
+ *    provide enough information to the administrator to determine which
+ *    devices are missing.
  *
  * It is important to note that while the kernel is responsible for writing the
  * label, it only consumes the information in the first three cases.  The
@@ -51,8 +47,7 @@
  * configuration to import a pool.
  *
  *
- * Label Organization
- * ------------------
+ * <H2> Label Organization </H2>
  *
  * Before describing the contents of the label, it's important to understand how
  * the labels are written and updated with respect to the uberblock.
@@ -63,12 +58,14 @@
  * are updated before and after the uberblock is synced.  Assuming we have
  * labels and an uberblock with the following transaction groups:
  *
- *              L1          UB          L2
- *           +------+    +------+    +------+
- *           |      |    |      |    |      |
- *           | t10  |    | t10  |    | t10  |
- *           |      |    |      |    |      |
- *           +------+    +------+    +------+
+ * \verbatim             
+               L1          UB          L2
+            +------+    +------+    +------+
+            |      |    |      |    |      |
+            | t10  |    | t10  |    | t10  |
+            |      |    |      |    |      |
+            +------+    +------+    +------+
+   \endverbatim
  *
  * In this stable state, the labels and the uberblock were all updated within
  * the same transaction group (10).  Each label is mirrored and checksummed, so
@@ -77,9 +74,9 @@
  * In order to identify which labels are valid, the labels are written in the
  * following manner:
  *
- * 	1. For each vdev, update 'L1' to the new label
- * 	2. Update the uberblock
- * 	3. For each vdev, update 'L2' to the new label
+ * -# For each vdev, update 'L1' to the new label
+ * -# Update the uberblock
+ * -# For each vdev, update 'L2' to the new label
  *
  * Given arbitrary failure, we can determine the correct label to use based on
  * the transaction group.  If we fail after updating L1 but before updating the
@@ -95,8 +92,7 @@
  * on another vdev.
  *
  *
- * On-disk Format
- * --------------
+ * <H2> On-disk Format </H2>
  *
  * The vdev label consists of two distinct parts, and is wrapped within the
  * vdev_label_t structure.  The label includes 8k of padding to permit legacy
@@ -112,8 +108,7 @@
  * vdev for the 'best' uberblock.
  *
  *
- * Configuration Information
- * -------------------------
+ * <H2> Configuration Information </H2>
  *
  * The nvlist describing the pool and vdev contains the following elements:
  *
@@ -128,8 +123,8 @@
  *
  * Each leaf device label also contains the following:
  *
- * 	top_guid	Unique ID for top-level vdev in which this is contained
- * 	guid		Unique ID for the leaf vdev
+ * - <b> top_guid </b>	Unique ID for top-level vdev in which this is contained
+ * - <b> guid </b>		Unique ID for the leaf vdev
  *
  * The 'vs' configuration follows the format described in 'spa_config.c'.
  */
@@ -148,7 +143,7 @@
 #include <sys/trim_map.h>
 #include <sys/fs/zfs.h>
 
-/*
+/**
  * Basic routines to read and write from a vdev label.
  * Used throughout the rest of this file.
  */
@@ -162,8 +157,8 @@ vdev_label_offset(uint64_t psize, int l, uint64_t offset)
 	    0 : psize - VDEV_LABELS * sizeof (vdev_label_t)));
 }
 
-/*
- * Returns back the vdev label associated with the passed in offset.
+/**
+ * \brief Returns back the vdev label associated with the passed in offset.
  */
 int
 vdev_label_number(uint64_t psize, uint64_t offset)
@@ -208,8 +203,8 @@ vdev_label_write(zio_t *zio, vdev_t *vd, int l, void *buf, uint64_t offset,
 	    ZIO_PRIORITY_SYNC_WRITE, flags, B_TRUE));
 }
 
-/*
- * Generate the nvlist representing this vdev's config.
+/**
+ * \brief Generate the nvlist representing this vdev's config.
  */
 nvlist_t *
 vdev_config_generate(spa_t *spa, vdev_t *vd, boolean_t getstats,
@@ -400,11 +395,12 @@ vdev_config_generate(spa_t *spa, vdev_t *vd, boolean_t getstats,
 	return (nv);
 }
 
-/*
- * Generate a view of the top-level vdevs.  If we currently have holes
- * in the namespace, then generate an array which contains a list of holey
- * vdevs.  Additionally, add the number of top-level children that currently
- * exist.
+/**
+ * \brief Generate a view of the top-level vdevs.  
+ *
+ * If we currently have holes in the namespace, then generate an array which
+ * contains a list of holey vdevs.  Additionally, add the number of top-level
+ * children that currently exist.
  */
 void
 vdev_top_config_generate(spa_t *spa, nvlist_t *config)
@@ -510,9 +506,11 @@ retry:
 	return (config);
 }
 
-/*
- * Determine if a device is in use.  The 'spare_guid' parameter will be filled
- * in with the device guid if this spare is active elsewhere on the system.
+/**
+ * \brief Determine if a device is in use.
+ *
+ * The 'spare_guid' parameter will be filled in with the device guid if this
+ * spare is active elsewhere on the system.
  */
 static boolean_t
 vdev_inuse(vdev_t *vd, uint64_t crtxg, vdev_labeltype_t reason,
@@ -624,13 +622,14 @@ vdev_inuse(vdev_t *vd, uint64_t crtxg, vdev_labeltype_t reason,
 	return (state == POOL_STATE_ACTIVE);
 }
 
-/*
- * Initialize a vdev label.  We check to make sure each leaf device is not in
- * use, and writable.  We put down an initial label which we will later
- * overwrite with a complete label.  Note that it's important to do this
- * sequentially, not in parallel, so that we catch cases of multiple use of the
- * same leaf vdev in the vdev we're creating -- e.g. mirroring a disk with
- * itself.
+/**
+ * \brief Initialize a vdev label. 
+ *
+ * We check to make sure each leaf device is not in use, and writable.  We put
+ * down an initial label which we will later overwrite with a complete label.
+ * Note that it's important to do this sequentially, not in parallel, so that
+ * we catch cases of multiple use of the same leaf vdev in the vdev we're
+ * creating -- e.g. mirroring a disk with itself.
  */
 int
 vdev_label_init(vdev_t *vd, uint64_t crtxg, vdev_labeltype_t reason)
@@ -872,7 +871,7 @@ retry:
  * ==========================================================================
  */
 
-/*
+/**
  * Consider the following situation: txg is safely synced to disk.  We've
  * written the first uberblock for txg + 1, and then we lose power.  When we
  * come back up, we fail to see the uberblock for txg + 1 because, say,
@@ -993,7 +992,7 @@ vdev_uberblock_load(vdev_t *rvd, uberblock_t *ub, nvlist_t **config)
 	spa_config_exit(spa, SCL_ALL, FTAG);
 }
 
-/*
+/**
  * On success, increment root zio's count of good writes.
  * We only get credit for writes to known-visible vdevs; see spa_vdev_add().
  */
@@ -1006,7 +1005,7 @@ vdev_uberblock_sync_done(zio_t *zio)
 		atomic_add_64(good_writes, 1);
 }
 
-/*
+/**
  * Write the uberblock to all labels of all leaves of the specified vdev.
  */
 static void
@@ -1039,12 +1038,16 @@ vdev_uberblock_sync(zio_t *zio, uberblock_t *ub, vdev_t *vd, int flags)
 	zio_buf_free(ubbuf, VDEV_UBERBLOCK_SIZE(vd));
 }
 
+/**
+ * \brief Sync the uberblocks to all vdevs in svd[]
+ */
 int
 vdev_uberblock_sync_list(vdev_t **svd, int svdcount, uberblock_t *ub, int flags)
 {
 	spa_t *spa = svd[0]->vdev_spa;
 	zio_t *zio;
 	uint64_t good_writes = 0;
+	int error;
 
 	zio = zio_root(spa, NULL, &good_writes, flags);
 
@@ -1065,10 +1068,13 @@ vdev_uberblock_sync_list(vdev_t **svd, int svdcount, uberblock_t *ub, int flags)
 
 	(void) zio_wait(zio);
 
-	return (good_writes >= 1 ? 0 : EIO);
+	error = (good_writes >= 1 ? 0 : EIO);
+	SPA_SET_ZIO_ERROR(spa, zio, error);
+
+	return (error);
 }
 
-/*
+/**
  * On success, increment the count of good writes for our top-level vdev.
  */
 static void
@@ -1080,7 +1086,7 @@ vdev_label_sync_done(zio_t *zio)
 		atomic_add_64(good_writes, 1);
 }
 
-/*
+/**
  * If there weren't enough good writes, indicate failure to the parent.
  */
 static void
@@ -1089,12 +1095,12 @@ vdev_label_sync_top_done(zio_t *zio)
 	uint64_t *good_writes = zio->io_private;
 
 	if (*good_writes == 0)
-		zio->io_error = EIO;
+		ZIO_SET_ERROR(zio, EIO);
 
 	kmem_free(good_writes, sizeof (uint64_t));
 }
 
-/*
+/**
  * We ignore errors for log and cache devices, simply free the private data.
  */
 static void
@@ -1103,7 +1109,7 @@ vdev_label_sync_ignore_done(zio_t *zio)
 	kmem_free(zio->io_private, sizeof (uint64_t));
 }
 
-/*
+/**
  * Write all even or odd labels to all leaves of the specified vdev.
  */
 static void
@@ -1176,6 +1182,7 @@ vdev_label_sync_list(spa_t *spa, int l, uint64_t txg, int flags)
 	}
 
 	error = zio_wait(zio);
+	SPA_SET_ZIO_ERROR(spa, zio, error);
 
 	/*
 	 * Flush the new labels to disk.
@@ -1190,8 +1197,8 @@ vdev_label_sync_list(spa_t *spa, int l, uint64_t txg, int flags)
 	return (error);
 }
 
-/*
- * Sync the uberblock and any changes to the vdev configuration.
+/**
+ * \brief Sync the uberblock and any changes to the vdev configuration.
  *
  * The order of operations is carefully crafted to ensure that
  * if the system panics or loses power at any time, the state on disk

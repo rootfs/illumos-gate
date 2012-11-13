@@ -44,16 +44,23 @@
 #include <sys/zfeature.h>
 #include <sys/zil_impl.h>
 
+/** \addtogroup tunables */
+/* \{ */
 int zfs_no_write_throttle = 0;
-int zfs_write_limit_shift = 3;			/* 1/8th of physical memory */
-int zfs_txg_synctime_ms = 1000;		/* target millisecs to sync a txg */
+int zfs_write_limit_shift = 3;			/**< 1/8th of physical memory */
+int zfs_txg_synctime_ms = 1000;		/**< target millisecs to sync a txg */
 
-uint64_t zfs_write_limit_min = 32 << 20;	/* min write limit is 32MB */
-uint64_t zfs_write_limit_max = 0;		/* max data payload per txg */
+uint64_t zfs_write_limit_min = 32 << 20;	/**< min write limit is 32MB */
+uint64_t zfs_write_limit_max = 0;		/**< max data payload per txg */
 uint64_t zfs_write_limit_inflated = 0;
 uint64_t zfs_write_limit_override = 0;
+/* \} */
 
-kmutex_t zfs_write_limit_lock;
+kmutex_t zfs_write_limit_lock = { 0 };
+
+#ifdef ZFS_DEBUG
+zio_t *syncer_zio = NULL;
+#endif
 
 static pgcnt_t old_physmem = 0;
 
@@ -406,6 +413,9 @@ dsl_pool_sync(dsl_pool_t *dp, uint64_t txg)
 		dsl_dataset_sync(ds, zio, tx);
 	}
 	DTRACE_PROBE(pool_sync__1setup);
+#ifdef ZFS_DEBUG
+	syncer_zio = zio;
+#endif
 	err = zio_wait(zio);
 
 	write_time = gethrtime() - start;
@@ -433,6 +443,9 @@ dsl_pool_sync(dsl_pool_t *dp, uint64_t txg)
 		dmu_buf_rele(ds->ds_dbuf, ds);
 		dsl_dataset_sync(ds, zio, tx);
 	}
+#ifdef ZFS_DEBUG
+	syncer_zio = zio;
+#endif
 	err = zio_wait(zio);
 
 	/*
@@ -477,6 +490,9 @@ dsl_pool_sync(dsl_pool_t *dp, uint64_t txg)
 	    list_head(&mos->os_free_dnodes[txg & TXG_MASK]) != NULL) {
 		zio = zio_root(dp->dp_spa, NULL, NULL, ZIO_FLAG_MUSTSUCCEED);
 		dmu_objset_sync(mos, zio, tx);
+#ifdef ZFS_DEBUG
+		syncer_zio = zio;
+#endif
 		err = zio_wait(zio);
 		ASSERT(err == 0);
 		dprintf_bp(&dp->dp_meta_rootbp, "meta objset rootbp is %s", "");
@@ -568,7 +584,7 @@ dsl_pool_sync_done(dsl_pool_t *dp, uint64_t txg)
 	ASSERT(!dmu_objset_is_dirty(dp->dp_meta_objset, txg));
 }
 
-/*
+/**
  * TRUE if the current thread is the tx_sync_thread or if we
  * are being called from SPA context during pool initialization.
  */
@@ -852,7 +868,7 @@ dsl_pool_vnrele_taskq(dsl_pool_t *dp)
 	return (dp->dp_vnrele_taskq);
 }
 
-/*
+/**
  * Walk through the pool-wide zap object of temporary snapshot user holds
  * and release them.
  */
@@ -883,8 +899,8 @@ dsl_pool_clean_tmp_userrefs(dsl_pool_t *dp)
 	zap_cursor_fini(&zc);
 }
 
-/*
- * Create the pool-wide zap object for storing temporary snapshot holds.
+/**
+ * \brief Create the pool-wide zap object for storing temporary snapshot holds.
  */
 void
 dsl_pool_user_hold_create_obj(dsl_pool_t *dp, dmu_tx_t *tx)
@@ -933,8 +949,8 @@ dsl_pool_user_hold_rele_impl(dsl_pool_t *dp, uint64_t dsobj,
 	return (error);
 }
 
-/*
- * Add a temporary hold for the given dataset object and tag.
+/**
+ * \brief Add a temporary hold for the given dataset object and tag.
  */
 int
 dsl_pool_user_hold(dsl_pool_t *dp, uint64_t dsobj, const char *tag,
@@ -943,8 +959,8 @@ dsl_pool_user_hold(dsl_pool_t *dp, uint64_t dsobj, const char *tag,
 	return (dsl_pool_user_hold_rele_impl(dp, dsobj, tag, now, tx, B_TRUE));
 }
 
-/*
- * Release a temporary hold for the given dataset object and tag.
+/**
+ * \brief Release a temporary hold for the given dataset object and tag.
  */
 int
 dsl_pool_user_release(dsl_pool_t *dp, uint64_t dsobj, const char *tag,

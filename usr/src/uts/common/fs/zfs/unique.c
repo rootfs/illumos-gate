@@ -30,7 +30,7 @@
 #include <sys/unique.h>
 
 static avl_tree_t unique_avl;
-static kmutex_t unique_mtx;
+static kmutex_t unique_mtx = { 0 };
 
 typedef struct unique {
 	avl_node_t un_link;
@@ -67,6 +67,11 @@ unique_fini(void)
 	mutex_destroy(&unique_mtx);
 }
 
+/**
+ * \brief Return a new unique value 
+ *
+ * It  will not be uniquified against until it is unique_insert()-ed.
+ */
 uint64_t
 unique_create(void)
 {
@@ -75,6 +80,7 @@ unique_create(void)
 	return (value);
 }
 
+/** \brief Return a unique value, which equals the one passed in if possible. */
 uint64_t
 unique_insert(uint64_t value)
 {
@@ -99,6 +105,7 @@ unique_insert(uint64_t value)
 	return (un->un_value);
 }
 
+/** \brief Indicate that this value no longer needs to be uniquified against. */
 void
 unique_remove(uint64_t value)
 {

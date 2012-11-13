@@ -797,7 +797,7 @@ dmu_recv_verify_features(dsl_dataset_t *ds, struct drr_begin *drrb)
 	    (spa_version(dsl_dataset_get_spa(ds)) < SPA_VERSION_SA));
 }
 
-/*
+/**
  * NB: callers *MUST* call dmu_recv_stream() if dmu_recv_begin()
  * succeeds; otherwise we will leak the holds on the datasets.
  */
@@ -1258,11 +1258,12 @@ restore_write(struct restorearg *ra, objset_t *os,
 	return (0);
 }
 
-/*
- * Handle a DRR_WRITE_BYREF record.  This record is used in dedup'ed
- * streams to refer to a copy of the data that is already on the
- * system because it came in earlier in the stream.  This function
- * finds the earlier copy of the data, and uses that copy instead of
+/**
+ * \brief Handle a DRR_WRITE_BYREF record.
+ * 
+ * This record is used in dedup'ed streams to refer to a copy of the data that
+ * is already on the system because it came in earlier in the stream.  This
+ * function finds the earlier copy of the data, and uses that copy instead of
  * data from the stream to fulfill this write.
  */
 static int
@@ -1385,7 +1386,7 @@ restore_free(struct restorearg *ra, objset_t *os,
 	return (err);
 }
 
-/*
+/**
  * NB: callers *must* call dmu_recv_end() if this succeeds.
  */
 int

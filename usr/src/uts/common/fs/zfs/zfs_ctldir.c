@@ -24,8 +24,9 @@
  * All rights reserved.
  */
 
-/*
- * ZFS control directory (a.k.a. ".zfs")
+/**
+ * \file zfs_ctldir.c
+ * \brief ZFS control directory (a.k.a. ".zfs")
  *
  * This directory provides a common location for all ZFS meta-objects.
  * Currently, this is only the 'snapshot' directory, but this may expand in the
@@ -36,11 +37,13 @@
  * this would take up a huge amount of space in /etc/mnttab.  We have three
  * types of objects:
  *
- * 	ctldir ------> snapshotdir -------> snapshot
- *                                             |
- *                                             |
- *                                             V
- *                                         mounted fs
+ \verbatim
+    ctldir ------> snapshotdir -------> snapshot
+                                              |
+                                              |
+                                              V
+                                          mounted fs
+ \endverbatim
  *
  * The 'snapshot' node contains just enough information to lookup '..' and act
  * as a mountpoint for the snapshot.  Whenever we lookup a specific snapshot, we
@@ -82,7 +85,7 @@
 typedef struct zfsctl_node {
 	gfs_dir_t	zc_gfs_private;
 	uint64_t	zc_id;
-	timestruc_t	zc_cmtime;	/* ctime and mtime, always the same */
+	timestruc_t	zc_cmtime;	/**< ctime and mtime, always the same */
 } zfsctl_node_t;
 
 typedef struct zfsctl_snapdir {
@@ -147,7 +150,7 @@ static gfs_opsvec_t zfsctl_opsvec[] = {
 };
 #endif	/* sun */
 
-/*
+/**
  * Root directory elements.  We only have two entries
  * snapshot and shares.
  */
@@ -162,10 +165,12 @@ static gfs_dirent_t zfsctl_root_entries[] = {
     sizeof (gfs_dirent_t)) + 1)
 
 
-/*
- * Initialize the various GFS pieces we'll need to create and manipulate .zfs
- * directories.  This is called from the ZFS init routine, and initializes the
- * vnode ops vectors that we'll be using.
+/**
+ * \brief Initialize the various GFS pieces we'll need to create and
+ * manipulate .zfs directories.  
+ *
+ * This is called from the ZFS init routine, and initializes the vnode ops
+ * vectors that we'll be using.
  */
 void
 zfsctl_init(void)
@@ -212,7 +217,7 @@ zfsctl_is_node(vnode_t *vp)
 
 }
 
-/*
+/**
  * Return the inode number associated with the 'snapshot' or
  * 'shares' directory.
  */
@@ -230,11 +235,13 @@ zfsctl_root_inode_cb(vnode_t *vp, int index)
 	return (zfsvfs->z_shares_dir);
 }
 
-/*
- * Create the '.zfs' directory.  This directory is cached as part of the VFS
- * structure.  This results in a hold on the vfs_t.  The code in zfs_umount()
- * therefore checks against a vfs_count of 2 instead of 1.  This reference
- * is removed when the ctldir is destroyed in the unmount.
+/**
+ * \brief Create the '.zfs' directory.
+ *
+ * This directory is cached as part of the VFS structure.  This results in a
+ * hold on the vfs_t.  The code in zfs_umount() therefore checks against a
+ * vfs_count of 2 instead of 1.  This reference is removed when the ctldir is
+ * destroyed in the unmount.
  */
 void
 zfsctl_create(zfsvfs_t *zfsvfs)
@@ -269,10 +276,12 @@ zfsctl_create(zfsvfs_t *zfsvfs)
 	VOP_UNLOCK(vp, 0);
 }
 
-/*
- * Destroy the '.zfs' directory.  Only called when the filesystem is unmounted.
- * There might still be more references if we were force unmounted, but only
- * new zfs_inactive() calls can occur and they don't reference .zfs
+/**
+ * \brief Destroy the '.zfs' directory.
+ *
+ * Only called when the filesystem is unmounted.  There might still be more
+ * references if we were force unmounted, but only new zfs_inactive() calls
+ * can occur and they don't reference .zfs
  */
 void
 zfsctl_destroy(zfsvfs_t *zfsvfs)
@@ -281,8 +290,9 @@ zfsctl_destroy(zfsvfs_t *zfsvfs)
 	zfsvfs->z_ctldir = NULL;
 }
 
-/*
- * Given a root znode, retrieve the associated .zfs directory.
+/**
+ * \brief Given a root znode, retrieve the associated .zfs directory.
+ *
  * Add a hold to the vnode and return it.
  */
 vnode_t *
@@ -293,7 +303,7 @@ zfsctl_root(znode_t *zp)
 	return (zp->z_zfsvfs->z_ctldir);
 }
 
-/*
+/**
  * Common open routine.  Disallow any write access.
  */
 /* ARGSUSED */
@@ -308,7 +318,7 @@ zfsctl_common_open(struct vop_open_args *ap)
 	return (0);
 }
 
-/*
+/**
  * Common close routine.  Nothing to do here.
  */
 /* ARGSUSED */
@@ -318,7 +328,7 @@ zfsctl_common_close(struct vop_close_args *ap)
 	return (0);
 }
 
-/*
+/**
  * Common access routine.  Disallow writes.
  */
 /* ARGSUSED */
@@ -348,7 +358,7 @@ zfsctl_common_access(ap)
 	return (0);
 }
 
-/*
+/**
  * Common getattr function.  Fill in basic information.
  */
 static void
@@ -464,7 +474,7 @@ zfsctl_common_reclaim(ap)
 	return (0);
 }
 
-/*
+/**
  * .zfs inode namespace
  *
  * We need to generate unique inode numbers for all files and directories
@@ -478,8 +488,8 @@ zfsctl_common_reclaim(ap)
 
 #define	ZFSCTL_INO_SNAP(id)	(id)
 
-/*
- * Get root directory attributes.
+/**
+ * \brief Get root directory attributes.
  */
 /* ARGSUSED */
 static int
@@ -507,8 +517,8 @@ zfsctl_root_getattr(ap)
 	return (0);
 }
 
-/*
- * Special case the handling of "..".
+/**
+ * \brief Special case the handling of "..".
  */
 /* ARGSUSED */
 int
@@ -576,8 +586,8 @@ static const fs_operation_def_t zfsctl_tops_root[] = {
 };
 #endif	/* sun */
 
-/*
- * Special case the handling of "..".
+/**
+ * \brief Special case the handling of "..".
  */
 /* ARGSUSED */
 int
@@ -858,8 +868,8 @@ zfsctl_snapdir_remove(vnode_t *dvp, char *name, vnode_t *cwd, cred_t *cr,
 }
 #endif	/* sun */
 
-/*
- * This creates a snapshot under '.zfs/snapshot'.
+/**
+ * \brief This creates a snapshot under '.zfs/snapshot'.
  */
 /* ARGSUSED */
 static int
@@ -910,10 +920,12 @@ zfsctl_freebsd_snapdir_mkdir(ap)
 	    ap->a_vpp, ap->a_cnp->cn_cred, NULL, 0, NULL));
 }
 
-/*
- * Lookup entry point for the 'snapshot' directory.  Try to open the
- * snapshot if it exist, creating the pseudo filesystem vnode as necessary.
- * Perform a mount of the associated dataset on top of the vnode.
+/**
+ * \brief Lookup entry point for the 'snapshot' directory.
+ *
+ * Try to open the snapshot if it exist, creating the pseudo filesystem vnode
+ * as necessary.  Perform a mount of the associated dataset on top of the
+ * vnode.
  */
 /* ARGSUSED */
 int
@@ -1202,12 +1214,13 @@ zfsctl_shares_readdir(ap)
 	return (error);
 }
 
-/*
- * pvp is the '.zfs' directory (zfsctl_node_t).
- * Creates vp, which is '.zfs/snapshot' (zfsctl_snapdir_t).
+/**
+ * \brief Creates vp, which is '.zfs/snapshot' (zfsctl_snapdir_t).
  *
  * This function is the callback to create a GFS vnode for '.zfs/snapshot'
  * when a lookup is performed on .zfs for "snapshot".
+ *
+ * \param	pvp	the '.zfs' directory (zfsctl_node_t)
  */
 vnode_t *
 zfsctl_mknode_snapdir(vnode_t *pvp)
@@ -1395,12 +1408,13 @@ static struct vop_vector zfsctl_ops_shares = {
 };
 #endif	/* !sun */
 
-/*
- * pvp is the GFS vnode '.zfs/snapshot'.
+/**
+ * \brief This creates a GFS node under '.zfs/snapshot' representing each
+ * snapshot.
  *
- * This creates a GFS node under '.zfs/snapshot' representing each
- * snapshot.  This newly created GFS node is what we mount snapshot
- * vfs_t's ontop of.
+ * This newly created GFS node is what we mount snapshot vfs_t's ontop of.
+ *
+ * \param	pvp	the GFS vnode '.zfs/snapshot'
  */
 static vnode_t *
 zfsctl_snapshot_mknode(vnode_t *pvp, uint64_t objset)
@@ -1603,7 +1617,7 @@ zfsctl_snapshot_vptocnp(struct vop_vptocnp_args *ap)
 	return (error);
 }
 
-/*
+/**
  * These VP's should never see the light of day.  They should always
  * be covered.
  */
@@ -1675,10 +1689,11 @@ zfsctl_lookup_objset(vfs_t *vfsp, uint64_t objsetid, zfsvfs_t **zfsvfsp)
 	return (error);
 }
 
-/*
- * Unmount any snapshots for the given filesystem.  This is called from
- * zfs_umount() - if we have a ctldir, then go through and unmount all the
- * snapshots.
+/**
+ * \brief Unmount any snapshots for the given filesystem.
+ *
+ * This is called from zfs_umount() - if we have a ctldir, then go through and
+ * unmount all the snapshots.
  */
 int
 zfsctl_umount_snapshots(vfs_t *vfsp, int fflags, cred_t *cr)

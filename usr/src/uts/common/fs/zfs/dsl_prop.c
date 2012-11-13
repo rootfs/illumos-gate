@@ -168,8 +168,8 @@ dsl_prop_get_ds(dsl_dataset_t *ds, const char *propname,
 
 	ASSERT(RW_LOCK_HELD(&ds->ds_dir->dd_pool->dp_config_rwlock));
 	inheritable = (prop == ZPROP_INVAL || zfs_prop_inheritable(prop));
-	snapshot = (ds->ds_phys != NULL && dsl_dataset_is_snapshot(ds));
-	zapobj = (ds->ds_phys == NULL ? 0 : ds->ds_phys->ds_props_obj);
+	snapshot = (DS_HAS_PHYS(ds) && dsl_dataset_is_snapshot(ds));
+	zapobj = (DS_HAS_PHYS(ds) ? ds->ds_phys->ds_props_obj : 0);
 
 	if (zapobj != 0) {
 		objset_t *mos = ds->ds_dir->dd_pool->dp_meta_objset;
@@ -218,12 +218,13 @@ dsl_prop_get_ds(dsl_dataset_t *ds, const char *propname,
 	    intsz, numints, buf, setpoint, snapshot));
 }
 
-/*
- * Register interest in the named property.  We'll call the callback
- * once to notify it of the current property value, and again each time
- * the property changes, until this callback is unregistered.
+/**
+ * \brief Register interest in the named property. 
  *
- * Return 0 on success, errno if the prop is not an integer value.
+ * We'll call the callback once to notify it of the current property value, and
+ * again each time the property changes, until this callback is unregistered.
+ *
+ * \return 0 on success or errno if the prop is not an integer value.
  */
 int
 dsl_prop_register(dsl_dataset_t *ds, const char *propname,
@@ -283,13 +284,14 @@ dsl_prop_get(const char *dsname, const char *propname,
 	return (err);
 }
 
-/*
- * Get the current property value.  It may have changed by the time this
- * function returns, so it is NOT safe to follow up with
- * dsl_prop_register() and assume that the value has not changed in
- * between.
+/**
+ * \brief Get the current property value.
  *
- * Return 0 on success, ENOENT if ddname is invalid.
+ * It may have changed by the time this function returns, so it is NOT safe to
+ * follow up with dsl_prop_register() and assume that the value has not changed
+ * in between.
+ *
+ * \return 0 on success or ENOENT if ddname is invalid.
  */
 int
 dsl_prop_get_integer(const char *ddname, const char *propname,
@@ -311,14 +313,15 @@ dsl_prop_setarg_init_uint64(dsl_prop_setarg_t *psa, const char *propname,
 	psa->psa_effective_value = -1ULL;
 }
 
-/*
- * Predict the effective value of the given special property if it were set with
- * the given value and source. This is not a general purpose function. It exists
- * only to handle the special requirements of the quota and reservation
- * properties. The fact that these properties are non-inheritable greatly
- * simplifies the prediction logic.
+/**
+ * \brief Predict the effective value of the given special property if it were
+ * set with the given value and source. 
  *
- * Returns 0 on success, a positive error code on failure, or -1 if called with
+ * This is not a general purpose function. It exists only to handle the special
+ * requirements of the quota and reservation properties. The fact that these
+ * properties are non-inheritable greatly simplifies the prediction logic.
+ *
+ * \return 0 on success, a positive error code on failure, or -1 if called with
  * a property not handled by this function.
  */
 int
@@ -429,9 +432,11 @@ dsl_prop_check_prediction(dsl_dir_t *dd, dsl_prop_setarg_t *psa)
 }
 #endif
 
-/*
- * Unregister this callback.  Return 0 on success, ENOENT if ddname is
- * invalid, ENOMSG if no matching callback registered.
+/**
+ * \brief Unregister this callback.  
+ *
+ * \return 0 on success, ENOENT if ddname is invalid, or ENOMSG if no matching 
+ * callback registered.
  */
 int
 dsl_prop_unregister(dsl_dataset_t *ds, const char *propname,
@@ -463,8 +468,8 @@ dsl_prop_unregister(dsl_dataset_t *ds, const char *propname,
 	return (0);
 }
 
-/*
- * Return the number of callbacks that are registered for this dataset.
+/**
+ * \brief Return the number of callbacks that are registered for this dataset.
  */
 int
 dsl_prop_numcb(dsl_dataset_t *ds)
@@ -565,7 +570,7 @@ dsl_prop_set_sync(void *arg1, void *arg2, dmu_tx_t *tx)
 
 	isint = (dodefault(propname, 8, 1, &intval) == 0);
 
-	if (ds->ds_phys != NULL && dsl_dataset_is_snapshot(ds)) {
+	if (DS_HAS_PHYS(ds) && dsl_dataset_is_snapshot(ds)) {
 		ASSERT(version >= SPA_VERSION_SNAP_PROPS);
 		if (ds->ds_phys->ds_props_obj == 0) {
 			dmu_buf_will_dirty(ds->ds_dbuf, tx);
@@ -668,7 +673,7 @@ dsl_prop_set_sync(void *arg1, void *arg2, dmu_tx_t *tx)
 	if (isint) {
 		VERIFY(0 == dsl_prop_get_ds(ds, propname, 8, 1, &intval, NULL));
 
-		if (ds->ds_phys != NULL && dsl_dataset_is_snapshot(ds)) {
+		if (DS_HAS_PHYS(ds) && dsl_dataset_is_snapshot(ds)) {
 			dsl_prop_cb_record_t *cbr;
 			/*
 			 * It's a snapshot; nothing can inherit this
@@ -996,7 +1001,7 @@ dsl_prop_get_all_impl(objset_t *mos, uint64_t propobj,
 	return (err);
 }
 
-/*
+/**
  * Iterate over all properties for this dataset and return them in an nvlist.
  */
 static int
@@ -1073,7 +1078,7 @@ dsl_prop_set_hasrecvd_impl(objset_t *os, zprop_source_t source)
 	    dsl_prop_set_sync, ds, &psa, 2);
 }
 
-/*
+/**
  * Call after successfully receiving properties to ensure that only the first
  * receive on or after SPA_VERSION_RECVD_PROPS blows away local properties.
  */

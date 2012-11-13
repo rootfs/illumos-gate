@@ -37,10 +37,15 @@
 #include <sys/zio_compress.h>
 #include <sys/dsl_scan.h>
 
-/*
+/**
+ * \addtogroup tunables
+ * \{
+ */
+/**
  * Enable/disable prefetching of dedup-ed blocks which are going to be freed.
  */
 int zfs_dedup_prefetch = 1;
+/** \} */
 
 SYSCTL_DECL(_vfs_zfs);
 SYSCTL_NODE(_vfs_zfs, OID_AUTO, dedup, CTLFLAG_RW, 0, "ZFS DEDUP");

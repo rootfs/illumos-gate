@@ -42,10 +42,10 @@ struct metaslab_class {
 	metaslab_group_t	*mc_rotor;
 	space_map_ops_t		*mc_ops;
 	uint64_t		mc_aliquot;
-	uint64_t		mc_alloc;	/* total allocated space */
-	uint64_t		mc_deferred;	/* total deferred frees */
-	uint64_t		mc_space;	/* total space (alloc + free) */
-	uint64_t		mc_dspace;	/* total deflated space */
+	uint64_t		mc_alloc;	/**< total allocated space */
+	uint64_t		mc_deferred;	/**< total deferred frees */
+	uint64_t		mc_space;	/**<total space (alloc + free)*/
+	uint64_t		mc_dspace;	/**< total deflated space */
 };
 
 struct metaslab_group {
@@ -62,7 +62,7 @@ struct metaslab_group {
 	metaslab_group_t	*mg_next;
 };
 
-/*
+/**
  * Each metaslab's free space is tracked in space map object in the MOS,
  * which is only updated in syncing context.  Each time we sync a txg,
  * we append the allocs and frees from that txg to the space map object.
@@ -70,18 +70,18 @@ struct metaslab_group {
  * to ms_smo_syncing.  Everything in ms_smo is always safe to allocate.
  */
 struct metaslab {
-	kmutex_t	ms_lock;	/* metaslab lock		*/
-	space_map_obj_t	ms_smo;		/* synced space map object	*/
-	space_map_obj_t	ms_smo_syncing;	/* syncing space map object	*/
-	space_map_t	ms_allocmap[TXG_SIZE];  /* allocated this txg	*/
-	space_map_t	ms_freemap[TXG_SIZE];	/* freed this txg	*/
-	space_map_t	ms_defermap[TXG_DEFER_SIZE]; /* deferred frees	*/
-	space_map_t	ms_map;		/* in-core free space map	*/
-	int64_t		ms_deferspace;	/* sum of ms_defermap[] space	*/
-	uint64_t	ms_weight;	/* weight vs. others in group	*/
-	metaslab_group_t *ms_group;	/* metaslab group		*/
-	avl_node_t	ms_group_node;	/* node in metaslab group tree	*/
-	txg_node_t	ms_txg_node;	/* per-txg dirty metaslab links	*/
+	kmutex_t	ms_lock;	/**< metaslab lock		*/
+	space_map_obj_t	ms_smo;		/**< synced space map object	*/
+	space_map_obj_t	ms_smo_syncing;	/**< syncing space map object	*/
+	space_map_t	ms_allocmap[TXG_SIZE];  /**< allocated this txg	*/
+	space_map_t	ms_freemap[TXG_SIZE];	/**< freed this txg	*/
+	space_map_t	ms_defermap[TXG_DEFER_SIZE]; /**< deferred frees*/
+	space_map_t	ms_map;		/**< in-core free space map	*/
+	int64_t		ms_deferspace;	/**< sum of ms_defermap[] space	*/
+	uint64_t	ms_weight;	/**< weight vs. others in group	*/
+	metaslab_group_t *ms_group;	/**< metaslab group		*/
+	avl_node_t	ms_group_node;	/**< node in metaslab group tree*/
+	txg_node_t	ms_txg_node;	/**< per-txg dirty metaslab links*/
 };
 
 #ifdef	__cplusplus

@@ -50,7 +50,7 @@ typedef int (blkptr_cb_t)(spa_t *spa, zilog_t *zilog, const blkptr_t *bp,
 #define	TRAVERSE_PREFETCH (TRAVERSE_PREFETCH_METADATA | TRAVERSE_PREFETCH_DATA)
 #define	TRAVERSE_HARD			(1<<4)
 
-/* Special traverse error return value to indicate skipping of children */
+/** Special traverse error return value to indicate skipping of children */
 #define	TRAVERSE_VISIT_NO_CHILDREN	-1
 
 int traverse_dataset(struct dsl_dataset *ds,

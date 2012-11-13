@@ -42,8 +42,9 @@
 #include <sys/zone.h>
 #endif
 
-/*
- * Pool configuration repository.
+/**
+ * \file spa_config.c
+ * \brief Pool configuration repository.
  *
  * Pool configuration is stored as a packed nvlist on the filesystem.  By
  * default, all pools are stored in /etc/zfs/zpool.cache and loaded on boot
@@ -61,13 +62,13 @@
 
 static uint64_t spa_config_generation = 1;
 
-/*
+/**
  * This can be overridden in userland to preserve an alternate namespace for
  * userland pools when doing testing.
  */
 const char *spa_config_path = ZPOOL_CACHE;
 
-/*
+/**
  * Called when the module is first loaded, this routine loads the configuration
  * file into the SPA namespace.  It does not actually open or load the pools; it
  * only populates the namespace.
@@ -193,9 +194,10 @@ spa_config_write(spa_config_dirent_t *dp, nvlist_t *nvl)
 	return (err);
 }
 
-/*
- * Synchronize pool configuration to disk.  This must be called with the
- * namespace lock held.
+/**
+ * \brief Synchronize pool configuration to disk.  
+ *
+ * This must be called with the namespace lock held.
  */
 void
 spa_config_sync(spa_t *target, boolean_t removing, boolean_t postsysevent)
@@ -294,7 +296,7 @@ spa_config_sync(spa_t *target, boolean_t removing, boolean_t postsysevent)
 		spa_event_notify(target, NULL, ESC_ZFS_CONFIG_SYNC);
 }
 
-/*
+/**
  * Sigh.  Inside a local zone, we don't have access to /etc/zfs/zpool.cache,
  * and we don't want to allow the local zone to see all the pools anyway.
  * So we have to invent the ZFS_IOC_CONFIG ioctl to grab the configuration
@@ -337,8 +339,9 @@ spa_config_set(spa_t *spa, nvlist_t *config)
 	mutex_exit(&spa->spa_props_lock);
 }
 
-/*
- * Generate the pool's configuration based on the current in-core state.
+/**
+ * \brief Generate the pool's configuration based on the current in-core state.
+ *
  * We infer whether to generate a complete config or just one top-level config
  * based on whether vd is the root vdev.
  */
@@ -479,10 +482,12 @@ spa_config_generate(spa_t *spa, vdev_t *vd, uint64_t txg, int getstats)
 	return (config);
 }
 
-/*
- * Update all disk labels, generate a fresh config based on the current
- * in-core state, and sync the global config cache (do not sync the config
- * cache if this is a booting rootpool).
+/**
+ * \brief Update all disk labels
+ *
+ * Generate a fresh config based on the current in-core state, and sync the
+ * global config cache (do not sync the config cache if this is a booting
+ * rootpool).
  */
 void
 spa_config_update(spa_t *spa, int what)

@@ -404,6 +404,36 @@ is_whole_disk(const char *arg)
 #endif
 }
 
+static char *
+removed_guid_path(zpool_handle_t *zhp, char *guid_str)
+{
+	uint64_t guid, notpresent = 0;
+	nvlist_t *nv;
+	boolean_t avail_spare, is_l2cache;
+	char *end, *removed_path;
+	uint_t vs_count = 0;
+	vdev_stat_t *vs;
+
+	guid = strtoull(guid_str, &end, 10);
+	if (guid == 0 || *end != '\0')
+		return (NULL);
+
+	nv = zpool_find_vdev(zhp, guid_str, &avail_spare, &is_l2cache, NULL);
+	if (nv == NULL)
+		return (NULL);
+
+	nvlist_lookup_uint64_array(nv, ZPOOL_CONFIG_VDEV_STATS,
+	    (uint64_t **)&vs, &vs_count);
+
+	if (nvlist_lookup_uint64(nv, ZPOOL_CONFIG_NOT_PRESENT, &notpresent) != 0
+	    && (vs_count == 0 || vs->vs_state > VDEV_STATE_CANT_OPEN))
+		return (NULL);
+
+	if (nvlist_lookup_string(nv, ZPOOL_CONFIG_PATH, &removed_path) == 0)
+		return (removed_path);
+	return (NULL);
+}
+
 /*
  * Create a leaf vdev.  Determine if this is a file or a device.  If it's a
  * device, fill in the device id to make a complete nvlist.  Valid forms for a
@@ -414,33 +444,39 @@ is_whole_disk(const char *arg)
  * 	xxx		Shorthand for /dev/dsk/xxx
  */
 static nvlist_t *
-make_leaf_vdev(const char *arg, uint64_t is_log)
+make_leaf_vdev(zpool_handle_t *zhp, char *arg, uint64_t is_log)
 {
 	char path[MAXPATHLEN];
 	struct stat64 statbuf;
 	nvlist_t *vdev = NULL;
 	char *type = NULL;
 	boolean_t wholedisk = B_FALSE;
+	char *leaf_path = arg;
 
 	/*
 	 * Determine what type of vdev this is, and put the full path into
 	 * 'path'.  We detect whether this is a device of file afterwards by
-	 * checking the st_mode of the file.
+	 * checking the st_mode of the file.  Account for the possibility
+	 * that the argument is a GUID for a removed vdev.
 	 */
-	if (arg[0] == '/') {
+	leaf_path = removed_guid_path(zhp, leaf_path);
+	if (leaf_path == NULL)
+		leaf_path = arg;
+
+	if (leaf_path[0] == '/') {
 		/*
 		 * Complete device or file path.  Exact type is determined by
 		 * examining the file descriptor afterwards.
 		 */
-		wholedisk = is_whole_disk(arg);
-		if (!wholedisk && (stat64(arg, &statbuf) != 0)) {
+		wholedisk = is_whole_disk(leaf_path);
+		if (!wholedisk && (stat64(leaf_path, &statbuf) != 0)) {
 			(void) fprintf(stderr,
 			    gettext("cannot open '%s': %s\n"),
-			    arg, strerror(errno));
+			    leaf_path, strerror(errno));
 			return (NULL);
 		}
 
-		(void) strlcpy(path, arg, sizeof (path));
+		(void) strlcpy(path, leaf_path, sizeof (path));
 	} else {
 		/*
 		 * This may be a short path for a device, or it could be total
@@ -448,10 +484,8 @@ make_leaf_vdev(const char *arg, uint64_t is_log)
 		 * /dev/dsk/.  As part of this check, see if we've been given a
 		 * an entire disk (minus the slice number).
 		 */
-		if (strncmp(arg, _PATH_DEV, sizeof(_PATH_DEV) - 1) == 0)
-			strlcpy(path, arg, sizeof (path));
-		else
-			snprintf(path, sizeof (path), "%s%s", _PATH_DEV, arg);
+
+		snprintf(path, sizeof(path), "%s%s", _PATH_DEV, leaf_path);
 		wholedisk = is_whole_disk(path);
 		if (!wholedisk && (stat64(path, &statbuf) != 0)) {
 			/*
@@ -464,7 +498,7 @@ make_leaf_vdev(const char *arg, uint64_t is_log)
 			if (errno == ENOENT) {
 				(void) fprintf(stderr,
 				    gettext("cannot open '%s': no such "
-				    "GEOM provider\n"), arg);
+				    "GEOM provider\n"), leaf_path);
 				(void) fprintf(stderr,
 				    gettext("must be a full path or "
 				    "shorthand device name\n"));
@@ -1198,7 +1232,7 @@ is_grouping(const char *type, int *mindev, int *maxdev)
  * because the program is just going to exit anyway.
  */
 nvlist_t *
-construct_spec(int argc, char **argv)
+construct_spec(zpool_handle_t *zhp, int argc, char **argv)
 {
 	nvlist_t *nvroot, *nv, **top, **spares, **l2cache;
 	int t, toplevels, mindev, maxdev, nspares, nlogs, nl2cache;
@@ -1287,8 +1321,9 @@ construct_spec(int argc, char **argv)
 				    children * sizeof (nvlist_t *));
 				if (child == NULL)
 					zpool_no_memory();
-				if ((nv = make_leaf_vdev(argv[c], B_FALSE))
-				    == NULL)
+
+				nv = make_leaf_vdev(zhp, argv[c], B_FALSE);
+				if (nv == NULL)
 					return (NULL);
 				child[children - 1] = nv;
 			}
@@ -1343,7 +1378,8 @@ construct_spec(int argc, char **argv)
 			 * We have a device.  Pass off to make_leaf_vdev() to
 			 * construct the appropriate nvlist describing the vdev.
 			 */
-			if ((nv = make_leaf_vdev(argv[0], is_log)) == NULL)
+			nv = make_leaf_vdev(zhp, argv[0], is_log);
+			if (nv == NULL)
 				return (NULL);
 			if (is_log)
 				nlogs++;
@@ -1409,7 +1445,7 @@ split_mirror_vdev(zpool_handle_t *zhp, char *newname, nvlist_t *props,
 	uint_t c, children;
 
 	if (argc > 0) {
-		if ((newroot = construct_spec(argc, argv)) == NULL) {
+		if ((newroot = construct_spec(zhp, argc, argv)) == NULL) {
 			(void) fprintf(stderr, gettext("Unable to build a "
 			    "pool from the specified devices\n"));
 			return (NULL);
@@ -1473,7 +1509,7 @@ make_root_vdev(zpool_handle_t *zhp, int force, int check_rep,
 	 * that we have a valid specification, and that all devices can be
 	 * opened.
 	 */
-	if ((newroot = construct_spec(argc, argv)) == NULL)
+	if ((newroot = construct_spec(zhp, argc, argv)) == NULL)
 		return (NULL);
 
 	if (zhp && ((poolconfig = zpool_get_config(zhp, NULL)) == NULL))

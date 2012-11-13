@@ -65,7 +65,9 @@ typedef struct objset_phys {
 } objset_phys_t;
 
 struct objset {
-	/* Immutable: */
+	/**
+	 * \name Immutable
+	 * \{ */
 	struct dsl_dataset *os_dsl_dataset;
 	spa_t *os_spa;
 	arc_buf_t *os_phys_buf;
@@ -81,7 +83,10 @@ struct objset {
 	dnode_handle_t os_groupused_dnode;
 	zilog_t *os_zil;
 
-	/* can change, under dsl_dir's locks: */
+	/**
+	 * \}
+	 * \name can change, under dsl_dir's locks
+	 * \{ */
 	uint8_t os_checksum;
 	uint8_t os_compress;
 	uint8_t os_copies;
@@ -92,30 +97,46 @@ struct objset {
 	uint8_t os_secondary_cache;
 	uint8_t os_sync;
 
-	/* no lock needed: */
-	struct dmu_tx *os_synctx; /* XXX sketchy */
+	/**
+	 * \}
+	 * \name no lock needed
+	 * \{ */
+	struct dmu_tx *os_synctx; /**< XXX sketchy */
 	blkptr_t *os_rootbp;
 	zil_header_t os_zil_header;
 	list_t os_synced_dnodes;
 	uint64_t os_flags;
 
-	/* Protected by os_obj_lock */
+	/**
+	 * \}
+	 * \name Protected by os_obj_lock
+	 * \{ */
 	kmutex_t os_obj_lock;
 	uint64_t os_obj_next;
 
-	/* Protected by os_lock */
+	/**
+	 * \}
+	 * \name Protected by os_lock 
+	 * \{*/
 	kmutex_t os_lock;
 	list_t os_dirty_dnodes[TXG_SIZE];
 	list_t os_free_dnodes[TXG_SIZE];
 	list_t os_dnodes;
 	list_t os_downgraded_dbufs;
 
-	/* stuff we store for the user */
+	/**
+	 * \}
+	 * \name stuff we store for the user 
+	 * \{*/
 	kmutex_t os_user_ptr_lock;
 	void *os_user_ptr;
 
-	/* SA layout/attribute registration */
+	/**
+	 * \{ 
+	 * \name SA layout/attribute registration 
+	 * \{*/
 	sa_os_t *os_sa;
+	/** \} */
 };
 
 #define	DMU_META_OBJSET		0

@@ -33,40 +33,40 @@
 extern "C" {
 #endif
 
-/*
- * zio pipeline stage definitions
+/**
+ * \brief zio pipeline stage definitions
  */
 enum zio_stage {
-	ZIO_STAGE_OPEN			= 1 << 0,	/* RWFCI */
+	ZIO_STAGE_OPEN			= 1 << 0,	/**< RWFCI */
 
-	ZIO_STAGE_READ_BP_INIT		= 1 << 1,	/* R---- */
-	ZIO_STAGE_FREE_BP_INIT		= 1 << 2,	/* --F-- */
-	ZIO_STAGE_ISSUE_ASYNC		= 1 << 3,	/* RWF-- */
-	ZIO_STAGE_WRITE_BP_INIT		= 1 << 4,	/* -W--- */
+	ZIO_STAGE_READ_BP_INIT		= 1 << 1,	/**< R---- */
+	ZIO_STAGE_FREE_BP_INIT		= 1 << 2,	/**< --F-- */
+	ZIO_STAGE_ISSUE_ASYNC		= 1 << 3,	/**< RWF-- */
+	ZIO_STAGE_WRITE_BP_INIT		= 1 << 4,	/**< -W--- */
 
-	ZIO_STAGE_CHECKSUM_GENERATE	= 1 << 5,	/* -W--- */
+	ZIO_STAGE_CHECKSUM_GENERATE	= 1 << 5,	/**< -W--- */
 
-	ZIO_STAGE_DDT_READ_START	= 1 << 6,	/* R---- */
-	ZIO_STAGE_DDT_READ_DONE		= 1 << 7,	/* R---- */
-	ZIO_STAGE_DDT_WRITE		= 1 << 8,	/* -W--- */
-	ZIO_STAGE_DDT_FREE		= 1 << 9,	/* --F-- */
+	ZIO_STAGE_DDT_READ_START	= 1 << 6,	/**< R---- */
+	ZIO_STAGE_DDT_READ_DONE		= 1 << 7,	/**< R---- */
+	ZIO_STAGE_DDT_WRITE		= 1 << 8,	/**< -W--- */
+	ZIO_STAGE_DDT_FREE		= 1 << 9,	/**< --F-- */
 
-	ZIO_STAGE_GANG_ASSEMBLE		= 1 << 10,	/* RWFC- */
-	ZIO_STAGE_GANG_ISSUE		= 1 << 11,	/* RWFC- */
+	ZIO_STAGE_GANG_ASSEMBLE		= 1 << 10,	/**< RWFC- */
+	ZIO_STAGE_GANG_ISSUE		= 1 << 11,	/**< RWFC- */
 
-	ZIO_STAGE_DVA_ALLOCATE		= 1 << 12,	/* -W--- */
-	ZIO_STAGE_DVA_FREE		= 1 << 13,	/* --F-- */
-	ZIO_STAGE_DVA_CLAIM		= 1 << 14,	/* ---C- */
+	ZIO_STAGE_DVA_ALLOCATE		= 1 << 12,	/**< -W--- */
+	ZIO_STAGE_DVA_FREE		= 1 << 13,	/**< --F-- */
+	ZIO_STAGE_DVA_CLAIM		= 1 << 14,	/**< ---C- */
 
-	ZIO_STAGE_READY			= 1 << 15,	/* RWFCI */
+	ZIO_STAGE_READY			= 1 << 15,	/**< RWFCI */
 
 	ZIO_STAGE_VDEV_IO_START		= 1 << 16,	/* RWF-I */
 	ZIO_STAGE_VDEV_IO_DONE		= 1 << 17,	/* RWF-- */
 	ZIO_STAGE_VDEV_IO_ASSESS	= 1 << 18,	/* RWF-I */
 
-	ZIO_STAGE_CHECKSUM_VERIFY	= 1 << 19,	/* R---- */
+	ZIO_STAGE_CHECKSUM_VERIFY	= 1 << 19,	/**< R---- */
 
-	ZIO_STAGE_DONE			= 1 << 20	/* RWFCI */
+	ZIO_STAGE_DONE			= 1 << 20	/**< RWFCI */
 };
 
 #define	ZIO_INTERLOCK_STAGES			\

@@ -46,10 +46,13 @@ struct dsl_dataset;
 struct dsl_dir;
 struct dsl_pool;
 
+#define DS_HAS_PHYS(ds) \
+	((ds)->ds_dbuf != NULL && (ds)->ds_phys != NULL)
+
 #define	DS_FLAG_INCONSISTENT	(1ULL<<0)
 #define	DS_IS_INCONSISTENT(ds)	\
-	((ds)->ds_phys->ds_flags & DS_FLAG_INCONSISTENT)
-/*
+	(ds->ds_phys->ds_flags & DS_FLAG_INCONSISTENT)
+/**
  * NB: nopromote can not yet be set, but we want support for it in this
  * on-disk version, so that we don't need to upgrade for it later.  It
  * will be needed when we implement 'zfs split' (where the split off
@@ -57,37 +60,37 @@ struct dsl_pool;
  */
 #define	DS_FLAG_NOPROMOTE	(1ULL<<1)
 
-/*
+/**
  * DS_FLAG_UNIQUE_ACCURATE is set if ds_unique_bytes has been correctly
  * calculated for head datasets (starting with SPA_VERSION_UNIQUE_ACCURATE,
  * refquota/refreservations).
  */
 #define	DS_FLAG_UNIQUE_ACCURATE	(1ULL<<2)
 
-/*
+/**
  * DS_FLAG_DEFER_DESTROY is set after 'zfs destroy -d' has been called
  * on a dataset. This allows the dataset to be destroyed using 'zfs release'.
  */
 #define	DS_FLAG_DEFER_DESTROY	(1ULL<<3)
 #define	DS_IS_DEFER_DESTROY(ds)	\
-	((ds)->ds_phys->ds_flags & DS_FLAG_DEFER_DESTROY)
+	(ds->ds_phys->ds_flags & DS_FLAG_DEFER_DESTROY)
 
-/*
+/**
  * DS_FLAG_CI_DATASET is set if the dataset contains a file system whose
  * name lookups should be performed case-insensitively.
  */
 #define	DS_FLAG_CI_DATASET	(1ULL<<16)
 
 typedef struct dsl_dataset_phys {
-	uint64_t ds_dir_obj;		/* DMU_OT_DSL_DIR */
-	uint64_t ds_prev_snap_obj;	/* DMU_OT_DSL_DATASET */
+	uint64_t ds_dir_obj;		/**< DMU_OT_DSL_DIR */
+	uint64_t ds_prev_snap_obj;	/**< DMU_OT_DSL_DATASET */
 	uint64_t ds_prev_snap_txg;
-	uint64_t ds_next_snap_obj;	/* DMU_OT_DSL_DATASET */
-	uint64_t ds_snapnames_zapobj;	/* DMU_OT_DSL_DS_SNAP_MAP 0 for snaps */
-	uint64_t ds_num_children;	/* clone/snap children; ==0 for head */
-	uint64_t ds_creation_time;	/* seconds since 1970 */
+	uint64_t ds_next_snap_obj;	/**< DMU_OT_DSL_DATASET */
+	uint64_t ds_snapnames_zapobj;/**< DMU_OT_DSL_DS_SNAP_MAP 0 for snaps */
+	uint64_t ds_num_children;/**< clone/snap children; ==0 for head */
+	uint64_t ds_creation_time;	/**< seconds since 1970 */
 	uint64_t ds_creation_txg;
-	uint64_t ds_deadlist_obj;	/* DMU_OT_DEADLIST */
+	uint64_t ds_deadlist_obj;	/**< DMU_OT_DEADLIST */
 	/*
 	 * ds_referenced_bytes, ds_compressed_bytes, and ds_uncompressed_bytes
 	 * include all blocks referenced by this dataset, including those
@@ -96,85 +99,126 @@ typedef struct dsl_dataset_phys {
 	uint64_t ds_referenced_bytes;
 	uint64_t ds_compressed_bytes;
 	uint64_t ds_uncompressed_bytes;
-	uint64_t ds_unique_bytes;	/* only relevant to snapshots */
-	/*
-	 * The ds_fsid_guid is a 56-bit ID that can change to avoid
-	 * collisions.  The ds_guid is a 64-bit ID that will never
-	 * change, so there is a small probability that it will collide.
-	 */
+	uint64_t ds_unique_bytes;	/**< only relevant to snapshots */
+	/** A 56-bit ID that can change to avoid collisions. */
 	uint64_t ds_fsid_guid;
+	/**
+	 * A 64-bit ID that will never change, so there is a small probability
+	 * that it will collide.
+	 */
 	uint64_t ds_guid;
-	uint64_t ds_flags;		/* DS_FLAG_* */
+	uint64_t ds_flags;		/**< DS_FLAG_* */
 	blkptr_t ds_bp;
-	uint64_t ds_next_clones_obj;	/* DMU_OT_DSL_CLONES */
-	uint64_t ds_props_obj;		/* DMU_OT_DSL_PROPS for snaps */
-	uint64_t ds_userrefs_obj;	/* DMU_OT_USERREFS */
+	uint64_t ds_next_clones_obj;	/**< DMU_OT_DSL_CLONES */
+	uint64_t ds_props_obj;		/**< DMU_OT_DSL_PROPS for snaps */
+	uint64_t ds_userrefs_obj;	/**< DMU_OT_USERREFS */
 	uint64_t ds_pad[5]; /* pad out to 320 bytes for good measure */
 } dsl_dataset_phys_t;
 
+typedef struct dsl_dataset_dbuf {
+	uint8_t dsdb_pad[offsetof(dmu_buf_t, db_data)];
+	dsl_dataset_phys_t *dsdb_data;
+} dsl_dataset_dbuf_t;
+
 typedef struct dsl_dataset {
-	/* Immutable: */
+	/** Dbuf user eviction data for this instance. */
+	dmu_buf_user_t db_evict;
+
+	/**
+	 * \name Immutable
+	 * \{ */
 	struct dsl_dir *ds_dir;
-	dsl_dataset_phys_t *ds_phys;
-	dmu_buf_t *ds_dbuf;
+	union {
+		dmu_buf_t *ds_dmu_db;
+		dsl_dataset_dbuf_t *ds_db;
+	} ds_db_u;
 	uint64_t ds_object;
 	uint64_t ds_fsid_guid;
 
-	/* only used in syncing context, only valid for non-snapshots: */
+	/**
+	 * \}
+	 * \name Only used in syncing context, only valid for non-snapshots
+	 * \{ */
 	struct dsl_dataset *ds_prev;
 
-	/* has internal locking: */
+	/**
+	 * \}
+	 * \name Has internal locking
+	 * \{ */
 	dsl_deadlist_t ds_deadlist;
 	bplist_t ds_pending_deadlist;
 
-	/* to protect against multiple concurrent incremental recv */
+	/**
+	 * \}
+	 * \name To protect against multiple concurrent incremental recv 
+	 * \{*/
 	kmutex_t ds_recvlock;
 
-	/* protected by lock on pool's dp_dirty_datasets list */
+	/**
+	 * \}
+	 * \name Protected by lock on pool's dp_dirty_datasets list 
+	 * \{ */
 	txg_node_t ds_dirty_link;
 	list_node_t ds_synced_link;
 
-	/*
-	 * ds_phys->ds_<accounting> is also protected by ds_lock.
-	 * Protected by ds_lock:
+	/**
+	 * \}
+	 * \name Protected by ds_lock
+	 * ds->ds_phys->ds_<accounting> is also protected by ds_lock.
+	 * \{
 	 */
 	kmutex_t ds_lock;
 	objset_t *ds_objset;
 	uint64_t ds_userrefs;
 
-	/*
-	 * ds_owner is protected by the ds_rwlock and the ds_lock
+	/**
+	 * \}
+	 * \name ds_owner is protected by the ds_rwlock and the ds_lock
+	 * \{
 	 */
 	krwlock_t ds_rwlock;
 	kcondvar_t ds_exclusive_cv;
 	void *ds_owner;
 
-	/* no locking; only for making guesses */
+	/**
+	 * \}
+	 * \name no locking; only for making guesses 
+	 * \{ */
 	uint64_t ds_trysnap_txg;
 
-	/* for objset_open() */
+	/**
+	 * \}
+	 * \name for objset_open() 
+	 * \{*/
 	kmutex_t ds_opening_lock;
+	/** \} */
 
-	uint64_t ds_reserved;	/* cached refreservation */
-	uint64_t ds_quota;	/* cached refquota */
+	uint64_t ds_reserved;	/**< cached refreservation */
+	uint64_t ds_quota;	/**< cached refquota */
 
 	kmutex_t ds_sendstream_lock;
 	list_t ds_sendstreams;
 
-	/* Protected by ds_lock; keep at end of struct for better locality */
+	/**
+	 * \name Protected by ds_lock; keep at end of struct for better locality
+	 * \{ */
 	char ds_snapname[MAXNAMELEN];
+	/** \} */
 } dsl_dataset_t;
 
+#define	ds_dbuf ds_db_u.ds_dmu_db
+#define	ds_phys ds_db_u.ds_db->dsdb_data
+
 struct dsl_ds_destroyarg {
-	dsl_dataset_t *ds;		/* ds to destroy */
-	dsl_dataset_t *rm_origin;	/* also remove our origin? */
-	boolean_t is_origin_rm;		/* set if removing origin snap */
-	boolean_t defer;		/* destroy -d requested? */
-	boolean_t releasing;		/* destroying due to release? */
-	boolean_t need_prep;		/* do we need to retry due to EBUSY? */
+	dsl_dataset_t *ds;		/**< ds to destroy */
+	dsl_dataset_t *rm_origin;	/**< also remove our origin? */
+	boolean_t is_origin_rm;		/**< set if removing origin snap */
+	boolean_t defer;		/**< destroy -d requested? */
+	boolean_t releasing;		/**< destroying due to release? */
+	boolean_t need_prep;		/**< do we need to retry due to EBUSY?*/
 };
 
-/*
+/**
  * The max length of a temporary tag prefix is the number of hex digits
  * required to express UINT64_MAX plus one for the hyphen.
  */
@@ -197,10 +241,10 @@ struct dsl_ds_holdarg {
 #define	ZFS_RENAME_ALLOW_MOUNTED	0x02
 
 #define	dsl_dataset_is_snapshot(ds) \
-	((ds)->ds_phys->ds_num_children != 0)
+	(ds->ds_phys->ds_num_children != 0)
 
 #define	DS_UNIQUE_IS_ACCURATE(ds)	\
-	(((ds)->ds_phys->ds_flags & DS_FLAG_UNIQUE_ACCURATE) != 0)
+	((ds->ds_phys->ds_flags & DS_FLAG_UNIQUE_ACCURATE) != 0)
 
 int dsl_dataset_hold(const char *name, void *tag, dsl_dataset_t **dsp);
 int dsl_dataset_hold_obj(struct dsl_pool *dp, uint64_t dsobj,

@@ -44,7 +44,7 @@
 #include <sys/sa.h>
 #include <sys/zfs_onexit.h>
 
-/*
+/**
  * Needed to close a window in dnode_move() that allows the objset to be freed
  * before it can be safely accessed.
  */
@@ -533,9 +533,9 @@ dmu_objset_evict(objset_t *os)
 		ASSERT(!dmu_objset_is_dirty(os, t));
 
 	if (ds) {
-		if (!dsl_dataset_is_snapshot(ds)) {
-			VERIFY(0 == dsl_prop_unregister(ds, "checksum",
-			    checksum_changed_cb, os));
+		/* Snapshots do not have these properties. */
+		if (0 == dsl_prop_unregister(ds, "checksum",
+		    checksum_changed_cb, os)) {
 			VERIFY(0 == dsl_prop_unregister(ds, "compression",
 			    compression_changed_cb, os));
 			VERIFY(0 == dsl_prop_unregister(ds, "copies",
@@ -588,6 +588,9 @@ dmu_objset_evict(objset_t *os)
 	kmem_free(os, sizeof (objset_t));
 }
 
+/**
+ * \brief Get the [cm]time for an objset's snapshot dir
+ */
 timestruc_t
 dmu_objset_snap_cmtime(objset_t *os)
 {
@@ -1006,7 +1009,10 @@ dmu_objset_snapshot(char *fsname, char *snapname, char *tag,
 			dmu_objset_name(os, name);
 			strlcat(name, "@", sizeof(name));
 			strlcat(name, snapname, sizeof(name));
-			zvol_create_minors(name);
+			err = zvol_create_minors(name);
+			if (err)
+				printf("ZFS WARNING: Unable to create minors"
+				    " for snapshot %s\n", name);
 		}
 #endif
 #endif
@@ -1283,7 +1289,7 @@ dmu_objset_do_userquota_updates(objset_t *os, dmu_tx_t *tx)
 	}
 }
 
-/*
+/**
  * Returns a pointer to data to find uid/gid from
  *
  * If a dirty record for transaction group that is syncing can't
@@ -1293,16 +1299,13 @@ dmu_objset_do_userquota_updates(objset_t *os, dmu_tx_t *tx)
 static void *
 dmu_objset_userquota_find_data(dmu_buf_impl_t *db, dmu_tx_t *tx)
 {
-	dbuf_dirty_record_t *dr, **drp;
+	dbuf_dirty_record_t *dr;
 	void *data;
 
 	if (db->db_dirtycnt == 0)
 		return (db->db.db_data);  /* Nothing is changing */
 
-	for (drp = &db->db_last_dirty; (dr = *drp) != NULL; drp = &dr->dr_next)
-		if (dr->dr_txg == tx->tx_txg)
-			break;
-
+	dr = dbuf_get_dirty_record_for_txg(db, tx->tx_txg);
 	if (dr == NULL) {
 		data = NULL;
 	} else {
@@ -1480,6 +1483,21 @@ dmu_objset_userspace_upgrade(objset_t *os)
 	return (0);
 }
 
+/**
+ * \brief Get the space usage statistics for statvfs().
+ *
+ * \param[in]	os		Objset to query.
+ * \param[out]	refdbytesp	Amount of space referenced by this objset.
+ * \param[out]	availbytesp	Amount of space available to this objset,
+ * 				taking into account quotas and reservations,
+ * 				assuming that no other objsets use the space
+ * 				first.
+ * \param[out]	usedobjsp	The number of objects currently allocated.
+ * \param[out]	availobjsp	The number of objects currently available.
+ 
+ * refdbytesp and availbytesp correspond to the 'referenced' and 'available'
+ * properties, described in the zfs(1m) manpage.
+ */
 void
 dmu_objset_space(objset_t *os, uint64_t *refdbytesp, uint64_t *availbytesp,
     uint64_t *usedobjsp, uint64_t *availobjsp)
@@ -1488,12 +1506,20 @@ dmu_objset_space(objset_t *os, uint64_t *refdbytesp, uint64_t *availbytesp,
 	    usedobjsp, availobjsp);
 }
 
+/**
+ * The fsid_guid is a 56-bit ID that can change to avoid collisions.
+ * (Contrast with the ds_guid which is a 64-bit ID that will never
+ * change, so there is a small probability that it will collide.)
+ */
 uint64_t
 dmu_objset_fsid_guid(objset_t *os)
 {
 	return (dsl_dataset_fsid_guid(os->os_dsl_dataset));
 }
 
+/**
+ * \brief Get stats on a dataset.
+ */
 void
 dmu_objset_fast_stat(objset_t *os, dmu_objset_stats_t *stat)
 {
@@ -1502,6 +1528,11 @@ dmu_objset_fast_stat(objset_t *os, dmu_objset_stats_t *stat)
 		dsl_dataset_fast_stat(os->os_dsl_dataset, stat);
 }
 
+/**
+ * \brief Add entries to the nvlist for all the objset's properties.
+ *
+ * See zfs_prop_table[] and zfs(1m) for details on the properties.
+ */
 void
 dmu_objset_stats(objset_t *os, nvlist_t *nv)
 {
@@ -1628,9 +1659,10 @@ findfunc(spa_t *spa, uint64_t dsobj, const char *dsname, void *arg)
 	return (fa->func(dsname, fa->arg));
 }
 
-/*
+/**
  * Find all objsets under name, and for each, call 'func(child_name, arg)'.
- * Perhaps change all callers to use dmu_objset_find_spa()?
+ * 
+ * \note Perhaps change all callers to use dmu_objset_find_spa()?
  */
 int
 dmu_objset_find(const char *name, int func(const char *, void *), void *arg,
@@ -1642,8 +1674,8 @@ dmu_objset_find(const char *name, int func(const char *, void *), void *arg,
 	return (dmu_objset_find_spa(NULL, name, findfunc, &fa, flags));
 }
 
-/*
- * Find all objsets under name, call func on each
+/**
+ * \brief Find all objsets under name, call func on each
  */
 int
 dmu_objset_find_spa(spa_t *spa, const char *name,

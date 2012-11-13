@@ -3399,11 +3399,13 @@ zpool_vdev_name(libzfs_handle_t *hdl, zpool_handle_t *zhp, nvlist_t *nv,
 	have_path = nvlist_lookup_string(nv, ZPOOL_CONFIG_PATH, &path) == 0;
 
 	/*
-	 * If the device is not currently present, assume it will not
-	 * come back at the same device path.  Display the device by GUID.
+	 * If the device cannot currently be opened and is not a hotspare
+	 * in use by another pool, then assume it will not come back at the same
+	 * device path.  Display the device by GUID.
 	 */
 	if (nvlist_lookup_uint64(nv, ZPOOL_CONFIG_NOT_PRESENT, &value) == 0 ||
-	    have_path && have_stats && vs->vs_state <= VDEV_STATE_CANT_OPEN) {
+	    have_path && have_stats && vs->vs_aux != VDEV_AUX_SPARED &&
+	    vs->vs_state <= VDEV_STATE_CANT_OPEN) {
 		verify(nvlist_lookup_uint64(nv, ZPOOL_CONFIG_GUID,
 		    &value) == 0);
 		(void) snprintf(buf, sizeof (buf), "%llu",

@@ -45,8 +45,10 @@
 #include <sys/cred.h>
 #include <sys/namei.h>
 
-/*
- * Functions to replay ZFS intent log (ZIL) records
+/**
+ * \file zfs_replay.c
+ * \brief Functions to replay ZFS intent log (ZIL) records
+ *
  * The functions are called through a function vector (zfs_replay_vector)
  * which is indexed by the transaction type.
  */
@@ -168,8 +170,8 @@ zfs_replay_fuid_domain_common(zfs_fuid_info_t *fuid_infop, void *start,
 	return (start);
 }
 
-/*
- * Set the uid/gid in the fuid_info structure.
+/**
+ * \brief Set the uid/gid in the fuid_info structure.
  */
 static void
 zfs_replay_fuid_ugid(zfs_fuid_info_t *fuid_infop, uint64_t uid, uint64_t gid)
@@ -185,8 +187,8 @@ zfs_replay_fuid_ugid(zfs_fuid_info_t *fuid_infop, uint64_t uid, uint64_t gid)
 		fuid_infop->z_fuid_group = gid;
 }
 
-/*
- * Load fuid domains into fuid_info_t
+/**
+ * \brief Load fuid domains into fuid_info_t
  */
 static zfs_fuid_info_t *
 zfs_replay_fuid_domain(void *buf, void **end, uint64_t uid, uint64_t gid)
@@ -212,8 +214,8 @@ zfs_replay_fuid_domain(void *buf, void **end, uint64_t uid, uint64_t gid)
 	return (fuid_infop);
 }
 
-/*
- * load zfs_fuid_t's and fuid_domains into fuid_info_t
+/**
+ * \brief load zfs_fuid_t's and fuid_domains into fuid_info_t
  */
 static zfs_fuid_info_t *
 zfs_replay_fuids(void *start, void **end, int idcnt, int domcnt, uint64_t uid,
@@ -259,7 +261,7 @@ zfs_replay_swap_attrs(lr_attr_t *lrattr)
 	    (lrattr->lr_attr_masksize - 1)), 3 * sizeof (uint64_t));
 }
 
-/*
+/**
  * Replay file create with optional ACL, xvattr information as well
  * as option FUID information.
  */
@@ -765,7 +767,7 @@ zfs_replay_write(zfsvfs_t *zfsvfs, lr_write_t *lr, boolean_t byteswap)
 	return (error);
 }
 
-/*
+/**
  * TX_WRITE2 are only generated when dmu_sync() returns EALREADY
  * meaning the pool block is already being synced. So now that we always write
  * out full blocks, all we have to do is expand the eof if
@@ -941,7 +943,7 @@ zfs_replay_acl_v0(zfsvfs_t *zfsvfs, lr_acl_v0_t *lr, boolean_t byteswap)
 	return (error);
 }
 
-/*
+/**
  * Replaying ACLs is complicated by FUID support.
  * The log record may contain some optional data
  * to be used for replaying FUID's.  These pieces
@@ -1007,8 +1009,8 @@ zfs_replay_acl(zfsvfs_t *zfsvfs, lr_acl_t *lr, boolean_t byteswap)
 	return (error);
 }
 
-/*
- * Callback vectors for replaying records
+/**
+ * \brief Callback vectors for replaying records
  */
 zil_replay_func_t *zfs_replay_vector[TX_MAX_TYPE] = {
 	zfs_replay_error,	/* 0 no such transaction type */

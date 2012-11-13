@@ -22,6 +22,7 @@
  * Copyright (c) 2005, 2010, Oracle and/or its affiliates. All rights reserved.
  * Copyright 2011 Nexenta Systems, Inc.  All rights reserved.
  * Copyright (c) 2012 by Delphix. All rights reserved.
+ * Copyright (c) 2011-2012 Spectra Logic Corporation.  All rights reserved.
  */
 
 #include <sys/dmu.h>
@@ -60,6 +61,24 @@ dmu_tx_create_dd(dsl_dir_t *dd)
 #endif
 	return (tx);
 }
+
+/**
+ * You must create a transaction, then hold the objects which you will
+ * (or might) modify as part of this transaction.  Then you must assign
+ * the transaction to a transaction group.  Once the transaction has
+ * been assigned, you can modify buffers which belong to held objects as
+ * part of this transaction.  You can't modify buffers before the
+ * transaction has been assigned; you can't modify buffers which don't
+ * belong to objects which this transaction holds; you can't hold
+ * objects once the transaction has been assigned.  You may hold an
+ * object which you are going to free (with dmu_object_free()), but you
+ * don't have to.
+ *
+ * You can abort the transaction before it has been assigned.
+ *
+ * Note that you may hold buffers (with dmu_buf_hold) at any time,
+ * regardless of transaction state.
+ */
 
 dmu_tx_t *
 dmu_tx_create(objset_t *os)
@@ -250,23 +269,8 @@ dmu_tx_count_write(dmu_tx_hold_t *txh, uint64_t off, uint64_t len)
 			zio_t *zio = zio_root(dn->dn_objset->os_spa,
 			    NULL, NULL, ZIO_FLAG_CANFAIL);
 
-			/* first level-0 block */
 			start = off >> dn->dn_datablkshift;
-			if (P2PHASE(off, dn->dn_datablksz) ||
-			    len < dn->dn_datablksz) {
-				err = dmu_tx_check_ioerr(zio, dn, 0, start);
-				if (err)
-					goto out;
-			}
-
-			/* last level-0 block */
 			end = (off+len-1) >> dn->dn_datablkshift;
-			if (end != start && end <= dn->dn_maxblkid &&
-			    P2PHASE(off+len, dn->dn_datablksz)) {
-				err = dmu_tx_check_ioerr(zio, dn, 0, end);
-				if (err)
-					goto out;
-			}
 
 			/* level-1 blocks */
 			if (nlvls > 1) {
@@ -312,7 +316,8 @@ dmu_tx_count_write(dmu_tx_hold_t *txh, uint64_t off, uint64_t len)
 			dmu_buf_impl_t *db;
 
 			rw_enter(&dn->dn_struct_rwlock, RW_READER);
-			err = dbuf_hold_impl(dn, 0, start, FALSE, FTAG, &db);
+			err = dbuf_hold_impl(dn, 0, start, FALSE, FTAG, &db,
+			    /*buf_set*/NULL);
 			rw_exit(&dn->dn_struct_rwlock);
 
 			if (err) {
@@ -513,7 +518,8 @@ dmu_tx_count_free(dmu_tx_hold_t *txh, uint64_t off, uint64_t len)
 		blkoff = P2PHASE(blkid, epb);
 		tochk = MIN(epb - blkoff, nblks);
 
-		err = dbuf_hold_impl(dn, 1, blkid >> epbs, FALSE, FTAG, &dbuf);
+		err = dbuf_hold_impl(dn, 1, blkid >> epbs, FALSE, FTAG, &dbuf,
+		    /*buf_set*/NULL);
 		if (err) {
 			txh->txh_tx->tx_err = err;
 			break;
@@ -798,7 +804,7 @@ dmu_tx_holds(dmu_tx_t *tx, uint64_t object)
 
 #ifdef ZFS_DEBUG
 void
-dmu_tx_dirty_buf(dmu_tx_t *tx, dmu_buf_impl_t *db)
+dmu_tx_verify_dirty_buf(dmu_tx_t *tx, dmu_buf_impl_t *db)
 {
 	dmu_tx_hold_t *txh;
 	int match_object = FALSE, match_offset = FALSE;
@@ -1053,21 +1059,20 @@ dmu_tx_unassign(dmu_tx_t *tx)
 	tx->tx_txg = 0;
 }
 
-/*
- * Assign tx to a transaction group.  txg_how can be one of:
+/**
+ * \brief Assign tx to a transaction group.  
  *
- * (1)	TXG_WAIT.  If the current open txg is full, waits until there's
- *	a new one.  This should be used when you're not holding locks.
- *	If will only fail if we're truly out of space (or over quota).
- *
- * (2)	TXG_NOWAIT.  If we can't assign into the current open txg without
- *	blocking, returns immediately with ERESTART.  This should be used
- *	whenever you're holding locks.  On an ERESTART error, the caller
- *	should drop locks, do a dmu_tx_wait(tx), and try again.
- *
- * (3)	A specific txg.  Use this if you need to ensure that multiple
- *	transactions all sync in the same txg.  Like TXG_NOWAIT, it
- *	returns ERESTART if it can't assign you into the requested txg.
+ * txg_how can be one of:
+ * -# TXG_WAIT.  If the current open txg is full, waits until there's
+ *    a new one.  This should be used when you're not holding locks.
+ *    If will only fail if we're truly out of space (or over quota).
+ * -# TXG_NOWAIT.  If we can't assign into the current open txg without
+ *    blocking, returns immediately with ERESTART.  This should be used
+ *    whenever you're holding locks.  On an ERESTART error, the caller
+ *    should drop locks, do a dmu_tx_wait(tx), and try again.
+ * -# A specific txg.  Use this if you need to ensure that multiple
+ *    transactions all sync in the same txg.  Like TXG_NOWAIT, it
+ *    returns ERESTART if it can't assign you into the requested txg.
  */
 int
 dmu_tx_assign(dmu_tx_t *tx, uint64_t txg_how)
@@ -1221,6 +1226,9 @@ dmu_tx_abort(dmu_tx_t *tx)
 	kmem_free(tx, sizeof (dmu_tx_t));
 }
 
+/**
+ * \brief Return the txg number for the given assigned transaction.
+ */
 uint64_t
 dmu_tx_get_txg(dmu_tx_t *tx)
 {
@@ -1228,6 +1236,23 @@ dmu_tx_get_txg(dmu_tx_t *tx)
 	return (tx->tx_txg);
 }
 
+/**
+ * \brief Registers a commit callback.
+ *
+ * When registering a callback, the transaction must be already created, but
+ * it cannot be committed or aborted. It can be assigned to a txg or not.
+ *
+ * The callback will be called after the transaction has been safely written
+ * to stable storage and will also be called if the dmu_tx is aborted.
+ * If there is any error which prevents the transaction from being committed to
+ * disk, the callback will be called with a value of error != 0.
+ *
+ * \param[in]		func
+ * \param[in,out]	data	A pointer to caller private data that is
+ *				passed on as a callback parameter.  The caller
+ *				is responsible for properly allocating and
+ *				freeing it.
+ */
 void
 dmu_tx_callback_register(dmu_tx_t *tx, dmu_tx_callback_func_t *func, void *data)
 {
@@ -1241,8 +1266,8 @@ dmu_tx_callback_register(dmu_tx_t *tx, dmu_tx_callback_func_t *func, void *data)
 	list_insert_tail(&tx->tx_callbacks, dcb);
 }
 
-/*
- * Call all the commit callbacks on a list, with a given error code.
+/**
+ * \brief Call all the commit callbacks on a list, with a given error code.
  */
 void
 dmu_tx_do_callbacks(list_t *cb_list, int error)
@@ -1255,15 +1280,6 @@ dmu_tx_do_callbacks(list_t *cb_list, int error)
 		kmem_free(dcb, sizeof (dmu_tx_callback_t));
 	}
 }
-
-/*
- * Interface to hold a bunch of attributes.
- * used for creating new files.
- * attrsize is the total size of all attributes
- * to be added during object creation
- *
- * For updating/adding a single attribute dmu_tx_hold_sa() should be used.
- */
 
 /*
  * hold necessary attribute name for attribute registration.
@@ -1322,6 +1338,15 @@ dmu_tx_hold_spill(dmu_tx_t *tx, uint64_t object)
 	}
 }
 
+/**
+ * \brief Interface to hold a bunch of attributes.  Used for creating new
+ * files.
+ *
+ * For updating/adding a single attribute dmu_tx_hold_sa() should be used.
+ *
+ * \param[in]	attrsize	The total size of all attributes to be added
+ * 				during object creation.
+ */
 void
 dmu_tx_hold_sa_create(dmu_tx_t *tx, int attrsize)
 {
@@ -1350,8 +1375,8 @@ dmu_tx_hold_sa_create(dmu_tx_t *tx, int attrsize)
 	    THT_SPILL, 0, 0);
 }
 
-/*
- * Hold SA attribute
+/**
+ * \brief Hold SA attribute
  *
  * dmu_tx_hold_sa(dmu_tx_t *tx, sa_handle_t *, attribute, add, size)
  *

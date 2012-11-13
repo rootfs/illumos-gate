@@ -50,21 +50,21 @@ typedef struct spa_error_entry {
 } spa_error_entry_t;
 
 typedef struct spa_history_phys {
-	uint64_t sh_pool_create_len;	/* ending offset of zpool create */
-	uint64_t sh_phys_max_off;	/* physical EOF */
-	uint64_t sh_bof;		/* logical BOF */
-	uint64_t sh_eof;		/* logical EOF */
-	uint64_t sh_records_lost;	/* num of records overwritten */
+	uint64_t sh_pool_create_len;	/**< ending offset of zpool create */
+	uint64_t sh_phys_max_off;	/**< physical EOF */
+	uint64_t sh_bof;		/**< logical BOF */
+	uint64_t sh_eof;		/**< logical EOF */
+	uint64_t sh_records_lost;	/**< num of records overwritten */
 } spa_history_phys_t;
 
 struct spa_aux_vdev {
-	uint64_t	sav_object;		/* MOS object for device list */
-	nvlist_t	*sav_config;		/* cached device config */
-	vdev_t		**sav_vdevs;		/* devices */
-	int		sav_count;		/* number devices */
-	boolean_t	sav_sync;		/* sync the device list */
-	nvlist_t	**sav_pending;		/* pending device additions */
-	uint_t		sav_npending;		/* # pending devices */
+	uint64_t	sav_object;		/**<MOS object for device list*/
+	nvlist_t	*sav_config;		/**< cached device config */
+	vdev_t		**sav_vdevs;		/**< devices */
+	int		sav_count;		/**< number devices */
+	boolean_t	sav_sync;		/**< sync the device list */
+	nvlist_t	**sav_pending;		/**< pending device additions */
+	uint_t		sav_npending;		/**< # pending devices */
 };
 
 typedef struct spa_config_lock {
@@ -88,161 +88,191 @@ enum zio_taskq_type {
 	ZIO_TASKQ_TYPES
 };
 
-/*
- * State machine for the zpool-pooname process.  The states transitions
- * are done as follows:
+/**
+ * \brief State machine for the zpool-pooname process.
  *
- *	From		   To			Routine
- *	PROC_NONE	-> PROC_CREATED		spa_activate()
- *	PROC_CREATED	-> PROC_ACTIVE		spa_thread()
- *	PROC_ACTIVE	-> PROC_DEACTIVATE	spa_deactivate()
- *	PROC_DEACTIVATE	-> PROC_GONE		spa_thread()
- *	PROC_GONE	-> PROC_NONE		spa_deactivate()
+ * The states transitions are done as follows:
+ * <table>
+ * <tr><th>From</th>	   <th>To</th>		<th>Routine</th></tr>
+ * <tr><td>PROC_NONE</td>  <td>PROC_CREATED</td> <td>spa_activate()</td></tr>
+ * <tr><td>PROC_CREATED</td><td>PROC_ACTIVE</td><td>spa_thread()</td></tr>
+ * <tr>
+ * 	<td>PROC_ACTIVE</td><td>PROC_DEACTIVATE</td><td>spa_deactivate()</td>
+ * </tr>
+ * <tr><td>PROC_DEACTIVATE</td><td>PROC_GONE</td><td>spa_thread()</td></tr>
+ * <tr><td>PROC_GONE</td><td>PROC_NONE</td>	<td>spa_deactivate()</td></tr>
+ * </table>
  */
 typedef enum spa_proc_state {
-	SPA_PROC_NONE,		/* spa_proc = &p0, no process created */
-	SPA_PROC_CREATED,	/* spa_activate() has proc, is waiting */
-	SPA_PROC_ACTIVE,	/* taskqs created, spa_proc set */
-	SPA_PROC_DEACTIVATE,	/* spa_deactivate() requests process exit */
-	SPA_PROC_GONE		/* spa_thread() is exiting, spa_proc = &p0 */
+	SPA_PROC_NONE,		/**< spa_proc = &p0, no process created */
+	SPA_PROC_CREATED,	/**< spa_activate() has proc, is waiting */
+	SPA_PROC_ACTIVE,	/**< taskqs created, spa_proc set */
+	SPA_PROC_DEACTIVATE,	/**< spa_deactivate() requests process exit */
+	SPA_PROC_GONE		/**< spa_thread() is exiting, spa_proc = &p0 */
 } spa_proc_state_t;
 
 struct spa {
-	/*
-	 * Fields protected by spa_namespace_lock.
+	/**
+	 * \name Protected by spa_namespace_lock
+	 * \{
 	 */
-	char		spa_name[MAXNAMELEN];	/* pool name */
-	char		*spa_comment;		/* comment */
-	avl_node_t	spa_avl;		/* node in spa_namespace_avl */
-	nvlist_t	*spa_config;		/* last synced config */
-	nvlist_t	*spa_config_syncing;	/* currently syncing config */
-	nvlist_t	*spa_config_splitting;	/* config for splitting */
-	nvlist_t	*spa_load_info;		/* info and errors from load */
-	uint64_t	spa_config_txg;		/* txg of last config change */
-	int		spa_sync_pass;		/* iterate-to-convergence */
-	pool_state_t	spa_state;		/* pool state */
-	int		spa_inject_ref;		/* injection references */
-	uint8_t		spa_sync_on;		/* sync threads are running */
-	spa_load_state_t spa_load_state;	/* current load operation */
-	uint64_t	spa_import_flags;	/* import specific flags */
+	char		spa_name[MAXNAMELEN];	/**< pool name */
+	char		*spa_comment;		/**< comment */
+	avl_node_t	spa_avl;		/**< node in spa_namespace_avl*/
+	nvlist_t	*spa_config;		/**< last synced config */
+	nvlist_t	*spa_config_syncing;	/**< currently syncing config */
+	nvlist_t	*spa_config_splitting;	/**< config for splitting */
+	nvlist_t	*spa_load_info;		/**< info and errors from load*/
+	uint64_t	spa_config_txg;		/**< txg of last config change*/
+	uint64_t	spa_config_update_txg;	/**< txg of config update */
+	int		spa_sync_pass;		/**< iterate-to-convergence */
+	pool_state_t	spa_state;		/**< pool state */
+	int		spa_inject_ref;		/**< injection references */
+	uint8_t		spa_sync_on;		/**< sync threads are running */
+	spa_load_state_t spa_load_state;	/**< current load operation */
+	uint64_t	spa_import_flags;	/**< import specific flags */
 	taskq_t		*spa_zio_taskq[ZIO_TYPES][ZIO_TASKQ_TYPES];
 	dsl_pool_t	*spa_dsl_pool;
 	boolean_t	spa_is_initializing;	/* true while opening pool */
-	metaslab_class_t *spa_normal_class;	/* normal data class */
-	metaslab_class_t *spa_log_class;	/* intent log data class */
-	uint64_t	spa_first_txg;		/* first txg after spa_open() */
-	uint64_t	spa_final_txg;		/* txg of export/destroy */
-	uint64_t	spa_freeze_txg;		/* freeze pool at this txg */
-	uint64_t	spa_load_max_txg;	/* best initial ub_txg */
-	uint64_t	spa_claim_max_txg;	/* highest claimed birth txg */
-	timespec_t	spa_loaded_ts;		/* 1st successful open time */
-	objset_t	*spa_meta_objset;	/* copy of dp->dp_meta_objset */
-	txg_list_t	spa_vdev_txg_list;	/* per-txg dirty vdev list */
-	vdev_t		*spa_root_vdev;		/* top-level vdev container */
-	uint64_t	spa_config_guid;	/* config pool guid */
-	uint64_t	spa_load_guid;		/* spa_load initialized guid */
+	metaslab_class_t *spa_normal_class;	/**< normal data class */
+	metaslab_class_t *spa_log_class;	/**< intent log data class */
+	uint64_t	spa_first_txg;		/**<first txg after spa_open()*/
+	uint64_t	spa_final_txg;		/**< txg of export/destroy */
+	uint64_t	spa_freeze_txg;		/**< freeze pool at this txg */
+	uint64_t	spa_load_max_txg;	/**< best initial ub_txg */
+	uint64_t	spa_claim_max_txg;	/**< highest claimed birth txg*/
+	timespec_t	spa_loaded_ts;		/**< 1st successful open time */
+	objset_t	*spa_meta_objset;	/**<copy of dp->dp_meta_objset*/
+	txg_list_t	spa_vdev_txg_list;	/**< per-txg dirty vdev list */
+	vdev_t		*spa_root_vdev;		/**< top-level vdev container */
+	uint64_t	spa_config_guid;	/**< config pool guid */
+	uint64_t	spa_load_guid;		/**< initial guid for spa_load*/
 	uint64_t	spa_last_synced_guid;	/* last synced guid */
-	list_t		spa_config_dirty_list;	/* vdevs with dirty config */
-	list_t		spa_state_dirty_list;	/* vdevs with dirty state */
-	spa_aux_vdev_t	spa_spares;		/* hot spares */
-	spa_aux_vdev_t	spa_l2cache;		/* L2ARC cache devices */
+	list_t		spa_config_dirty_list;	/**< vdevs with dirty config */
+	list_t		spa_state_dirty_list;	/**< vdevs with dirty state */
+	spa_aux_vdev_t	spa_spares;		/**< hot spares */
+	spa_aux_vdev_t	spa_l2cache;		/**< L2ARC cache devices */
 	nvlist_t	*spa_label_features;	/* Features for reading MOS */
-	uint64_t	spa_config_object;	/* MOS object for pool config */
-	uint64_t	spa_config_generation;	/* config generation number */
-	uint64_t	spa_syncing_txg;	/* txg currently syncing */
-	bpobj_t		spa_deferred_bpobj;	/* deferred-free bplist */
-	bplist_t	spa_free_bplist[TXG_SIZE]; /* bplist of stuff to free */
-	uberblock_t	spa_ubsync;		/* last synced uberblock */
-	uberblock_t	spa_uberblock;		/* current uberblock */
-	boolean_t	spa_extreme_rewind;	/* rewind past deferred frees */
-	uint64_t	spa_last_io;		/* lbolt of last non-scan I/O */
-	kmutex_t	spa_scrub_lock;		/* resilver/scrub lock */
-	uint64_t	spa_scrub_inflight;	/* in-flight scrub I/Os */
-	kcondvar_t	spa_scrub_io_cv;	/* scrub I/O completion */
-	uint8_t		spa_scrub_active;	/* active or suspended? */
-	uint8_t		spa_scrub_type;		/* type of scrub we're doing */
-	uint8_t		spa_scrub_finished;	/* indicator to rotate logs */
-	uint8_t		spa_scrub_started;	/* started since last boot */
-	uint8_t		spa_scrub_reopen;	/* scrub doing vdev_reopen */
-	uint64_t	spa_scan_pass_start;	/* start time per pass/reboot */
-	uint64_t	spa_scan_pass_exam;	/* examined bytes per pass */
-	kmutex_t	spa_async_lock;		/* protect async state */
-	kthread_t	*spa_async_thread;	/* thread doing async task */
-	int		spa_async_suspended;	/* async tasks suspended */
-	kcondvar_t	spa_async_cv;		/* wait for thread_exit() */
-	uint16_t	spa_async_tasks;	/* async task mask */
-	char		*spa_root;		/* alternate root directory */
-	uint64_t	spa_ena;		/* spa-wide ereport ENA */
-	int		spa_last_open_failed;	/* error if last open failed */
-	uint64_t	spa_last_ubsync_txg;	/* "best" uberblock txg */
-	uint64_t	spa_last_ubsync_txg_ts;	/* timestamp from that ub */
-	uint64_t	spa_load_txg;		/* ub txg that loaded */
-	uint64_t	spa_load_txg_ts;	/* timestamp from that ub */
-	uint64_t	spa_load_meta_errors;	/* verify metadata err count */
-	uint64_t	spa_load_data_errors;	/* verify data err count */
-	uint64_t	spa_verify_min_txg;	/* start txg of verify scrub */
-	kmutex_t	spa_errlog_lock;	/* error log lock */
-	uint64_t	spa_errlog_last;	/* last error log object */
-	uint64_t	spa_errlog_scrub;	/* scrub error log object */
-	kmutex_t	spa_errlist_lock;	/* error list/ereport lock */
-	avl_tree_t	spa_errlist_last;	/* last error list */
-	avl_tree_t	spa_errlist_scrub;	/* scrub error list */
-	uint64_t	spa_deflate;		/* should we deflate? */
-	uint64_t	spa_history;		/* history object */
-	kmutex_t	spa_history_lock;	/* history lock */
-	vdev_t		*spa_pending_vdev;	/* pending vdev additions */
-	kmutex_t	spa_props_lock;		/* property lock */
-	uint64_t	spa_pool_props_object;	/* object for properties */
-	uint64_t	spa_bootfs;		/* default boot filesystem */
-	uint64_t	spa_failmode;		/* failure mode for the pool */
-	uint64_t	spa_delegation;		/* delegation on/off */
-	list_t		spa_config_list;	/* previous cache file(s) */
-	zio_t		*spa_async_zio_root;	/* root of all async I/O */
-	zio_t		*spa_suspend_zio_root;	/* root of all suspended I/O */
-	kmutex_t	spa_suspend_lock;	/* protects suspend_zio_root */
-	kcondvar_t	spa_suspend_cv;		/* notification of resume */
-	uint8_t		spa_suspended;		/* pool is suspended */
-	uint8_t		spa_claiming;		/* pool is doing zil_claim() */
-	boolean_t	spa_debug;		/* debug enabled? */
-	boolean_t	spa_is_root;		/* pool is root */
-	int		spa_minref;		/* num refs when first opened */
-	int		spa_mode;		/* FREAD | FWRITE */
-	spa_log_state_t spa_log_state;		/* log state */
-	uint64_t	spa_autoexpand;		/* lun expansion on/off */
-	ddt_t		*spa_ddt[ZIO_CHECKSUM_FUNCTIONS]; /* in-core DDTs */
-	uint64_t	spa_ddt_stat_object;	/* DDT statistics */
-	uint64_t	spa_dedup_ditto;	/* dedup ditto threshold */
-	uint64_t	spa_dedup_checksum;	/* default dedup checksum */
-	uint64_t	spa_dspace;		/* dspace in normal class */
-	kmutex_t	spa_vdev_top_lock;	/* dueling offline/remove */
-	kmutex_t	spa_proc_lock;		/* protects spa_proc* */
-	kcondvar_t	spa_proc_cv;		/* spa_proc_state transitions */
-	spa_proc_state_t spa_proc_state;	/* see definition */
-	struct proc	*spa_proc;		/* "zpool-poolname" process */
-	uint64_t	spa_did;		/* if procp != p0, did of t1 */
+	uint64_t	spa_config_object;	/**<MOS object for pool config*/
+	uint64_t	spa_config_generation;	/**< config generation number */
+	uint64_t	spa_syncing_txg;	/**< txg currently syncing */
+	bpobj_t		spa_deferred_bpobj;	/**< deferred-free bplist */
+	/** bplist of stuff to free */
+	bplist_t	spa_free_bplist[TXG_SIZE]; 
+	uberblock_t	spa_ubsync;		/**< last synced uberblock */
+	uberblock_t	spa_uberblock;		/**< current uberblock */
+	boolean_t	spa_extreme_rewind;	/**<rewind past deferred frees*/
+	uint64_t	spa_last_io;		/**<lbolt of last non-scan I/O*/
+	kmutex_t	spa_scrub_lock;		/**< resilver/scrub lock */
+	uint64_t	spa_scrub_inflight;	/**< in-flight scrub I/Os */
+	kcondvar_t	spa_scrub_io_cv;	/**< scrub I/O completion */
+	uint8_t		spa_scrub_active;	/**< active or suspended? */
+	uint8_t		spa_scrub_type;		/**< type of scrub we're doing*/
+	uint8_t		spa_scrub_finished;	/**< indicator to rotate logs */
+	uint8_t		spa_scrub_started;	/**< started since last boot */
+	uint8_t		spa_scrub_reopen;	/**< scrub doing vdev_reopen */
+	uint64_t	spa_scan_pass_start;	/**<start time per pass/reboot*/
+	uint64_t	spa_scan_pass_exam;	/**< examined bytes per pass */
+	kmutex_t	spa_async_lock;		/**< protect async state */
+	kthread_t	*spa_async_thread;	/**< thread doing async task */
+	int		spa_async_suspended;	/**< async tasks suspended */
+	kcondvar_t	spa_async_cv;		/**< wait for thread_exit() */
+	uint16_t	spa_async_tasks;	/**< async task mask */
+	char		*spa_root;		/**< alternate root directory */
+	uint64_t	spa_ena;		/**< spa-wide ereport ENA */
+	int		spa_last_open_failed;	/**< error if last open failed*/
+	uint64_t	spa_last_ubsync_txg;	/**< "best" uberblock txg */
+	uint64_t	spa_last_ubsync_txg_ts;	/**< timestamp from that ub */
+	uint64_t	spa_load_txg;		/**< ub txg that loaded */
+	uint64_t	spa_load_txg_ts;	/**< timestamp from that ub */
+	uint64_t	spa_load_meta_errors;	/**< verify metadata err count*/
+	uint64_t	spa_load_data_errors;	/**< verify data err count */
+	uint64_t	spa_verify_min_txg;	/**< start txg of verify scrub*/
+	kmutex_t	spa_errlog_lock;	/**< error log lock */
+	uint64_t	spa_errlog_last;	/**< last error log object */
+	uint64_t	spa_errlog_scrub;	/**< scrub error log object */
+	kmutex_t	spa_errlist_lock;	/**< error list/ereport lock */
+	avl_tree_t	spa_errlist_last;	/**< last error list */
+	avl_tree_t	spa_errlist_scrub;	/**< scrub error list */
+	uint64_t	spa_deflate;		/**< should we deflate? */
+	uint64_t	spa_history;		/**< history object */
+	kmutex_t	spa_history_lock;	/**< history lock */
+	vdev_t		*spa_pending_vdev;	/**< pending vdev additions */
+	kmutex_t	spa_props_lock;		/**< property lock */
+	uint64_t	spa_pool_props_object;	/**< object for properties */
+	uint64_t	spa_bootfs;		/**< default boot filesystem */
+	uint64_t	spa_failmode;		/**< failure mode for the pool*/
+	uint64_t	spa_delegation;		/**< delegation on/off */
+	list_t		spa_config_list;	/**< previous cache file(s) */
+	zio_t		*spa_async_zio_root;	/**< root of all async I/O */
+	zio_t		*spa_suspend_zio_root;	/**< root of all suspended I/O*/
+	kmutex_t	spa_suspend_lock;	/**< protects suspend_zio_root*/
+	kcondvar_t	spa_suspend_cv;		/**< notification of resume */
+	uint8_t		spa_suspended;		/**< pool is suspended */
+	uint8_t		spa_claiming;		/**< pool is doing zil_claim()*/
+	boolean_t	spa_debug;		/**< debug enabled? */
+	boolean_t	spa_is_root;		/**< pool is root */
+	int		spa_minref;		/**<num refs when first opened*/
+	int		spa_mode;		/**< FREAD | FWRITE */
+	spa_log_state_t spa_log_state;		/**< log state */
+	uint64_t	spa_autoexpand;		/**< lun expansion on/off */
+	ddt_t		*spa_ddt[ZIO_CHECKSUM_FUNCTIONS]; /**< in-core DDTs */
+	uint64_t	spa_ddt_stat_object;	/**< DDT statistics */
+	uint64_t	spa_dedup_ditto;	/**< dedup ditto threshold */
+	uint64_t	spa_dedup_checksum;	/**< default dedup checksum */
+	uint64_t	spa_dspace;		/**< dspace in normal class */
+	kmutex_t	spa_vdev_top_lock;	/**< dueling offline/remove */
+	kmutex_t	spa_proc_lock;		/**< protects spa_proc* */
+	kcondvar_t	spa_proc_cv;		/**<spa_proc_state transitions*/
+	spa_proc_state_t spa_proc_state;	/**< see definition */
+	struct proc	*spa_proc;		/**< "zpool-poolname" process */
+	uint64_t	spa_did;		/**< if procp != p0, did of t1*/
 	kthread_t	*spa_trim_thread;	/* thread sending TRIM I/Os */
 	kmutex_t	spa_trim_lock;		/* protects spa_trim_cv */
 	kcondvar_t	spa_trim_cv;		/* used to notify TRIM thread */
-	boolean_t	spa_autoreplace;	/* autoreplace set in open */
-	int		spa_vdev_locks;		/* locks grabbed */
-	uint64_t	spa_creation_version;	/* version at pool creation */
+	boolean_t	spa_autoreplace;	/**< autoreplace set in open */
+	int		spa_vdev_locks;		/**< locks grabbed */
+	uint64_t	spa_creation_version;	/**< version at pool creation */
 	uint64_t	spa_prev_software_version; /* See ub_software_version */
 	uint64_t	spa_feat_for_write_obj;	/* required to write to pool */
 	uint64_t	spa_feat_for_read_obj;	/* required to read from pool */
 	uint64_t	spa_feat_desc_obj;	/* Feature descriptions */
-	int64_t		spa_ccw_fail_time;	/* Conf cache write fail time */
+	int64_t		spa_ccw_fail_time;/**< Conf cache write fail time */
 	/*
-	 * spa_refcnt & spa_config_lock must be the last elements
+	 * spa_refcount & spa_config_lock must be the last elements
 	 * because refcount_t changes size based on compilation options.
 	 * In order for the MDB module to function correctly, the other
 	 * fields must remain in the same location.
 	 */
-	spa_config_lock_t spa_config_lock[SCL_LOCKS]; /* config changes */
-	refcount_t	spa_refcount;		/* number of opens */
+	spa_config_lock_t spa_config_lock[SCL_LOCKS]; /**< config changes */
+	refcount_t	spa_refcount;		/**< number of opens */
 #ifndef sun
-	boolean_t	spa_splitting_newspa;	/* creating new spa in split */
+	boolean_t	spa_splitting_newspa;/**< creating new spa in split */
 #endif
+#ifdef ZFS_DEBUG
+	struct {
+		int		error;
+		int		lineno;
+		const char	*filename;
+		zio_t		*zio;
+	} spa_last_error;
+#endif
+	/** \} */
 };
+
+#ifdef ZFS_DEBUG
+#define	SPA_SET_ZIO_ERROR(spa, zio, err) do {			\
+	if (err) {						\
+		(spa)->spa_last_error.error = err;		\
+		(spa)->spa_last_error.lineno = __LINE__;	\
+		(spa)->spa_last_error.filename = __FILE__;	\
+		(spa)->spa_last_error.zio = zio;		\
+	}							\
+} while (0)
+#else
+#define	SPA_SET_ZIO_ERROR(spa, zio, err) do { } while (0)
+#endif
+#define	SPA_SET_ERROR(spa, err) SPA_SET_ZIO_ERROR(spa, NULL, err)
 
 extern const char *spa_config_path;
 

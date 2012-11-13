@@ -54,6 +54,7 @@ refcount_fini(void)
 	kmem_cache_destroy(reference_history_cache);
 }
 
+/** refcount_t objects must be initialized with refcount_create() */
 void
 refcount_create(refcount_t *rc)
 {

@@ -72,7 +72,12 @@ int zfs_super_owner;
 SYSCTL_INT(_vfs_zfs, OID_AUTO, super_owner, CTLFLAG_RW, &zfs_super_owner, 0,
     "File system owner can perform privileged operation on his file systems");
 
+/**
+ * \addtogroup tunables
+ * \{
+ */
 int zfs_debug_level;
+/** \} */
 TUNABLE_INT("vfs.zfs.debug", &zfs_debug_level);
 SYSCTL_INT(_vfs_zfs, OID_AUTO, debug, CTLFLAG_RW, &zfs_debug_level, 0,
     "Debug level");
@@ -113,7 +118,7 @@ static struct vfsops zfs_vfsops = {
 
 VFS_SET(zfs_vfsops, zfs, VFCF_JAIL | VFCF_DELEGADMIN);
 
-/*
+/**
  * We need to keep a count of active fs's.
  * This is necessary to prevent our module
  * from being unloaded after a umount -f
@@ -329,7 +334,7 @@ exec_changed_cb(void *arg, uint64_t newval)
 	}
 }
 
-/*
+/**
  * The nbmand mount option can be changed at mount time.
  * We can't allow it to be toggled on live file systems or incorrect
  * behavior may be seen from cifs clients
@@ -686,7 +691,7 @@ zfs_userspace_many(zfsvfs_t *zfsvfs, zfs_userquota_prop_t type,
 	return (error);
 }
 
-/*
+/**
  * buf must be big enough (eg, 32 bytes)
  */
 static int
@@ -1244,8 +1249,8 @@ zfs_unregister_callbacks(zfsvfs_t *zfsvfs)
 }
 
 #ifdef SECLABEL
-/*
- * Convert a decimal digit string to a uint64_t integer.
+/**
+ * \brief Convert a decimal digit string to a uint64_t integer.
  */
 static int
 str_to_uint64(char *str, uint64_t *objnum)
@@ -1263,7 +1268,7 @@ str_to_uint64(char *str, uint64_t *objnum)
 	return (0);
 }
 
-/*
+/**
  * The boot path passed from the boot loader is in the form of
  * "rootpool-name/root-filesystem-object-number'. Convert this
  * string to a dataset name: "rootpool-name/root-filesystem-name".
@@ -1299,10 +1304,9 @@ zfs_parse_bootfs(char *bpath, char *outpath)
 	return (error);
 }
 
-/*
- * zfs_check_global_label:
- *	Check that the hex label string is appropriate for the dataset
- *	being mounted into the global_zone proper.
+/**
+ * \brief Check that the hex label string is appropriate for the dataset being
+ * mounted into the global_zone proper.
  *
  *	Return an error if the hex label string is not default or
  *	admin_low/admin_high.  For admin_low labels, the corresponding
@@ -1327,16 +1331,12 @@ zfs_check_global_label(const char *dsname, const char *hexsl)
 	return (EACCES);
 }
 
-/*
- * zfs_mount_label_policy:
- *	Determine whether the mount is allowed according to MAC check.
- *	by comparing (where appropriate) label of the dataset against
- *	the label of the zone being mounted into.  If the dataset has
- *	no label, create one.
+/**
+ * Determine whether the mount is allowed according to MAC check.  by comparing
+ * (where appropriate) label of the dataset against the label of the zone being
+ * mounted into.  If the dataset has no label, create one.
  *
- *	Returns:
- *		 0 :	access allowed
- *		>0 :	error code, such as EACCES
+ * \returns 0 on success, or an error code on failure
  */
 static int
 zfs_mount_label_policy(vfs_t *vfsp, char *osname)
@@ -1774,10 +1774,10 @@ zfs_root(vfs_t *vfsp, int flags, vnode_t **vpp)
 	return (error);
 }
 
-/*
- * Teardown the zfsvfs::z_os.
+/**
+ * \brief Teardown the zfsvfs::z_os.
  *
- * Note, if 'unmounting' if FALSE, we return with the 'z_teardown_lock'
+ * \note if 'unmounting' if FALSE, we return with the 'z_teardown_lock'
  * and 'z_teardown_inactive_lock' held.
  */
 static int
@@ -2158,10 +2158,10 @@ zfs_fhtovp(vfs_t *vfsp, fid_t *fidp, int flags, vnode_t **vpp)
 	return (err);
 }
 
-/*
- * Block out VOPs and close zfsvfs_t::z_os
+/**
+ * \brief Block out VOPs and close zfsvfs_t::z_os
  *
- * Note, if successful, then we return with the 'z_teardown_lock' and
+ * \note if successful, then we return with the 'z_teardown_lock' and
  * 'z_teardown_inactive_lock' write held.
  */
 int
@@ -2176,8 +2176,8 @@ zfs_suspend_fs(zfsvfs_t *zfsvfs)
 	return (0);
 }
 
-/*
- * Reopen zfsvfs_t::z_os and release VOPs.
+/**
+ * \brief Reopen zfsvfs_t::z_os and release VOPs.
  */
 int
 zfs_resume_fs(zfsvfs_t *zfsvfs, const char *osname)
@@ -2415,8 +2415,8 @@ zfs_set_version(zfsvfs_t *zfsvfs, uint64_t newvers)
 	return (0);
 }
 
-/*
- * Read a property stored within the master node.
+/**
+ * \brief Read a property stored within the master node.
  */
 int
 zfs_get_zplprop(objset_t *os, zfs_prop_t prop, uint64_t *value)

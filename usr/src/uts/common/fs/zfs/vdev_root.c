@@ -33,11 +33,12 @@
 #include <sys/zio.h>
 #include <sys/fs/zfs.h>
 
-/*
- * Virtual device vector for the pool's root vdev.
+/**
+ * \file vdev_root.c
+ * \brief Virtual device vector for the pool's root vdev.
  */
 
-/*
+/**
  * We should be able to tolerate one failure with absolutely no damage
  * to our metadata.  Two failures will take out space maps, a bunch of
  * indirect block trees, meta dnodes, dnodes, etc.  Probably not a happy

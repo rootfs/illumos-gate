@@ -24,11 +24,14 @@
  * Use is subject to license terms.
  */
 
-/*
- * Zero-length encoding.  This is a fast and simple algorithm to eliminate
- * runs of zeroes.  Each chunk of compressed data begins with a length byte, b.
- * If b < n (where n is the compression parameter) then the next b + 1 bytes
- * are literal values.  If b >= n then the next (256 - b + 1) bytes are zero.
+/**
+ * \file zle.c
+ * \brief Zero-length encoding.  
+ *
+ * This is a fast and simple algorithm to eliminate runs of zeroes.  Each
+ * chunk of compressed data begins with a length byte, b.  If b < n (where n
+ * is the compression parameter) then the next b + 1 bytes are literal values.
+ * If b >= n then the next (256 - b + 1) bytes are zero.
  */
 #include <sys/types.h>
 #include <sys/sysmacros.h>

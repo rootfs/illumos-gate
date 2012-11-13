@@ -44,12 +44,13 @@
 #include <sys/dsl_scan.h>
 #include <sys/trim_map.h>
 
+/**
+ * \file vdev.c
+ * \brief Virtual device management.
+ */
+
 SYSCTL_DECL(_vfs_zfs);
 SYSCTL_NODE(_vfs_zfs, OID_AUTO, vdev, CTLFLAG_RW, 0, "ZFS VDEV");
-
-/*
- * Virtual device management.
- */
 
 static vdev_ops_t *vdev_ops_table[] = {
 	&vdev_root_ops,
@@ -68,9 +69,8 @@ static vdev_ops_t *vdev_ops_table[] = {
 	NULL
 };
 
-
-/*
- * Given a vdev type, return the appropriate ops vector.
+/**
+ * \brief Given a vdev type, return the appropriate ops vector.
  */
 static vdev_ops_t *
 vdev_getops(const char *type)
@@ -84,9 +84,11 @@ vdev_getops(const char *type)
 	return (ops);
 }
 
-/*
- * Default asize function: return the MAX of psize with the asize of
- * all children.  This is what's used by anything other than RAID-Z.
+/**
+ * \brief Default asize function 
+ *
+ * Return the MAX of psize with the asize of all children.  
+ * This is what's used by anything other than RAID-Z.
  */
 uint64_t
 vdev_default_asize(vdev_t *vd, uint64_t psize)
@@ -102,11 +104,12 @@ vdev_default_asize(vdev_t *vd, uint64_t psize)
 	return (asize);
 }
 
-/*
- * Get the minimum allocatable size. We define the allocatable size as
- * the vdev's asize rounded to the nearest metaslab. This allows us to
- * replace or attach devices which don't have the same physical size but
- * can still satisfy the same number of allocations.
+/**
+ * \brief Get the minimum allocatable size. 
+ *
+ * We define the allocatable size as the vdev's asize rounded to the nearest
+ * metaslab. This allows us to replace or attach devices which don't have the
+ * same physical size but can still satisfy the same number of allocations.
  */
 uint64_t
 vdev_get_min_asize(vdev_t *vd)
@@ -251,8 +254,8 @@ vdev_remove_child(vdev_t *pvd, vdev_t *cvd)
 		pvd->vdev_guid_sum -= cvd->vdev_guid_sum;
 }
 
-/*
- * Remove any holes in the child array.
+/**
+ * \brief Remove any holes in the child array.
  */
 void
 vdev_compact_children(vdev_t *pvd)
@@ -281,8 +284,8 @@ vdev_compact_children(vdev_t *pvd)
 	pvd->vdev_children = newc;
 }
 
-/*
- * Allocate and minimally initialize a vdev_t.
+/**
+ * \brief Allocate and minimally initialize a vdev_t.
  */
 vdev_t *
 vdev_alloc_common(spa_t *spa, uint_t id, uint64_t guid, vdev_ops_t *ops)
@@ -339,8 +342,10 @@ vdev_alloc_common(spa_t *spa, uint_t id, uint64_t guid, vdev_ops_t *ops)
 	return (vd);
 }
 
-/*
- * Allocate a new vdev.  The 'alloctype' is used to control whether we are
+/**
+ * \brief  Allocate a new vdev.  
+ *
+ * The 'alloctype' is used to control whether we are
  * creating a new vdev or loading an existing one - the behavior is slightly
  * different for each case.
  */
@@ -649,8 +654,8 @@ vdev_free(vdev_t *vd)
 	kmem_free(vd, sizeof (vdev_t));
 }
 
-/*
- * Transfer top-level vdev state from svd to tvd.
+/**
+ * \brief Transfer top-level vdev state from svd to tvd.
  */
 static void
 vdev_top_transfer(vdev_t *svd, vdev_t *tvd)
@@ -727,8 +732,8 @@ vdev_top_update(vdev_t *tvd, vdev_t *vd)
 		vdev_top_update(tvd, vd->vdev_child[c]);
 }
 
-/*
- * Add a mirror/replacing vdev above an existing vdev.
+/**
+ * \brief Add a mirror/replacing vdev above an existing vdev.
  */
 vdev_t *
 vdev_add_parent(vdev_t *cvd, vdev_ops_t *ops)
@@ -760,8 +765,8 @@ vdev_add_parent(vdev_t *cvd, vdev_ops_t *ops)
 	return (mvd);
 }
 
-/*
- * Remove a 1-way mirror/replacing vdev from the tree.
+/**
+ * \brief Remove a 1-way mirror/replacing vdev from the tree.
  */
 void
 vdev_remove_parent(vdev_t *cvd)
@@ -851,7 +856,7 @@ vdev_metaslab_init(vdev_t *vd, uint64_t txg)
 			uint64_t object = 0;
 			error = dmu_read(mos, vd->vdev_ms_array,
 			    m * sizeof (uint64_t), sizeof (uint64_t), &object,
-			    DMU_READ_PREFETCH);
+			    DMU_CTX_FLAG_PREFETCH);
 			if (error)
 				return (error);
 			if (object != 0) {
@@ -945,7 +950,7 @@ vdev_probe_done(zio_t *zio)
 			ASSERT(zio->io_error != 0);
 			zfs_ereport_post(FM_EREPORT_ZFS_PROBE_FAILURE,
 			    spa, vd, NULL, 0, 0);
-			zio->io_error = ENXIO;
+			ZIO_SET_ERROR(zio, ENXIO);
 		}
 
 		mutex_enter(&vd->vdev_probe_lock);
@@ -955,16 +960,17 @@ vdev_probe_done(zio_t *zio)
 
 		while ((pio = zio_walk_parents(zio)) != NULL)
 			if (!vdev_accessible(vd, pio))
-				pio->io_error = ENXIO;
+				ZIO_SET_ERROR(pio, ENXIO);
 
 		kmem_free(vps, sizeof (*vps));
 	}
 }
 
-/*
- * Determine whether this device is accessible by reading and writing
- * to several known locations: the pad regions of each vdev label
- * but the first (which we leave alone in case it contains a VTOC).
+/**
+ * \brief Determine whether this device is accessible 
+ *
+ * by reading and writing to several known locations: the pad regions of each
+ * vdev label but the first (which we leave alone in case it contains a VTOC).
  */
 zio_t *
 vdev_probe(vdev_t *vd, zio_t *zio)
@@ -1106,8 +1112,8 @@ vdev_open_children(vdev_t *vd)
 	taskq_destroy(tq);
 }
 
-/*
- * Prepare a virtual device for access.
+/**
+ * \brief Prepare a virtual device for access.
  */
 int
 vdev_open(vdev_t *vd)
@@ -1299,7 +1305,9 @@ vdev_open(vdev_t *vd)
 	return (0);
 }
 
-/*
+/**
+ * \brief Validates vdev label contents
+ *
  * Called once the vdevs are all opened, this routine validates the label
  * contents.  This needs to be done before vdev_load() so that we don't
  * inadvertently do repair I/Os to the wrong device.
@@ -1423,8 +1431,8 @@ vdev_validate(vdev_t *vd, boolean_t strict)
 	return (0);
 }
 
-/*
- * Close a virtual device.
+/**
+ * \brief Close a virtual device.
  */
 void
 vdev_close(vdev_t *vd)
@@ -1491,11 +1499,12 @@ vdev_rele(vdev_t *vd)
 		vd->vdev_ops->vdev_op_rele(vd);
 }
 
-/*
- * Reopen all interior vdevs and any unopened leaves.  We don't actually
- * reopen leaf vdevs which had previously been opened as they might deadlock
- * on the spa_config_lock.  Instead we only obtain the leaf's physical size.
- * If the leaf has never been opened then open it, as usual.
+/**
+ * \brief Reopen all interior vdevs and any unopened leaves.  
+ *
+ * We don't actually reopen leaf vdevs which had previously been opened as they
+ * might deadlock on the spa_config_lock.  Instead we only obtain the leaf's
+ * physical size.  If the leaf has never been opened then open it, as usual.
  */
 void
 vdev_reopen(vdev_t *vd)
@@ -1623,6 +1632,8 @@ vdev_dirty(vdev_t *vd, int flags, void *arg, uint64_t txg)
  * for all vdevs, it suffices to know just the leaf vdevs' DTL_MISSING maps.
  * Therefore, that is all we keep on disk.  When loading the pool, or after
  * a configuration change, we generate all other DTLs from first principles.
+ *
+ * \todo create doxygen group for the DTL related functions
  */
 void
 vdev_dtl_dirty(vdev_t *vd, vdev_dtl_type_t t, uint64_t txg, uint64_t size)
@@ -1669,8 +1680,8 @@ vdev_dtl_empty(vdev_t *vd, vdev_dtl_type_t t)
 	return (empty);
 }
 
-/*
- * Reassess DTLs after a config change or scrub completion.
+/**
+ * \brief Reassess DTLs after a config change or scrub completion.
  */
 void
 vdev_dtl_reassess(vdev_t *vd, uint64_t txg, uint64_t scrub_txg, int scrub_done)
@@ -1804,7 +1815,7 @@ vdev_dtl_sync(vdev_t *vd, uint64_t txg)
 	space_map_t *sm = &vd->vdev_dtl[DTL_MISSING];
 	objset_t *mos = spa->spa_meta_objset;
 	space_map_t smsync;
-	kmutex_t smlock;
+	kmutex_t smlock = { 0 };
 	dmu_buf_t *db;
 	dmu_tx_t *tx;
 
@@ -1860,8 +1871,8 @@ vdev_dtl_sync(vdev_t *vd, uint64_t txg)
 	dmu_tx_commit(tx);
 }
 
-/*
- * Determine whether the specified vdev can be offlined/detached/removed
+/**
+ * \brief Determine whether the specified vdev can be offlined/detached/removed
  * without losing data.
  */
 boolean_t
@@ -1894,8 +1905,8 @@ vdev_dtl_required(vdev_t *vd)
 	return (required);
 }
 
-/*
- * Determine if resilver is needed, and if so the txg range.
+/**
+ * \brief Determine if resilver is needed, and if so the txg range.
  */
 boolean_t
 vdev_resilver_needed(vdev_t *vd, uint64_t *minp, uint64_t *maxp)
@@ -1963,7 +1974,7 @@ vdev_load(vdev_t *vd)
 		    VDEV_AUX_CORRUPT_DATA);
 }
 
-/*
+/**
  * The special vdev case is used for hot spares and l2cache devices.  Its
  * sole purpose it to set the vdev state for the associated vdev.  To do this,
  * we make sure that we can open the underlying device, then try to read the
@@ -2099,9 +2110,11 @@ vdev_psize_to_asize(vdev_t *vd, uint64_t psize)
 	return (vd->vdev_ops->vdev_op_asize(vd, psize));
 }
 
-/*
- * Mark the given vdev faulted.  A faulted vdev behaves as if the device could
- * not be opened, and no I/O is attempted.
+/**
+ * \brief Mark the given vdev faulted.  
+ *
+ * A faulted vdev behaves as if the device could not be opened, and no I/O is
+ * attempted.
  */
 int
 vdev_fault(spa_t *spa, uint64_t guid, vdev_aux_t aux)
@@ -2154,10 +2167,11 @@ vdev_fault(spa_t *spa, uint64_t guid, vdev_aux_t aux)
 	return (spa_vdev_state_exit(spa, vd, 0));
 }
 
-/*
- * Mark the given vdev degraded.  A degraded vdev is purely an indication to the
- * user that something is wrong.  The vdev continues to operate as normal as far
- * as I/O is concerned.
+/**
+ * \brief Mark the given vdev degraded.  
+ *
+ * A degraded vdev is purely an indication to the user that something is wrong.
+ * The vdev continues to operate as normal as far as I/O is concerned.
  */
 int
 vdev_degrade(spa_t *spa, uint64_t guid, vdev_aux_t aux)
@@ -2186,11 +2200,13 @@ vdev_degrade(spa_t *spa, uint64_t guid, vdev_aux_t aux)
 	return (spa_vdev_state_exit(spa, vd, 0));
 }
 
-/*
- * Online the given vdev.  If 'unspare' is set, it implies two things.  First,
- * any attached spare device should be detached when the device finishes
- * resilvering.  Second, the online should be treated like a 'test' online case,
- * so no FMA events are generated if the device fails to open.
+/**
+ * \brief Online the given vdev.  
+ *
+ * If 'ZFS_ONLINE_UNSPARE' is set, it implies two things.  First, any attached
+ * spare device should be detached when the device finishes resilvering.
+ * Second, the online should be treated like a 'test' online case, so no FMA
+ * events are generated if the device fails to open.
  */
 int
 vdev_online(spa_t *spa, uint64_t guid, uint64_t flags, vdev_state_t *newstate)
@@ -2349,10 +2365,12 @@ vdev_offline(spa_t *spa, uint64_t guid, uint64_t flags)
 	return (error);
 }
 
-/*
- * Clear the error counts associated with this vdev.  Unlike vdev_online() and
- * vdev_offline(), we assume the spa config is locked.  We also clear all
- * children.  If 'vd' is NULL, then the user wants to clear all vdevs.
+/**
+ * \brief Clear the error counts associated with this vdev.  
+ *
+ * Unlike vdev_online() and vdev_offline(), we assume the spa config is locked.
+ * We also clear all children.  If 'vd' is NULL, then the user wants to clear
+ * all vdevs.
  */
 void
 vdev_clear(spa_t *spa, vdev_t *vd)
@@ -2676,7 +2694,7 @@ vdev_stat_update(zio_t *zio, uint64_t psize)
 	}
 }
 
-/*
+/**
  * Update the in-core space usage stats for this vdev, its metaslab class,
  * and the root vdev.
  */
@@ -2726,10 +2744,12 @@ vdev_space_update(vdev_t *vd, int64_t alloc_delta, int64_t defer_delta,
 	}
 }
 
-/*
- * Mark a top-level vdev's config as dirty, placing it on the dirty list
- * so that it will be written out next time the vdev configuration is synced.
- * If the root vdev is specified (vdev_top == NULL), dirty all top-level vdevs.
+/**
+ * \brief Mark a top-level vdev's config as dirty.
+ *
+ * Mark a top-level vdev's config as dirty, placing it on the dirty list so
+ * that it will be written out next time the vdev configuration is synced.  If
+ * the root vdev is specified (vdev_top == NULL), dirty all top-level vdevs.
  */
 void
 vdev_config_dirty(vdev_t *vd)
@@ -2817,11 +2837,13 @@ vdev_config_clean(vdev_t *vd)
 	list_remove(&spa->spa_config_dirty_list, vd);
 }
 
-/*
- * Mark a top-level vdev's state as dirty, so that the next pass of
- * spa_sync() can convert this into vdev_config_dirty().  We distinguish
- * the state changes from larger config changes because they require
- * much less locking, and are often needed for administrative actions.
+/**
+ * \brief Mark a top-level vdev's state as dirty
+ *
+ * Mark a top-level vdev's state as dirty, so that the next pass of spa_sync()
+ * can convert this into vdev_config_dirty().  We distinguish the state changes
+ * from larger config changes because they require much less locking, and are
+ * often needed for administrative actions.
  */
 void
 vdev_state_dirty(vdev_t *vd)
@@ -2858,8 +2880,8 @@ vdev_state_clean(vdev_t *vd)
 	list_remove(&spa->spa_state_dirty_list, vd);
 }
 
-/*
- * Propagate vdev state up from children to parent.
+/**
+ * \brief Propagate vdev state up from children to parent.
  */
 void
 vdev_propagate_state(vdev_t *vd)
@@ -2917,13 +2939,15 @@ vdev_propagate_state(vdev_t *vd)
 		vdev_propagate_state(vd->vdev_parent);
 }
 
-/*
- * Set a vdev's state.  If this is during an open, we don't update the parent
- * state, because we're in the process of opening children depth-first.
- * Otherwise, we propagate the change to the parent.
+/**
+ * \brief Set a vdev's state.  
  *
- * If this routine places a device in a faulted state, an appropriate ereport is
- * generated.
+ * If this is during an open, we don't update the parent state, because we're
+ * in the process of opening children depth-first.  Otherwise, we propagate the
+ * change to the parent.
+ *
+ * If this routine places a device in a faulted state, an appropriate ereport
+ * is generated.
  */
 void
 vdev_set_state(vdev_t *vd, boolean_t isopen, vdev_state_t state, vdev_aux_t aux)
@@ -2954,19 +2978,6 @@ vdev_set_state(vdev_t *vd, boolean_t isopen, vdev_state_t state, vdev_aux_t aux)
 	if (!vd->vdev_delayed_close && vdev_is_dead(vd) &&
 	    vd->vdev_ops->vdev_op_leaf)
 		vd->vdev_ops->vdev_op_close(vd);
-
-	/*
-	 * If we have brought this vdev back into service, we need
-	 * to notify fmd so that it can gracefully repair any outstanding
-	 * cases due to a missing device.  We do this in all cases, even those
-	 * that probably don't correlate to a repaired fault.  This is sure to
-	 * catch all cases, and we let the zfs-retire agent sort it out.  If
-	 * this is a transient state it's OK, as the retire agent will
-	 * double-check the state of the vdev before repairing it.
-	 */
-	if (state == VDEV_STATE_HEALTHY && vd->vdev_ops->vdev_op_leaf &&
-	    vd->vdev_prevstate != state)
-		zfs_post_state_change(spa, vd);
 
 	if (vd->vdev_removed &&
 	    state == VDEV_STATE_CANT_OPEN &&
@@ -3048,11 +3059,22 @@ vdev_set_state(vdev_t *vd, boolean_t isopen, vdev_state_t state, vdev_aux_t aux)
 		vd->vdev_removed = B_FALSE;
 	}
 
+	/*
+	 * Notify the fmd of the state change.  Be verbose and post
+	 * notifications even for stuff that's not important; the fmd agent can
+	 * sort it out.  Don't emit state change events for non-leaf vdevs since
+	 * they can't change state on their own.  The FMD can check their state
+	 * if it wants to when it sees that a leaf vdev had a state change.
+	 */
+	if (vd->vdev_ops->vdev_op_leaf)
+		zfs_post_state_change(spa, vd);
+
 	if (!isopen && vd->vdev_parent)
 		vdev_propagate_state(vd->vdev_parent);
 }
 
-/*
+/**
+ * \brief
  * Check the vdev configuration to ensure that it's capable of supporting
  * a root pool.
  *
@@ -3091,11 +3113,12 @@ vdev_is_bootable(vdev_t *vd)
 	return (B_TRUE);
 }
 
-/*
- * Load the state from the original vdev tree (ovd) which
- * we've retrieved from the MOS config object. If the original
- * vdev was offline or faulted then we transfer that state to the
- * device in the current vdev tree (nvd).
+/**
+ * \brief Load the state from the original vdev tree (ovd).
+ *
+ * Load the state from the original vdev tree (ovd) which we've retrieved from
+ * the MOS config object. If the original vdev was offline or faulted then we
+ * transfer that state to the device in the current vdev tree (nvd).
  */
 void
 vdev_load_log_state(vdev_t *nvd, vdev_t *ovd)
@@ -3120,10 +3143,11 @@ vdev_load_log_state(vdev_t *nvd, vdev_t *ovd)
 	}
 }
 
-/*
- * Determine if a log device has valid content.  If the vdev was
- * removed or faulted in the MOS config then we know that
- * the content on the log device has already been written to the pool.
+/**
+ * \brief Determine if a log device has valid content.  
+ *
+ * If the vdev was removed or faulted in the MOS config then we know that the
+ * content on the log device has already been written to the pool.
  */
 boolean_t
 vdev_log_state_valid(vdev_t *vd)
@@ -3139,8 +3163,8 @@ vdev_log_state_valid(vdev_t *vd)
 	return (B_FALSE);
 }
 
-/*
- * Expand a vdev if possible.
+/**
+ * \brief Expand a vdev if possible.
  */
 void
 vdev_expand(vdev_t *vd, uint64_t txg)
@@ -3154,8 +3178,8 @@ vdev_expand(vdev_t *vd, uint64_t txg)
 	}
 }
 
-/*
- * Split a vdev.
+/**
+ * \brief Split a vdev.
  */
 void
 vdev_split(vdev_t *vd)

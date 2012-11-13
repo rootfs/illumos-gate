@@ -186,8 +186,11 @@ fasttrap_hash_t			fasttrap_tpoints;
 static fasttrap_hash_t		fasttrap_provs;
 static fasttrap_hash_t		fasttrap_procs;
 
-static uint64_t			fasttrap_pid_count;	/* pid ref count */
-static kmutex_t			fasttrap_count_mtx;	/* lock on ref count */
+/* pid ref count */
+static uint64_t			fasttrap_pid_count;
+
+/* lock on ref count */
+static kmutex_t			fasttrap_count_mtx = {{0}};
 
 #define	FASTTRAP_ENABLE_FAIL	1
 #define	FASTTRAP_ENABLE_PARTIAL	2
@@ -209,7 +212,7 @@ static void fasttrap_proc_release(fasttrap_proc_t *);
 #define	FASTTRAP_PROCS_INDEX(pid) ((pid) & fasttrap_procs.fth_mask)
 
 #if !defined(sun)
-static kmutex_t fasttrap_cpuc_pid_lock[MAXCPU];
+static kmutex_t fasttrap_cpuc_pid_lock[MAXCPU] = {{{ 0 }}};
 #endif
 
 static int
@@ -498,6 +501,7 @@ fasttrap_fork(proc_t *p, proc_t *cp)
 	mtx_unlock_spin(&cp->p_slock);
 #else
 	_PHOLD(cp);
+	PROC_UNLOCK(cp);
 #endif
 
 	/*
@@ -532,6 +536,7 @@ fasttrap_fork(proc_t *p, proc_t *cp)
 	mutex_enter(&cp->p_lock);
 	sprunlock(cp);
 #else
+	PROC_LOCK(cp);
 	_PRELE(cp);
 #endif
 }

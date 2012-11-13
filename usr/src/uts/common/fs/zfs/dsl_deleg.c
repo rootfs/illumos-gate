@@ -23,7 +23,10 @@
  * Copyright (c) 2012 by Delphix. All rights reserved.
  */
 
-/*
+/**
+ * \file dsl_deleg.c
+ * \brief DSL permissions
+ *
  * DSL permissions are stored in a two level zap attribute
  * mechanism.   The first level identifies the "class" of
  * entry.  The class is identified by the first 2 letters of
@@ -82,8 +85,8 @@
 
 #include "zfs_deleg.h"
 
-/*
- * Validate that user is allowed to delegate specified permissions.
+/**
+ * \brief Validate that user is allowed to delegate specified permissions.
  *
  * In order to delegate "create" you must have "create"
  * and "allow".
@@ -116,10 +119,11 @@ dsl_deleg_can_allow(char *ddname, nvlist_t *nvp, cred_t *cr)
 	return (0);
 }
 
-/*
- * Validate that user is allowed to unallow specified permissions.  They
- * must have the 'allow' permission, and even then can only unallow
- * perms for their uid.
+/**
+ * \brief  Validate that user is allowed to unallow specified permissions.  
+ *
+ * They must have the 'allow' permission, and even then can only unallow perms
+ * for their uid.
  */
 int
 dsl_deleg_can_unallow(char *ddname, nvlist_t *nvp, cred_t *cr)
@@ -271,8 +275,8 @@ dsl_deleg_set(const char *ddname, nvlist_t *nvp, boolean_t unset)
 	return (error);
 }
 
-/*
- * Find all 'allow' permissions from a given point and then continue
+/**
+ * \brief Find all 'allow' permissions from a given point and then continue
  * traversing up to the root.
  *
  * This function constructs an nvlist of nvlists.
@@ -359,8 +363,8 @@ dsl_deleg_get(const char *ddname, nvlist_t **nvp)
 	return (0);
 }
 
-/*
- * Routines for dsl_deleg_access() -- access checking.
+/**
+ * \brief Routines for dsl_deleg_access() -- access checking.
  */
 typedef struct perm_set {
 	avl_node_t	p_node;
@@ -381,8 +385,8 @@ perm_set_compare(const void *arg1, const void *arg2)
 	return (val > 0 ? 1 : -1);
 }
 
-/*
- * Determine whether a specified permission exists.
+/**
+ * \brief Determine whether a specified permission exists.
  *
  * First the base attribute has to be retrieved.  i.e. ul$12
  * Once the base object has been retrieved the actual permission
@@ -409,8 +413,8 @@ dsl_check_access(objset_t *mos, uint64_t zapobj,
 	return (error);
 }
 
-/*
- * check a specified user/group for a requested permission
+/**
+ * \brief check a specified user/group for a requested permission
  */
 static int
 dsl_check_user_access(objset_t *mos, uint64_t zapobj, const char *perm,
@@ -452,7 +456,7 @@ dsl_check_user_access(objset_t *mos, uint64_t zapobj, const char *perm,
 	return (EPERM);
 }
 
-/*
+/**
  * Iterate over the sets specified in the specified zapobj
  * and load them into the permsets avl tree.
  */
@@ -492,8 +496,8 @@ dsl_load_sets(objset_t *mos, uint64_t zapobj,
 	return (0);
 }
 
-/*
- * Load all permissions user based on cred belongs to.
+/**
+ * \brief Load all permissions user based on cred belongs to.
  */
 static void
 dsl_load_user_sets(objset_t *mos, uint64_t zapobj, avl_tree_t *avl,
@@ -524,8 +528,9 @@ dsl_load_user_sets(objset_t *mos, uint64_t zapobj, avl_tree_t *avl,
 }
 
 /*
- * Check if user has requested permission.  If descendent is set, must have
- * descendent perms.
+ * \brief Check if user has requested permission.
+ *
+ * If descendent is set, must have descendent perms.
  */
 int
 dsl_deleg_access_impl(dsl_dataset_t *ds, boolean_t descendent, const char *perm,
@@ -696,8 +701,8 @@ copy_create_perms(dsl_dir_t *dd, uint64_t pzapobj,
 	zap_cursor_fini(&zc);
 }
 
-/*
- * set all create time permission on new dataset.
+/**
+ * \brief Set all create time permission on new dataset.
  */
 void
 dsl_deleg_set_create_perms(dsl_dir_t *sdd, dmu_tx_t *tx, cred_t *cr)

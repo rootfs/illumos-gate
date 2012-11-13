@@ -33,8 +33,9 @@
 #include <sys/zio.h>
 #include <sys/fs/zfs.h>
 
-/*
- * Virtual device vector for mirroring.
+/**
+ * \file vdev_mirror.c
+ * \brief Virtual device vector for mirroring.
  */
 
 typedef struct mirror_child {
@@ -208,7 +209,7 @@ vdev_mirror_scrub_done(zio_t *zio)
 	mc->mc_skipped = 0;
 }
 
-/*
+/**
  * Try to find a child whose DTL doesn't contain the block we want to read.
  * If we can't, try the read on any vdev we haven't already tried.
  */
@@ -375,7 +376,7 @@ vdev_mirror_io_done(zio_t *zio)
 			 * writes to the old device to have succeeded.
 			 */
 			if (good_copies == 0 || zio->io_vd == NULL)
-				zio->io_error = vdev_mirror_worst_error(mm);
+				ZIO_SET_ERROR(zio, vdev_mirror_worst_error(mm));
 		}
 		return;
 	} else if (zio->io_type == ZIO_TYPE_FREE) {
@@ -401,7 +402,7 @@ vdev_mirror_io_done(zio_t *zio)
 
 	/* XXPOLICY */
 	if (good_copies == 0) {
-		zio->io_error = vdev_mirror_worst_error(mm);
+		ZIO_SET_ERROR(zio, vdev_mirror_worst_error(mm));
 		ASSERT(zio->io_error != 0);
 	}
 

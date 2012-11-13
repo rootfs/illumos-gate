@@ -34,22 +34,16 @@
 extern "C" {
 #endif
 
-/* The number of significant bits in each unique value. */
+/** The number of significant bits in each unique value. */
 #define	UNIQUE_BITS	56
 
 void unique_init(void);
 void unique_fini(void);
 
-/*
- * Return a new unique value (which will not be uniquified against until
- * it is unique_insert()-ed.
- */
 uint64_t unique_create(void);
 
-/* Return a unique value, which equals the one passed in if possible. */
 uint64_t unique_insert(uint64_t value);
 
-/* Indicate that this value no longer needs to be uniquified against. */
 void unique_remove(uint64_t value);
 
 #ifdef	__cplusplus
