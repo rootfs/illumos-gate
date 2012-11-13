@@ -273,6 +273,7 @@ txg_rele_to_sync(txg_handle_t *th)
 	th->th_cpu = NULL;	/* defensive */
 }
 
+/* Quiesce, adj.: to render temporarily inactive or disabled */
 static void
 txg_quiesce(dsl_pool_t *dp, uint64_t txg)
 {
@@ -297,7 +298,8 @@ txg_quiesce(dsl_pool_t *dp, uint64_t txg)
 		mutex_exit(&tx->tx_cpu[c].tc_lock);
 
 	/*
-	 * Quiesce the transaction group by waiting for everyone to txg_exit().
+	 * Quiesce the transaction group by waiting for everyone to call
+	 * txg_rele_to_sync().
 	 */
 	for (c = 0; c < max_ncpus; c++) {
 		tx_cpu_t *tc = &tx->tx_cpu[c];

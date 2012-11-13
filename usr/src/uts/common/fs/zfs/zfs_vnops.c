@@ -74,6 +74,7 @@
 #include <sys/acl.h>
 #include <vm/vm_param.h>
 #include <vm/vm_pageout.h>
+#include <vm/vm_page.h>
 
 /*
  * Programming rules.

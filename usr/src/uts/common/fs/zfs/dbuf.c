@@ -415,6 +415,8 @@ dbuf_update_data(dmu_buf_impl_t *db)
 	}
 }
 
+/* Set the dbuf's buffer to the ARC buffer, including any associated state,
+ * such as db_data. */
 static void
 dbuf_set_data(dmu_buf_impl_t *db, arc_buf_t *buf)
 {
@@ -997,6 +999,7 @@ dbuf_release_bp(dmu_buf_impl_t *db)
 	    db->db_blkptr, os->os_spa, &zb);
 }
 
+/* Mark a dbuf as dirty. */
 dbuf_dirty_record_t *
 dbuf_dirty(dmu_buf_impl_t *db, dmu_tx_t *tx)
 {
@@ -1007,6 +1010,7 @@ dbuf_dirty(dmu_buf_impl_t *db, dmu_tx_t *tx)
 	boolean_t do_free_accounting = B_FALSE;
 	int txgoff = tx->tx_txg & TXG_MASK;
 
+	/* Ensure that this dbuf has no transaction groups or holds */
 	ASSERT(tx->tx_txg != 0);
 	ASSERT(!refcount_is_zero(&db->db_holds));
 	DMU_TX_DIRTY_BUF(tx, db);
@@ -1470,6 +1474,10 @@ dbuf_assign_arcbuf(dmu_buf_impl_t *db, arc_buf_t *buf, dmu_tx_t *tx)
 
 	ASSERT(db->db_state == DB_CACHED || db->db_state == DB_UNCACHED);
 
+	/* If the dbuf is cached and the number of holds exceeds the number
+	 * of dirty calls on it, then dirty it again and remove the buffer
+	 * reference, before copying the ARC buffer to the dbuf.
+	 */
 	if (db->db_state == DB_CACHED &&
 	    refcount_count(&db->db_holds) - 1 > db->db_dirtycnt) {
 		mutex_exit(&db->db_mtx);
@@ -1501,10 +1509,12 @@ dbuf_assign_arcbuf(dmu_buf_impl_t *db, arc_buf_t *buf, dmu_tx_t *tx)
 		db->db_buf = NULL;
 	}
 	ASSERT(db->db_buf == NULL);
+	/* Set db->db_buf = buf */
 	dbuf_set_data(db, buf);
 	db->db_state = DB_FILL;
 	mutex_exit(&db->db_mtx);
 	(void) dbuf_dirty(db, tx);
+	/* clear db->db.db_data and tell waiters it's changed ?? */
 	dbuf_fill_done(db, tx);
 }
 

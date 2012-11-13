@@ -59,7 +59,6 @@ extern "C" {
 #include <math.h>
 #include <umem.h>
 #include <inttypes.h>
-#include <fsshare.h>
 #include <sys/note.h>
 #include <sys/types.h>
 #include <sys/cred.h>

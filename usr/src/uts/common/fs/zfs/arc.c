@@ -2037,9 +2037,17 @@ evict_start:
 	else
 		evict_data_offset = idx;
 
+	/*
+	 * Number of buffers skipped because they have I/O in progress or
+	 * are indrect prefetch buffers that have not lived long enough.
+	 */
 	if (skipped)
 		ARCSTAT_INCR(arcstat_evict_skip, skipped);
 
+	/*
+	 * Number of buffers that could not be evicted because something
+	 * else is using them.
+	 */
 	if (missed)
 		ARCSTAT_INCR(arcstat_mutex_miss, missed);
 
@@ -2167,6 +2175,7 @@ evict_start:
 		goto evict_start;
 	}
 
+	/* Number of buffers we could not obtain the hash lock for */
 	if (bufs_skipped) {
 		ARCSTAT_INCR(arcstat_mutex_miss, bufs_skipped);
 		ASSERT(bytes >= 0);
@@ -2410,7 +2419,7 @@ arc_reclaim_needed(void)
 		return (1);
 #endif	/* sun */
 
-#else
+#else	/* !_KERNEL */
 	if (spa_get_random(100) == 0)
 		return (1);
 #endif
@@ -3241,6 +3250,10 @@ top:
 
 		mutex_exit(hash_lock);
 
+		/*
+		 * At this point, we have a level 1 cache miss.  Try again in
+		 * L2ARC if possible.
+		 */
 		ASSERT3U(hdr->b_size, ==, size);
 		DTRACE_PROBE4(arc__miss, arc_buf_hdr_t *, hdr, blkptr_t *, bp,
 		    uint64_t, size, zbookmark_t *, zb);
