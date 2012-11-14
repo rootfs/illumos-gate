@@ -76,35 +76,30 @@ zrl_add(zrlock_t *zrl)
 {
 	uint32_t n = (uint32_t)zrl->zr_refcount;
 
-	while (n != ZRL_LOCKED) {
-		uint32_t cas = atomic_cas_32(
-		    (uint32_t *)&zrl->zr_refcount, n, n + 1);
-		if (cas == n) {
-			ASSERT((int32_t)n >= 0);
+	while (1) {
+		while (n != ZRL_LOCKED) {
+			uint32_t cas = atomic_cas_32(
+			    (uint32_t *)&zrl->zr_refcount, n, n + 1);
+			if (cas == n) {
+				ASSERT((int32_t)n >= 0);
 #ifdef	ZFS_DEBUG
-			if (zrl->zr_owner == curthread) {
-				DTRACE_PROBE2(zrlock__reentry,
-				    zrlock_t *, zrl, uint32_t, n);
+				if (zrl->zr_owner == curthread) {
+					DTRACE_PROBE2(zrlock__reentry,
+					    zrlock_t *, zrl, uint32_t, n);
+				}
+				zrl->zr_owner = curthread;
+				zrl->zr_caller = zc;
+#endif
+				return;
 			}
-			zrl->zr_owner = curthread;
-			zrl->zr_caller = zc;
-#endif
-			return;
+			n = cas;
 		}
-		n = cas;
+		mutex_enter(&zrl->zr_mtx);
+		while (zrl->zr_refcount == ZRL_LOCKED) {
+			cv_wait(&zrl->zr_cv, &zrl->zr_mtx);
+		}
+		mutex_exit(&zrl->zr_mtx);
 	}
-
-	mutex_enter(&zrl->zr_mtx);
-	while (zrl->zr_refcount == ZRL_LOCKED) {
-		cv_wait(&zrl->zr_cv, &zrl->zr_mtx);
-	}
-	ASSERT(zrl->zr_refcount >= 0);
-	zrl->zr_refcount++;
-#ifdef	ZFS_DEBUG
-	zrl->zr_owner = curthread;
-	zrl->zr_caller = zc;
-#endif
-	mutex_exit(&zrl->zr_mtx);
 }
 
 void
