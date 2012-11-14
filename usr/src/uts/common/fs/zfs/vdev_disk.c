@@ -569,7 +569,6 @@ vdev_disk_io_done(zio_t *zio)
 			 * DE is using this information to discard previous I/O
 			 * errors.
 			 */
-			zfs_post_remove(zio->io_spa, vd);
 			vd->vdev_remove_wanted = B_TRUE;
 			spa_async_request(zio->io_spa, SPA_ASYNC_REMOVE);
 		} else if (!vd->vdev_delayed_close) {
