@@ -3212,12 +3212,11 @@ zfs_ioc_create(const char *fsname, nvlist_t *innvl, nvlist_t *outnvl)
 	/*
 	 * It would be nice to do this atomically.
 	 */
-	if (error == 0) {
+	if (error == 0)
 		error = zfs_set_prop_nvlist(fsname, ZPROP_SRC_LOCAL,
 		    nvprops, outnvl);
-		if (error != 0)
-			(void) dsl_destroy_head(fsname);
-	}
+	if (error != 0)
+		(void) dsl_destroy_head(fsname);
 	return (error);
 }
 
