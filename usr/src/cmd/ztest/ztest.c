@@ -2482,7 +2482,12 @@ ztest_vdev_add_remove(ztest_ds_t *zd, uint64_t id)
 	VERIFY(mutex_lock(&ztest_vdev_lock) == 0);
 	leaves = MAX(zs->zs_mirrors + zs->zs_splits, 1) * ztest_opts.zo_raidz;
 
-	spa_config_enter(spa, SCL_VDEV, FTAG, RW_READER);
+	/*
+	 * SCL_VDEV doesn't protect against spa_passivate_log(), which
+	 * only asserts SCL_ALLOC, and can remove the metaslab class out
+	 * from under this function.
+	 */
+	spa_config_enter(spa, SCL_VDEV|SCL_ALLOC, FTAG, RW_READER);
 
 	ztest_shared->zs_vdev_next_leaf = find_vdev_hole(spa) * leaves;
 
@@ -2495,7 +2500,7 @@ ztest_vdev_add_remove(ztest_ds_t *zd, uint64_t id)
 		 */
 		guid = spa_log_class(spa)->mc_rotor->mg_vd->vdev_guid;
 
-		spa_config_exit(spa, SCL_VDEV, FTAG);
+		spa_config_exit(spa, SCL_VDEV|SCL_ALLOC, FTAG);
 
 		/*
 		 * We have to grab the zs_name_lock as writer to
@@ -2512,7 +2517,7 @@ ztest_vdev_add_remove(ztest_ds_t *zd, uint64_t id)
 		if (error && error != EEXIST)
 			fatal(0, "spa_vdev_remove() = %d", error);
 	} else {
-		spa_config_exit(spa, SCL_VDEV, FTAG);
+		spa_config_exit(spa, SCL_VDEV|SCL_ALLOC, FTAG);
 
 		/*
 		 * Make 1/4 of the devices be log devices.
