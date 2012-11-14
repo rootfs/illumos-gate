@@ -2000,6 +2000,15 @@ zfs_ioc_objset_stats_impl(zfs_cmd_t *zc, objset_t *os)
 			error = zvol_get_stats(os, nv);
 			if (error == EIO)
 				return (error);
+			/*
+			 * If the zvol's parent dataset was being destroyed
+			 * when we called zvol_get_stats, then it's possible
+			 * that the ZAP still existed but its blocks had
+			 * been already been freed when we tried to read it.
+			 * It would then appear that the ZAP had no entries.
+			 */
+			if (error == ENOENT)
+				return (error);
 			VERIFY0(error);
 		}
 		error = put_nvlist(zc, nv);
