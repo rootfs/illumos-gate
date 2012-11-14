@@ -481,6 +481,7 @@ fatal(int do_perror, char *message, ...)
 	}
 	(void) fprintf(stderr, "%s\n", buf);
 	fatal_msg = buf;			/* to ease debugging */
+	fflush(NULL);
 	if (ztest_dump_core)
 		abort();
 	exit(3);
