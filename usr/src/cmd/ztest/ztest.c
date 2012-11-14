@@ -3252,7 +3252,7 @@ ztest_dmu_objset_create_destroy(ztest_ds_t *zd, uint64_t id)
 	char name[MAXNAMELEN];
 	zilog_t *zilog;
 
-	(void) rw_rdlock(&ztest_name_lock);
+	(void) rd_wrlock(&ztest_name_lock);
 
 	(void) snprintf(name, MAXNAMELEN, "%s/temp_%llu",
 	    ztest_opts.zo_pool, (u_longlong_t)id);
@@ -5420,7 +5420,7 @@ ztest_dataset_open(int d)
 
 	ztest_dataset_name(name, ztest_opts.zo_pool, d);
 
-	(void) rw_rdlock(&ztest_name_lock);
+	(void) rw_wrlock(&ztest_name_lock);
 
 	error = ztest_dataset_create(name);
 	if (error == ENOSPC) {
@@ -5430,10 +5430,9 @@ ztest_dataset_open(int d)
 	}
 	ASSERT(error == 0 || error == EEXIST);
 
-	VERIFY0(dmu_objset_own(name, DMU_OST_OTHER, B_FALSE, zd, &os));
-	(void) rw_unlock(&ztest_name_lock);
-
+	VERIFY0(dmu_objset_hold(name, zd, &os));
 	ztest_zd_init(zd, ZTEST_GET_SHARED_DS(d), os);
+	(void) rw_unlock(&ztest_name_lock);
 
 	zilog = zd->zd_zilog;
 
