@@ -22,6 +22,7 @@
  * Copyright (c) 2010, Oracle and/or its affiliates. All rights reserved.
  */
 
+#include <sys/zfs_context.h>
 #include <sys/types.h>
 #include <sys/param.h>
 #include <sys/vnode.h>

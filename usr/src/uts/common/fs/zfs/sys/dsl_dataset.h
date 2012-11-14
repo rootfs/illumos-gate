@@ -45,6 +45,9 @@ struct dsl_dataset;
 struct dsl_dir;
 struct dsl_pool;
 
+#define	DS_HAS_PHYS(ds)	\
+	((ds)->ds_dbuf != NULL && (ds)->ds_dbuf->db_data != NULL)
+
 #define	DS_FLAG_INCONSISTENT	(1ULL<<0)
 #define	DS_IS_INCONSISTENT(ds)	\
 	((ds)->ds_phys->ds_flags & DS_FLAG_INCONSISTENT)
@@ -111,11 +114,20 @@ typedef struct dsl_dataset_phys {
 	uint64_t ds_pad[5]; /* pad out to 320 bytes for good measure */
 } dsl_dataset_phys_t;
 
+typedef struct dsl_dataset_dbuf {
+	uint8_t dsdb_pad[offsetof(dmu_buf_t, db_data)];
+	dsl_dataset_phys_t *dsdb_data;
+} dsl_dataset_dbuf_t;
+
 typedef struct dsl_dataset {
+	dmu_buf_user_t db_evict;
+
 	/* Immutable: */
 	struct dsl_dir *ds_dir;
-	dsl_dataset_phys_t *ds_phys;
-	dmu_buf_t *ds_dbuf;
+	union {
+		dmu_buf_t *ds_dmu_db;
+		dsl_dataset_dbuf_t *ds_db;
+	} ds_db_u;
 	uint64_t ds_object;
 	uint64_t ds_fsid_guid;
 
@@ -162,6 +174,19 @@ typedef struct dsl_dataset {
 	/* Protected by ds_lock; keep at end of struct for better locality */
 	char ds_snapname[MAXNAMELEN];
 } dsl_dataset_t;
+
+/* See sys/dmu.h:dmu_buf_user_t for why we have these. */
+#define	ds_dbuf ds_db_u.ds_dmu_db
+#define	ds_phys ds_db_u.ds_db->dsdb_data
+
+struct dsl_ds_destroyarg {
+	dsl_dataset_t *ds;		/* ds to destroy */
+	dsl_dataset_t *rm_origin;	/* also remove our origin? */
+	boolean_t is_origin_rm;		/* set if removing origin snap */
+	boolean_t defer;		/* destroy -d requested? */
+	boolean_t releasing;		/* destroying due to release? */
+	boolean_t need_prep;		/* do we need to retry due to EBUSY? */
+};
 
 /*
  * The max length of a temporary tag prefix is the number of hex digits

@@ -241,11 +241,12 @@ dsl_dataset_block_freeable(dsl_dataset_t *ds, const blkptr_t *bp,
 
 /* ARGSUSED */
 static void
-dsl_dataset_evict(dmu_buf_t *db, void *dsv)
+dsl_dataset_evict_impl(dsl_dataset_t *ds, boolean_t evict_deadlist)
 {
-	dsl_dataset_t *ds = dsv;
 
 	ASSERT(ds->ds_owner == NULL);
+
+	ds->ds_dbuf = NULL;
 
 	unique_remove(ds->ds_fsid_guid);
 
@@ -258,7 +259,7 @@ dsl_dataset_evict(dmu_buf_t *db, void *dsv)
 	}
 
 	bplist_destroy(&ds->ds_pending_deadlist);
-	if (ds->ds_phys->ds_deadlist_obj != 0)
+	if (evict_deadlist)
 		dsl_deadlist_close(&ds->ds_deadlist);
 	if (ds->ds_dir)
 		dsl_dir_rele(ds->ds_dir, ds);
@@ -270,6 +271,13 @@ dsl_dataset_evict(dmu_buf_t *db, void *dsv)
 	refcount_destroy(&ds->ds_longholds);
 
 	kmem_free(ds, sizeof (dsl_dataset_t));
+}
+
+/* ARGSUSED */
+static void
+dsl_dataset_evict(dmu_buf_user_t *dbu)
+{
+	dsl_dataset_evict_impl((dsl_dataset_t *)dbu, B_TRUE);
 }
 
 int
@@ -359,14 +367,13 @@ dsl_dataset_hold_obj(dsl_pool_t *dp, uint64_t dsobj, void *tag,
 	if (doi.doi_type != DMU_OT_DSL_DATASET)
 		return (SET_ERROR(EINVAL));
 
-	ds = dmu_buf_get_user(dbuf);
+	ds = (dsl_dataset_t *)dmu_buf_get_user(dbuf);
 	if (ds == NULL) {
 		dsl_dataset_t *winner = NULL;
 
 		ds = kmem_zalloc(sizeof (dsl_dataset_t), KM_SLEEP);
 		ds->ds_dbuf = dbuf;
 		ds->ds_object = dsobj;
-		ds->ds_phys = dbuf->db_data;
 
 		mutex_init(&ds->ds_lock, NULL, MUTEX_DEFAULT, NULL);
 		mutex_init(&ds->ds_opening_lock, NULL, MUTEX_DEFAULT, NULL);
@@ -426,8 +433,12 @@ dsl_dataset_hold_obj(dsl_pool_t *dp, uint64_t dsobj, void *tag,
 			ds->ds_reserved = ds->ds_quota = 0;
 		}
 
-		if (err != 0 || (winner = dmu_buf_set_user_ie(dbuf, ds,
-		    &ds->ds_phys, dsl_dataset_evict)) != NULL) {
+		dmu_buf_init_user(&ds->db_evict, dsl_dataset_evict);
+		if (err == 0)
+			winner = (dsl_dataset_t *)
+			    dmu_buf_set_user_ie(dbuf, &ds->db_evict);
+
+		if (err || winner) {
 			bplist_destroy(&ds->ds_pending_deadlist);
 			dsl_deadlist_close(&ds->ds_deadlist);
 			if (ds->ds_prev)
@@ -632,7 +643,7 @@ dsl_dataset_disown(dsl_dataset_t *ds, void *tag)
 	if (ds->ds_dbuf != NULL)
 		dsl_dataset_rele(ds, tag);
 	else
-		dsl_dataset_evict(NULL, ds);
+		dsl_dataset_evict_impl(ds, B_FALSE);
 }
 
 boolean_t

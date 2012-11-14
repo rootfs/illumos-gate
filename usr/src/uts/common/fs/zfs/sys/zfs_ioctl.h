@@ -26,6 +26,9 @@
 #ifndef	_SYS_ZFS_IOCTL_H
 #define	_SYS_ZFS_IOCTL_H
 
+#ifndef _KERNEL
+#include <stddef.h>
+#endif
 #include <sys/cred.h>
 #include <sys/dmu.h>
 #include <sys/zio.h>

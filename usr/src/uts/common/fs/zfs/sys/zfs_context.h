@@ -35,6 +35,9 @@
 extern "C" {
 #endif
 
+#ifndef _KERNEL
+#include <stddef.h>
+#endif
 #include <sys/note.h>
 #include <sys/types.h>
 #include <sys/t_lock.h>

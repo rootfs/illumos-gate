@@ -204,19 +204,137 @@ dbuf_hash_remove(dmu_buf_impl_t *db)
 static arc_evict_func_t dbuf_do_evict;
 
 static void
-dbuf_evict_user(dmu_buf_impl_t *db)
+dbuf_verify_user(dmu_buf_impl_t *db, boolean_t evicting)
 {
-	ASSERT(MUTEX_HELD(&db->db_mtx));
+#ifdef ZFS_DEBUG
 
-	if (db->db_level != 0 || db->db_evict_func == NULL)
+	if (db->db_level != 0)
+		ASSERT(db->db_user == NULL);
+
+	if (db->db_user == NULL)
 		return;
 
-	if (db->db_user_data_ptr_ptr)
-		*db->db_user_data_ptr_ptr = db->db.db_data;
-	db->db_evict_func(&db->db, db->db_user_ptr);
-	db->db_user_ptr = NULL;
-	db->db_user_data_ptr_ptr = NULL;
-	db->db_evict_func = NULL;
+	/* Clients must resolve a dbuf before attaching user data. */
+	ASSERT(db->db.db_data != NULL && db->db_state == DB_CACHED);
+	/*
+	 * We can't check the hold count here, because they are modified
+	 * independently of the dbuf mutex.  But it would be nice to ensure
+	 * that the user has the appropriate number.
+	 */
+#endif
+}
+
+/*
+ * Evict the dbuf's user, either immediately, or use a provided queue.
+ *
+ * Call dmu_buf_process_user_evicts or dmu_buf_destroy_user_evict_list
+ * on the list when finished generating it.
+ *
+ * NOTE: If db->db_immediate_evict is FALSE, evict_list_p must be provided.
+ * NOTE: See dmu_buf_user_t about how this process works.
+ */
+static void
+dbuf_evict_user(dmu_buf_impl_t *db, list_t *evict_list_p)
+{
+	ASSERT(MUTEX_HELD(&db->db_mtx));
+	ASSERT(evict_list_p != NULL);
+	dbuf_verify_user(db, /*evicting*/B_TRUE);
+
+	if (db->db_user == NULL)
+		return;
+
+	ASSERT(!list_link_active(&db->db_user->evict_queue_link));
+	list_insert_head(evict_list_p, db->db_user);
+	db->db_user = NULL;
+}
+
+/*
+ * Replace the current user of the dbuf.  Requires that the caller knows who
+ * the old user is.  Returns the old user, which may not necessarily be
+ * the same old_user provided by the caller.
+ */
+dmu_buf_user_t *
+dmu_buf_replace_user(dmu_buf_t *db_fake, dmu_buf_user_t *old_user,
+    dmu_buf_user_t *new_user)
+{
+	dmu_buf_impl_t *db = (dmu_buf_impl_t *)db_fake;
+
+	mutex_enter(&db->db_mtx);
+	dbuf_verify_user(db, /*evicting*/B_FALSE);
+	if (db->db_user == old_user)
+		db->db_user = new_user;
+	else
+		old_user = db->db_user;
+	dbuf_verify_user(db, /*evicting*/B_FALSE);
+	mutex_exit(&db->db_mtx);
+
+	return (old_user);
+}
+
+/*
+ * Set the user eviction data for the DMU beturns NULL on success,
+ * or the existing user if another user currently owns the buffer.
+ */
+dmu_buf_user_t *
+dmu_buf_set_user(dmu_buf_t *db_fake, dmu_buf_user_t *user)
+{
+	return (dmu_buf_replace_user(db_fake, NULL, user));
+}
+
+dmu_buf_user_t *
+dmu_buf_set_user_ie(dmu_buf_t *db_fake, dmu_buf_user_t *user)
+{
+	dmu_buf_impl_t *db = (dmu_buf_impl_t *)db_fake;
+
+	db->db_immediate_evict = TRUE;
+	return (dmu_buf_set_user(db_fake, user));
+}
+
+/*
+ * Remove the user eviction data for the DMU buffer.
+ */
+dmu_buf_user_t *
+dmu_buf_remove_user(dmu_buf_t *db_fake, dmu_buf_user_t *user)
+{
+	return (dmu_buf_replace_user(db_fake, user, NULL));
+}
+
+/*
+ * Returns the db_user set with dmu_buf_update_user(), or NULL if not set.
+ */
+dmu_buf_user_t *
+dmu_buf_get_user(dmu_buf_t *db_fake)
+{
+	dmu_buf_impl_t *db = (dmu_buf_impl_t *)db_fake;
+
+	dbuf_verify_user(db, /*evicting*/B_FALSE);
+	return (db->db_user);
+}
+
+static void
+dbuf_clear_data(dmu_buf_impl_t *db, list_t *evict_list_p)
+{
+	ASSERT(MUTEX_HELD(&db->db_mtx));
+	ASSERT(db->db_buf == NULL || !arc_has_callback(db->db_buf));
+	dbuf_evict_user(db, evict_list_p);
+	db->db_buf = NULL;
+	db->db.db_data = NULL;
+	if (db->db_state != DB_NOFILL)
+		db->db_state = DB_UNCACHED;
+}
+
+static void
+dbuf_set_data(dmu_buf_impl_t *db, arc_buf_t *buf)
+{
+	ASSERT(MUTEX_HELD(&db->db_mtx));
+	ASSERT(db->db_buf == NULL || !arc_has_callback(db->db_buf));
+	ASSERT(buf != NULL);
+
+	db->db_buf = buf;
+	ASSERT(buf->b_data != NULL);
+	db->db.db_data = buf->b_data;
+	if (!arc_released(buf))
+		arc_set_callback(buf, dbuf_do_evict, db);
 }
 
 boolean_t
@@ -236,13 +354,13 @@ dbuf_is_metadata(dmu_buf_impl_t *db)
 }
 
 void
-dbuf_evict(dmu_buf_impl_t *db)
+dbuf_evict(dmu_buf_impl_t *db, list_t *evict_list_p)
 {
 	ASSERT(MUTEX_HELD(&db->db_mtx));
 	ASSERT(db->db_buf == NULL);
 	ASSERT(db->db_data_pending == NULL);
 
-	dbuf_clear(db);
+	dbuf_clear(db, evict_list_p);
 	dbuf_destroy(db);
 }
 
@@ -405,36 +523,6 @@ dbuf_verify(dmu_buf_impl_t *db)
 }
 #endif
 
-static void
-dbuf_update_data(dmu_buf_impl_t *db)
-{
-	ASSERT(MUTEX_HELD(&db->db_mtx));
-	if (db->db_level == 0 && db->db_user_data_ptr_ptr) {
-		ASSERT(!refcount_is_zero(&db->db_holds));
-		*db->db_user_data_ptr_ptr = db->db.db_data;
-	}
-}
-
-static void
-dbuf_set_data(dmu_buf_impl_t *db, arc_buf_t *buf)
-{
-	ASSERT(MUTEX_HELD(&db->db_mtx));
-	ASSERT(db->db_buf == NULL || !arc_has_callback(db->db_buf));
-	db->db_buf = buf;
-	if (buf != NULL) {
-		ASSERT(buf->b_data != NULL);
-		db->db.db_data = buf->b_data;
-		if (!arc_released(buf))
-			arc_set_callback(buf, dbuf_do_evict, db);
-		dbuf_update_data(db);
-	} else {
-		dbuf_evict_user(db);
-		db->db.db_data = NULL;
-		if (db->db_state != DB_NOFILL)
-			db->db_state = DB_UNCACHED;
-	}
-}
-
 /*
  * Loan out an arc_buf for read.  Return the loaned arc_buf.
  */
@@ -442,6 +530,9 @@ arc_buf_t *
 dbuf_loan_arcbuf(dmu_buf_impl_t *db)
 {
 	arc_buf_t *abuf;
+	list_t evict_list;
+
+	dmu_buf_create_user_evict_list(&evict_list);
 
 	mutex_enter(&db->db_mtx);
 	if (arc_released(db->db_buf) || refcount_count(&db->db_holds) > 1) {
@@ -455,9 +546,10 @@ dbuf_loan_arcbuf(dmu_buf_impl_t *db)
 	} else {
 		abuf = db->db_buf;
 		arc_loan_inuse_buf(abuf, db);
-		dbuf_set_data(db, NULL);
+		dbuf_clear_data(db, &evict_list);
 		mutex_exit(&db->db_mtx);
 	}
+	dmu_buf_destroy_user_evict_list(&evict_list);
 	return (abuf);
 }
 
@@ -534,7 +626,6 @@ dbuf_read_impl(dmu_buf_impl_t *db, zio_t *zio, uint32_t *flags)
 		if (bonuslen)
 			bcopy(DN_BONUS(dn->dn_phys), db->db.db_data, bonuslen);
 		DB_DNODE_EXIT(db);
-		dbuf_update_data(db);
 		db->db_state = DB_CACHED;
 		mutex_exit(&db->db_mtx);
 		return;
@@ -667,8 +758,12 @@ dbuf_read(dmu_buf_impl_t *db, zio_t *zio, uint32_t flags)
 static void
 dbuf_noread(dmu_buf_impl_t *db)
 {
+	list_t evict_list;
+
 	ASSERT(!refcount_is_zero(&db->db_holds));
 	ASSERT(db->db_blkid != DMU_BONUS_BLKID);
+	dmu_buf_create_user_evict_list(&evict_list);
+
 	mutex_enter(&db->db_mtx);
 	while (db->db_state == DB_READ || db->db_state == DB_FILL)
 		cv_wait(&db->db_changed, &db->db_mtx);
@@ -682,11 +777,12 @@ dbuf_noread(dmu_buf_impl_t *db)
 		dbuf_set_data(db, arc_buf_alloc(spa, db->db.db_size, db, type));
 		db->db_state = DB_FILL;
 	} else if (db->db_state == DB_NOFILL) {
-		dbuf_set_data(db, NULL);
+		dbuf_clear_data(db, &evict_list);
 	} else {
 		ASSERT3U(db->db_state, ==, DB_CACHED);
 	}
 	mutex_exit(&db->db_mtx);
+	dmu_buf_destroy_user_evict_list(&evict_list);
 }
 
 /*
@@ -703,7 +799,7 @@ dbuf_noread(dmu_buf_impl_t *db)
  * dbuf list for the dnode.
  */
 static void
-dbuf_fix_old_data(dmu_buf_impl_t *db, uint64_t txg)
+dbuf_fix_old_data(dmu_buf_impl_t *db, uint64_t txg, list_t *evict_list_p)
 {
 	dbuf_dirty_record_t *dr = db->db_last_dirty;
 
@@ -739,7 +835,7 @@ dbuf_fix_old_data(dmu_buf_impl_t *db, uint64_t txg)
 		dr->dt.dl.dr_data = arc_buf_alloc(spa, size, db, type);
 		bcopy(db->db.db_data, dr->dt.dl.dr_data->b_data, size);
 	} else {
-		dbuf_set_data(db, NULL);
+		dbuf_clear_data(db, evict_list_p);
 	}
 }
 
@@ -796,6 +892,9 @@ dbuf_free_range(dnode_t *dn, uint64_t start, uint64_t end, dmu_tx_t *tx)
 	int epbs = dn->dn_indblkshift - SPA_BLKPTRSHIFT;
 	uint64_t first_l1 = start >> epbs;
 	uint64_t last_l1 = end >> epbs;
+	list_t evict_list;
+
+	dmu_buf_create_user_evict_list(&evict_list);
 
 	if (end > dn->dn_maxblkid && (end != DMU_SPILL_BLKID)) {
 		end = dn->dn_maxblkid;
@@ -849,7 +948,7 @@ dbuf_free_range(dnode_t *dn, uint64_t start, uint64_t end, dmu_tx_t *tx)
 		}
 		if (refcount_count(&db->db_holds) == 0) {
 			ASSERT(db->db_buf);
-			dbuf_clear(db);
+			dbuf_clear(db, &evict_list);
 			continue;
 		}
 		/* The dbuf is referenced */
@@ -874,7 +973,7 @@ dbuf_free_range(dnode_t *dn, uint64_t start, uint64_t end, dmu_tx_t *tx)
 				 * the open context) or reset its contents to
 				 * empty.
 				 */
-				dbuf_fix_old_data(db, txg);
+				dbuf_fix_old_data(db, txg, &evict_list);
 			}
 		}
 		/* clear the contents if its cached */
@@ -886,8 +985,10 @@ dbuf_free_range(dnode_t *dn, uint64_t start, uint64_t end, dmu_tx_t *tx)
 		}
 
 		mutex_exit(&db->db_mtx);
+		dmu_buf_process_user_evicts(&evict_list);
 	}
 	mutex_exit(&dn->dn_dbufs_mtx);
+	dmu_buf_destroy_user_evict_list(&evict_list);
 }
 
 static int
@@ -996,6 +1097,9 @@ dbuf_dirty(dmu_buf_impl_t *db, dmu_tx_t *tx)
 	int drop_struct_lock = FALSE;
 	boolean_t do_free_accounting = B_FALSE;
 	int txgoff = tx->tx_txg & TXG_MASK;
+	list_t evict_list;
+
+	dmu_buf_create_user_evict_list(&evict_list);
 
 	ASSERT(tx->tx_txg != 0);
 	ASSERT(!refcount_is_zero(&db->db_holds));
@@ -1070,6 +1174,7 @@ dbuf_dirty(dmu_buf_impl_t *db, dmu_tx_t *tx)
 				arc_buf_thaw(db->db_buf);
 		}
 		mutex_exit(&db->db_mtx);
+		dmu_buf_destroy_user_evict_list(&evict_list);
 		return (dr);
 	}
 
@@ -1124,7 +1229,7 @@ dbuf_dirty(dmu_buf_impl_t *db, dmu_tx_t *tx)
 
 		if (db->db_state != DB_NOFILL) {
 			if (db->db_blkid == DMU_BONUS_BLKID) {
-				dbuf_fix_old_data(db, tx->tx_txg);
+				dbuf_fix_old_data(db, tx->tx_txg, &evict_list);
 				data_old = db->db.db_data;
 			} else if (db->db.db_object != DMU_META_DNODE_OBJECT) {
 				/*
@@ -1137,7 +1242,7 @@ dbuf_dirty(dmu_buf_impl_t *db, dmu_tx_t *tx)
 				 * then).
 				 */
 				arc_release(db->db_buf, db);
-				dbuf_fix_old_data(db, tx->tx_txg);
+				dbuf_fix_old_data(db, tx->tx_txg, &evict_list);
 				data_old = db->db_buf;
 			}
 			ASSERT(data_old != NULL);
@@ -1175,6 +1280,7 @@ dbuf_dirty(dmu_buf_impl_t *db, dmu_tx_t *tx)
 	ASSERT3U(db->db_dirtycnt, <=, 3);
 
 	mutex_exit(&db->db_mtx);
+	dmu_buf_destroy_user_evict_list(&evict_list);
 
 	if (db->db_blkid == DMU_BONUS_BLKID ||
 	    db->db_blkid == DMU_SPILL_BLKID) {
@@ -1269,6 +1375,7 @@ dbuf_undirty(dmu_buf_impl_t *db, dmu_tx_t *tx)
 	dnode_t *dn;
 	uint64_t txg = tx->tx_txg;
 	dbuf_dirty_record_t *dr, **drp;
+	list_t evict_list;
 
 	ASSERT(txg != 0);
 	ASSERT(db->db_blkid != DMU_BONUS_BLKID);
@@ -1285,6 +1392,8 @@ dbuf_undirty(dmu_buf_impl_t *db, dmu_tx_t *tx)
 		return (B_FALSE);
 	ASSERT(dr->dr_txg == txg);
 	ASSERT(dr->dr_dbuf == db);
+
+	dmu_buf_create_user_evict_list(&evict_list);
 
 	DB_DNODE_ENTER(db);
 	dn = DB_DNODE(db);
@@ -1341,12 +1450,14 @@ dbuf_undirty(dmu_buf_impl_t *db, dmu_tx_t *tx)
 		arc_buf_t *buf = db->db_buf;
 
 		ASSERT(db->db_state == DB_NOFILL || arc_released(buf));
-		dbuf_set_data(db, NULL);
+		dbuf_clear_data(db, &evict_list);
 		VERIFY(arc_buf_remove_ref(buf, db));
-		dbuf_evict(db);
+		dbuf_evict(db, &evict_list);
+		dmu_buf_destroy_user_evict_list(&evict_list);
 		return (B_TRUE);
 	}
 
+	dmu_buf_destroy_user_evict_list(&evict_list);
 	return (B_FALSE);
 }
 
@@ -1493,7 +1604,7 @@ dbuf_assign_arcbuf(dmu_buf_impl_t *db, arc_buf_t *buf, dmu_tx_t *tx)
  *	ARC: dbuf_do_evict()->dbuf_destroy()
  */
 void
-dbuf_clear(dmu_buf_impl_t *db)
+dbuf_clear(dmu_buf_impl_t *db, list_t *evict_list_p)
 {
 	dnode_t *dn;
 	dmu_buf_impl_t *parent = db->db_parent;
@@ -1503,7 +1614,7 @@ dbuf_clear(dmu_buf_impl_t *db)
 	ASSERT(MUTEX_HELD(&db->db_mtx));
 	ASSERT(refcount_is_zero(&db->db_holds));
 
-	dbuf_evict_user(db);
+	dbuf_evict_user(db, evict_list_p);
 
 	if (db->db_state == DB_CACHED) {
 		ASSERT(db->db.db_data != NULL);
@@ -1646,9 +1757,7 @@ dbuf_create(dnode_t *dn, uint8_t level, uint64_t blkid,
 	db->db_parent = parent;
 	db->db_blkptr = blkptr;
 
-	db->db_user_ptr = NULL;
-	db->db_user_data_ptr_ptr = NULL;
-	db->db_evict_func = NULL;
+	db->db_user = NULL;
 	db->db_immediate_evict = 0;
 	db->db_freed_in_flight = 0;
 
@@ -1711,6 +1820,9 @@ dbuf_do_evict(void *private)
 {
 	arc_buf_t *buf = private;
 	dmu_buf_impl_t *db = buf->b_private;
+	list_t evict_list;
+
+	dmu_buf_create_user_evict_list(&evict_list);
 
 	if (!MUTEX_HELD(&db->db_mtx))
 		mutex_enter(&db->db_mtx);
@@ -1721,11 +1833,12 @@ dbuf_do_evict(void *private)
 		ASSERT(db->db_state == DB_CACHED);
 		DBUF_VERIFY(db);
 		db->db_buf = NULL;
-		dbuf_evict(db);
+		dbuf_evict(db, &evict_list);
 	} else {
 		mutex_exit(&db->db_mtx);
 		dbuf_destroy(db);
 	}
+	dmu_buf_destroy_user_evict_list(&evict_list);
 	return (0);
 }
 
@@ -1826,10 +1939,13 @@ dbuf_hold_impl(dnode_t *dn, uint8_t level, uint64_t blkid, int fail_sparse,
     void *tag, dmu_buf_impl_t **dbp)
 {
 	dmu_buf_impl_t *db, *parent = NULL;
+	list_t evict_list;
 
 	ASSERT(blkid != DMU_BONUS_BLKID);
 	ASSERT(RW_LOCK_HELD(&dn->dn_struct_rwlock));
 	ASSERT3U(dn->dn_nlevels, >, level);
+
+	dmu_buf_create_user_evict_list(&evict_list);
 
 	*dbp = NULL;
 top:
@@ -1859,7 +1975,7 @@ top:
 	if (db->db_buf && refcount_is_zero(&db->db_holds)) {
 		arc_buf_add_ref(db->db_buf, db);
 		if (db->db_buf->b_data == NULL) {
-			dbuf_clear(db);
+			dbuf_clear(db, &evict_list);
 			if (parent) {
 				dbuf_rele(parent, NULL);
 				parent = NULL;
@@ -1893,9 +2009,10 @@ top:
 	}
 
 	(void) refcount_add(&db->db_holds, tag);
-	dbuf_update_data(db);
 	DBUF_VERIFY(db);
 	mutex_exit(&db->db_mtx);
+
+	dmu_buf_destroy_user_evict_list(&evict_list);
 
 	/* NOTE: we can't rele the parent until after we drop the db_mtx */
 	if (parent)
@@ -1996,9 +2113,12 @@ void
 dbuf_rele_and_unlock(dmu_buf_impl_t *db, void *tag)
 {
 	int64_t holds;
+	list_t evict_list;
 
 	ASSERT(MUTEX_HELD(&db->db_mtx));
 	DBUF_VERIFY(db);
+
+	dmu_buf_create_user_evict_list(&evict_list);
 
 	/*
 	 * Remove the reference to the dbuf before removing its hold on the
@@ -2017,7 +2137,7 @@ dbuf_rele_and_unlock(dmu_buf_impl_t *db, void *tag)
 
 	if (holds == db->db_dirtycnt &&
 	    db->db_level == 0 && db->db_immediate_evict)
-		dbuf_evict_user(db);
+		dbuf_evict_user(db, &evict_list);
 
 	if (holds == 0) {
 		if (db->db_blkid == DMU_BONUS_BLKID) {
@@ -2043,15 +2163,15 @@ dbuf_rele_and_unlock(dmu_buf_impl_t *db, void *tag)
 			 */
 			ASSERT(db->db_state == DB_UNCACHED ||
 			    db->db_state == DB_NOFILL);
-			dbuf_evict(db);
+			dbuf_evict(db, &evict_list);
 		} else if (arc_released(db->db_buf)) {
 			arc_buf_t *buf = db->db_buf;
 			/*
 			 * This dbuf has anonymous data associated with it.
 			 */
-			dbuf_set_data(db, NULL);
+			dbuf_clear_data(db, &evict_list);
 			VERIFY(arc_buf_remove_ref(buf, db));
-			dbuf_evict(db);
+			dbuf_evict(db, &evict_list);
 		} else {
 			VERIFY(!arc_buf_remove_ref(db->db_buf, db));
 
@@ -2072,13 +2192,14 @@ dbuf_rele_and_unlock(dmu_buf_impl_t *db, void *tag)
 			 */
 			if (!DBUF_IS_CACHEABLE(db) ||
 			    arc_buf_eviction_needed(db->db_buf))
-				dbuf_clear(db);
+				dbuf_clear(db, &evict_list);
 			else
 				mutex_exit(&db->db_mtx);
 		}
 	} else {
 		mutex_exit(&db->db_mtx);
 	}
+	dmu_buf_destroy_user_evict_list(&evict_list);
 }
 
 #pragma weak dmu_buf_refcount = dbuf_refcount
@@ -2086,59 +2207,6 @@ uint64_t
 dbuf_refcount(dmu_buf_impl_t *db)
 {
 	return (refcount_count(&db->db_holds));
-}
-
-void *
-dmu_buf_set_user(dmu_buf_t *db_fake, void *user_ptr, void *user_data_ptr_ptr,
-    dmu_buf_evict_func_t *evict_func)
-{
-	return (dmu_buf_update_user(db_fake, NULL, user_ptr,
-	    user_data_ptr_ptr, evict_func));
-}
-
-void *
-dmu_buf_set_user_ie(dmu_buf_t *db_fake, void *user_ptr, void *user_data_ptr_ptr,
-    dmu_buf_evict_func_t *evict_func)
-{
-	dmu_buf_impl_t *db = (dmu_buf_impl_t *)db_fake;
-
-	db->db_immediate_evict = TRUE;
-	return (dmu_buf_update_user(db_fake, NULL, user_ptr,
-	    user_data_ptr_ptr, evict_func));
-}
-
-void *
-dmu_buf_update_user(dmu_buf_t *db_fake, void *old_user_ptr, void *user_ptr,
-    void *user_data_ptr_ptr, dmu_buf_evict_func_t *evict_func)
-{
-	dmu_buf_impl_t *db = (dmu_buf_impl_t *)db_fake;
-	ASSERT(db->db_level == 0);
-
-	ASSERT((user_ptr == NULL) == (evict_func == NULL));
-
-	mutex_enter(&db->db_mtx);
-
-	if (db->db_user_ptr == old_user_ptr) {
-		db->db_user_ptr = user_ptr;
-		db->db_user_data_ptr_ptr = user_data_ptr_ptr;
-		db->db_evict_func = evict_func;
-
-		dbuf_update_data(db);
-	} else {
-		old_user_ptr = db->db_user_ptr;
-	}
-
-	mutex_exit(&db->db_mtx);
-	return (old_user_ptr);
-}
-
-void *
-dmu_buf_get_user(dmu_buf_t *db_fake)
-{
-	dmu_buf_impl_t *db = (dmu_buf_impl_t *)db_fake;
-	ASSERT(!refcount_is_zero(&db->db_holds));
-
-	return (db->db_user_ptr);
 }
 
 boolean_t

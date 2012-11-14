@@ -1130,7 +1130,7 @@ zfs_zget(zfsvfs_t *zfsvfs, uint64_t obj_num, znode_t **zpp)
 		return (SET_ERROR(EINVAL));
 	}
 
-	hdl = dmu_buf_get_user(db);
+	hdl = (sa_handle_t *)dmu_buf_get_user(db);
 	if (hdl != NULL) {
 		zp  = sa_get_userdata(hdl);
 

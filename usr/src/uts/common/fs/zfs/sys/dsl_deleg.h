@@ -26,9 +26,9 @@
 #ifndef	_SYS_DSL_DELEG_H
 #define	_SYS_DSL_DELEG_H
 
+#include <sys/zfs_context.h>
 #include <sys/dmu.h>
 #include <sys/dsl_pool.h>
-#include <sys/zfs_context.h>
 
 #ifdef	__cplusplus
 extern "C" {

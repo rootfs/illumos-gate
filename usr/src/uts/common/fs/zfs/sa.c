@@ -1299,9 +1299,9 @@ sa_build_index(sa_handle_t *hdl, sa_buf_type_t buftype)
 
 /*ARGSUSED*/
 void
-sa_evict(dmu_buf_t *db, void *sap)
+sa_evict(dmu_buf_user_t *dbu)
 {
-	panic("evicting sa dbuf %p\n", (void *)db);
+	panic("evicting sa dbuf\n");
 }
 
 static void
@@ -1340,9 +1340,10 @@ sa_idx_tab_hold(objset_t *os, sa_idx_tab_t *idx_tab)
 void
 sa_handle_destroy(sa_handle_t *hdl)
 {
+	dmu_buf_t *db = hdl->sa_bonus;
+
 	mutex_enter(&hdl->sa_lock);
-	(void) dmu_buf_update_user((dmu_buf_t *)hdl->sa_bonus, hdl,
-	    NULL, NULL, NULL);
+	(void) dmu_buf_remove_user(db, &hdl->db_evict);
 
 	if (hdl->sa_bonus_tab) {
 		sa_idx_tab_rele(hdl->sa_os, hdl->sa_bonus_tab);
@@ -1368,7 +1369,7 @@ sa_handle_get_from_db(objset_t *os, dmu_buf_t *db, void *userp,
 {
 	int error = 0;
 	dmu_object_info_t doi;
-	sa_handle_t *handle;
+	sa_handle_t *handle = NULL;
 
 #ifdef ZFS_DEBUG
 	dmu_object_info_from_db(db, &doi);
@@ -1378,9 +1379,13 @@ sa_handle_get_from_db(objset_t *os, dmu_buf_t *db, void *userp,
 	/* find handle, if it exists */
 	/* if one doesn't exist then create a new one, and initialize it */
 
-	handle = (hdl_type == SA_HDL_SHARED) ? dmu_buf_get_user(db) : NULL;
+	if (hdl_type == SA_HDL_SHARED)
+		handle = (sa_handle_t *)dmu_buf_get_user(db);
+
 	if (handle == NULL) {
-		sa_handle_t *newhandle;
+		sa_handle_t *winner = NULL;
+
+		bzero(&handle->db_evict, sizeof(dmu_buf_user_t));
 		handle = kmem_cache_alloc(sa_cache, KM_SLEEP);
 		handle->sa_userp = userp;
 		handle->sa_bonus = db;
@@ -1388,13 +1393,14 @@ sa_handle_get_from_db(objset_t *os, dmu_buf_t *db, void *userp,
 		handle->sa_spill = NULL;
 
 		error = sa_build_index(handle, SA_BONUS);
-		newhandle = (hdl_type == SA_HDL_SHARED) ?
-		    dmu_buf_set_user_ie(db, handle,
-		    NULL, sa_evict) : NULL;
-
-		if (newhandle != NULL) {
+		if (hdl_type == SA_HDL_SHARED) {
+			dmu_buf_init_user(&handle->db_evict, sa_evict);
+			winner = (sa_handle_t *)
+			    dmu_buf_set_user_ie(db, &handle->db_evict);
+		}
+		if (winner != NULL) {
 			kmem_cache_free(sa_cache, handle);
-			handle = newhandle;
+			handle = winner;
 		}
 	}
 	*handlepp = handle;
@@ -1907,8 +1913,12 @@ sa_object_size(sa_handle_t *hdl, uint32_t *blksize, u_longlong_t *nblocks)
 void
 sa_update_user(sa_handle_t *newhdl, sa_handle_t *oldhdl)
 {
-	(void) dmu_buf_update_user((dmu_buf_t *)newhdl->sa_bonus,
-	    oldhdl, newhdl, NULL, sa_evict);
+	dmu_buf_user_t *new_user = &newhdl->db_evict;
+	dmu_buf_user_t *old_user = &oldhdl->db_evict;
+
+	dmu_buf_init_user(new_user, sa_evict);
+	VERIFY(dmu_buf_replace_user(newhdl->sa_bonus, old_user,
+	    new_user) == old_user);
 	oldhdl->sa_bonus = NULL;
 }
 

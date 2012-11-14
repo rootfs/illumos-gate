@@ -242,6 +242,7 @@ typedef struct dnode_handle {
 } dnode_handle_t;
 
 typedef struct dnode_children {
+	dmu_buf_user_t db_evict;	/* User evict data */
 	size_t dnc_count;		/* number of children */
 	dnode_handle_t dnc_children[1];	/* sized dynamically */
 } dnode_children_t;

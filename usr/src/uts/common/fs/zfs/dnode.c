@@ -458,8 +458,12 @@ dnode_destroy(dnode_t *dn)
 		dn->dn_dirtyctx_firstset = NULL;
 	}
 	if (dn->dn_bonus != NULL) {
+		list_t evict_list;
+
+		dmu_buf_create_user_evict_list(&evict_list);
 		mutex_enter(&dn->dn_bonus->db_mtx);
-		dbuf_evict(dn->dn_bonus);
+		dbuf_evict(dn->dn_bonus, &evict_list);
+		dmu_buf_destroy_user_evict_list(&evict_list);
 		dn->dn_bonus = NULL;
 	}
 	dn->dn_zio = NULL;
@@ -957,15 +961,12 @@ dnode_special_open(objset_t *os, dnode_phys_t *dnp, uint64_t object,
 }
 
 static void
-dnode_buf_pageout(dmu_buf_t *db, void *arg)
+dnode_buf_pageout(dmu_buf_user_t *dbu)
 {
-	dnode_children_t *children_dnodes = arg;
+	dnode_children_t *children_dnodes = (dnode_children_t *)dbu;
 	int i;
-	int epb = db->db_size >> DNODE_SHIFT;
 
-	ASSERT(epb == children_dnodes->dnc_count);
-
-	for (i = 0; i < epb; i++) {
+	for (i = 0; i < children_dnodes->dnc_count; i++) {
 		dnode_handle_t *dnh = &children_dnodes->dnc_children[i];
 		dnode_t *dn;
 
@@ -995,7 +996,7 @@ dnode_buf_pageout(dmu_buf_t *db, void *arg)
 		dnh->dnh_dnode = NULL;
 	}
 	kmem_free(children_dnodes, sizeof (dnode_children_t) +
-	    (epb - 1) * sizeof (dnode_handle_t));
+	    (children_dnodes->dnc_count - 1) * sizeof (dnode_handle_t));
 }
 
 /*
@@ -1075,7 +1076,7 @@ dnode_hold_impl(objset_t *os, uint64_t object, int flag,
 	idx = object & (epb-1);
 
 	ASSERT(DB_DNODE(db)->dn_type == DMU_OT_DNODE);
-	children_dnodes = dmu_buf_get_user(&db->db);
+	children_dnodes = (dnode_children_t *)dmu_buf_get_user(&db->db);
 	if (children_dnodes == NULL) {
 		int i;
 		dnode_children_t *winner;
@@ -1087,8 +1088,11 @@ dnode_hold_impl(objset_t *os, uint64_t object, int flag,
 			zrl_init(&dnh[i].dnh_zrlock);
 			dnh[i].dnh_dnode = NULL;
 		}
-		if (winner = dmu_buf_set_user(&db->db, children_dnodes, NULL,
-		    dnode_buf_pageout)) {
+		dmu_buf_init_user(&children_dnodes->db_evict,
+		    dnode_buf_pageout);
+		winner = (dnode_children_t *)
+		    dmu_buf_set_user(&db->db, &children_dnodes->db_evict);
+		if (winner) {
 			kmem_free(children_dnodes, sizeof (dnode_children_t) +
 			    (epb - 1) * sizeof (dnode_handle_t));
 			children_dnodes = winner;

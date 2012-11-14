@@ -217,10 +217,8 @@ typedef struct dmu_buf_impl {
 
 	/* Data which is unique to data (leaf) blocks: */
 
-	/* stuff we store for the user (see dmu_buf_set_user) */
-	void *db_user_ptr;
-	void **db_user_data_ptr_ptr;
-	dmu_buf_evict_func_t *db_evict_func;
+	/* User callback information.  See dmu_buf_set_user(). */
+	dmu_buf_user_t *db_user;
 
 	uint8_t db_immediate_evict;
 	uint8_t db_freed_in_flight;
@@ -273,8 +271,8 @@ void dbuf_assign_arcbuf(dmu_buf_impl_t *db, arc_buf_t *buf, dmu_tx_t *tx);
 dbuf_dirty_record_t *dbuf_dirty(dmu_buf_impl_t *db, dmu_tx_t *tx);
 arc_buf_t *dbuf_loan_arcbuf(dmu_buf_impl_t *db);
 
-void dbuf_clear(dmu_buf_impl_t *db);
-void dbuf_evict(dmu_buf_impl_t *db);
+void dbuf_clear(dmu_buf_impl_t *db, list_t *evict_list_p);
+void dbuf_evict(dmu_buf_impl_t *db, list_t *evict_list_p);
 
 void dbuf_setdirty(dmu_buf_impl_t *db, dmu_tx_t *tx);
 void dbuf_unoverride(dbuf_dirty_record_t *dr);

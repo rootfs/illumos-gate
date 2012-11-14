@@ -521,7 +521,7 @@ zap_leaf(uintptr_t addr, uint_t flags, int argc, const mdb_arg_t *argv)
 	char buf[16*1024];
 	int verbose = B_FALSE;
 	int four = B_FALSE;
-	zap_leaf_t l;
+	zap_leaf_t l = { 0 };
 	zap_leaf_phys_t *zlp = (void *)buf;
 	int i;
 
@@ -1425,8 +1425,17 @@ typedef struct mdb_spa {
 	uintptr_t spa_root_vdev;
 } mdb_spa_t;
 
+struct mdb_dsl_dir_phys;
+typedef struct mdb_dsl_dir_dbuf {
+	uint8_t dddb_pad[offsetof(dmu_buf_t, db_data)];
+	uintptr_t dddb_data;
+} mdb_dsl_dir_dbuf_t;
+
 typedef struct mdb_dsl_dir {
-	uintptr_t dd_phys;
+	union {
+		dmu_buf_t *dd_dmu_db;
+		mdb_dsl_dir_dbuf_t *dd_db;
+	} dd_db_u;
 	int64_t dd_space_towrite[TXG_SIZE];
 } mdb_dsl_dir_t;
 

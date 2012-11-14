@@ -39,6 +39,7 @@
  * dmu_spa.h.
  */
 
+#include <sys/zfs_context.h>
 #include <sys/inttypes.h>
 #include <sys/types.h>
 #include <sys/param.h>
@@ -281,8 +282,6 @@ typedef struct dmu_buf {
 	void *db_data;			/* data in buffer */
 } dmu_buf_t;
 
-typedef void dmu_buf_evict_func_t(struct dmu_buf *db, void *user_ptr);
-
 /*
  * The names of zap entries in the DIRECTORY_OBJECT of the MOS.
  */
@@ -460,42 +459,104 @@ int dmu_buf_hold_array_by_bonus(dmu_buf_t *db, uint64_t offset,
     uint64_t length, int read, void *tag, int *numbufsp, dmu_buf_t ***dbpp);
 void dmu_buf_rele_array(dmu_buf_t **, int numbufs, void *tag);
 
-/*
- * Returns NULL on success, or the existing user ptr if it's already
- * been set.
- *
- * user_ptr is for use by the user and can be obtained via dmu_buf_get_user().
- *
- * user_data_ptr_ptr should be NULL, or a pointer to a pointer which
- * will be set to db->db_data when you are allowed to access it.  Note
- * that db->db_data (the pointer) can change when you do dmu_buf_read(),
- * dmu_buf_tryupgrade(), dmu_buf_will_dirty(), or dmu_buf_will_fill().
- * *user_data_ptr_ptr will be set to the new value when it changes.
- *
- * If non-NULL, pageout func will be called when this buffer is being
- * excised from the cache, so that you can clean up the data structure
- * pointed to by user_ptr.
- *
- * dmu_evict_user() will call the pageout func for all buffers in a
- * objset with a given pageout func.
- */
-void *dmu_buf_set_user(dmu_buf_t *db, void *user_ptr, void *user_data_ptr_ptr,
-    dmu_buf_evict_func_t *pageout_func);
-/*
- * set_user_ie is the same as set_user, but request immediate eviction
- * when hold count goes to zero.
- */
-void *dmu_buf_set_user_ie(dmu_buf_t *db, void *user_ptr,
-    void *user_data_ptr_ptr, dmu_buf_evict_func_t *pageout_func);
-void *dmu_buf_update_user(dmu_buf_t *db_fake, void *old_user_ptr,
-    void *user_ptr, void *user_data_ptr_ptr,
-    dmu_buf_evict_func_t *pageout_func);
-void dmu_evict_user(objset_t *os, dmu_buf_evict_func_t *func);
+struct dmu_buf_user;
+
+typedef void dmu_buf_evict_func_t(struct dmu_buf_user *);
 
 /*
- * Returns the user_ptr set with dmu_buf_set_user(), or NULL if not set.
+ * The DMU buffer user object is used to allow private data to be
+ * associated with a dbuf for the duration of its lifetime.  This private
+ * data must include a dmu_buf_user_t as its first object, which is passed
+ * into the DMU user data API and can be attached to a dbuf.  Clients can
+ * regain access to their private data structure with a cast.
+ *
+ * DMU buffer users can be notified via a callback when their associated
+ * dbuf has been evicted.  This is typically used to free the user's
+ * private data.  The eviction callback is executed without the dbuf
+ * mutex held or any other type of mechanism to guarantee that the
+ * dbuf is still available.  For this reason, users must assume the dbuf
+ * has already been freed and not reference the dbuf from the callback
+ * context.
+ *
+ * Users requestion "immediate eviction" are notified as soon as the dbuf
+ * is only referenced by dirty records (dirties == holds).  Otherwise the
+ * eviction callback occurs after the last reference to the dbuf is dropped.    
+ *
+ * Eviction Callback Processing
+ * ============================
+ * In any context where a dbuf reference drop may trigger an eviction, an       
+ * eviction queue object must be provided.  This queue must then be
+ * processed while not holding any dbuf locks.  In this way, the user can       
+ * perform any work needed in their eviction function without fear of
+ * lock order reversals.
+ *
+ * Implementation Note
+ * ============================
+ * Some users will occasionally want to map a structure directly onto the
+ * backing dbuf.  Using an union with an name alias macro to access these
+ * overlays reduces the ugliness of code that accesses them.  Initial work on
+ * user objects involved using a macro that took the user object as an
+ * argument to access the fields, which resulted in hundreds of lines of
+ * needless diffs and wasn't any easier to read.
  */
-void *dmu_buf_get_user(dmu_buf_t *db);
+typedef struct dmu_buf_user {
+	/*
+	 * This instance's link in the eviction queue.  Set when the buffer
+	 * has evicted and the callback needs to be called.
+	 */
+	list_node_t evict_queue_link;
+	/** This instance's eviction function pointer. */
+	dmu_buf_evict_func_t *evict_func;
+} dmu_buf_user_t;
+
+/*
+ * Initialize the given dmu_buf_user_t instance with the eviction function
+ * evict_func, to be called when the user is evicted.
+ *
+ * NOTE: This function should only be called once on a given object.  To
+ *       help enforce this, dbu should already be zeroed on entry.
+ */
+static inline void
+dmu_buf_init_user(dmu_buf_user_t *dbu, dmu_buf_evict_func_t *evict_func)
+{
+	ASSERT(dbu->evict_func == NULL);
+	ASSERT(!list_link_active(&dbu->evict_queue_link));
+	dbu->evict_func = evict_func;
+}
+
+static inline void
+dmu_buf_create_user_evict_list(list_t *evict_list_p)
+{
+	list_create(evict_list_p, sizeof(dmu_buf_user_t),
+	    offsetof(dmu_buf_user_t, evict_queue_link));
+}
+
+static inline void
+dmu_buf_process_user_evicts(list_t *evict_list_p)
+{
+	dmu_buf_user_t *dbu, *next;
+
+	for (dbu = (dmu_buf_user_t *)list_head(evict_list_p); dbu != NULL;
+	    dbu = next) {
+		next = (dmu_buf_user_t *)list_next(evict_list_p, dbu);
+		list_remove(evict_list_p, dbu);
+		dbu->evict_func(dbu);
+	}
+}
+
+static inline void
+dmu_buf_destroy_user_evict_list(list_t *evict_list_p)
+{
+	dmu_buf_process_user_evicts(evict_list_p);
+	list_destroy(evict_list_p);
+}
+
+dmu_buf_user_t *dmu_buf_set_user(dmu_buf_t *db, dmu_buf_user_t *user);
+dmu_buf_user_t *dmu_buf_set_user_ie(dmu_buf_t *db, dmu_buf_user_t *user);
+dmu_buf_user_t *dmu_buf_replace_user(dmu_buf_t *db,
+    dmu_buf_user_t *old_user, dmu_buf_user_t *new_user);
+dmu_buf_user_t *dmu_buf_remove_user(dmu_buf_t *db, dmu_buf_user_t *user);
+dmu_buf_user_t *dmu_buf_get_user(dmu_buf_t *db);
 
 /*
  * Returns the blkptr associated with this dbuf, or NULL if not set.

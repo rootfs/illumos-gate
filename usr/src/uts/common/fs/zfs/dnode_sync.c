@@ -377,6 +377,9 @@ dnode_evict_dbufs(dnode_t *dn)
 {
 	int progress;
 	int pass = 0;
+	list_t evict_list;
+
+	dmu_buf_create_user_evict_list(&evict_list);
 
 	do {
 		dmu_buf_impl_t *db, marker;
@@ -402,11 +405,12 @@ dnode_evict_dbufs(dnode_t *dn)
 				mutex_exit(&db->db_mtx);
 			} else if (refcount_is_zero(&db->db_holds)) {
 				progress = TRUE;
-				dbuf_clear(db); /* exits db_mtx for us */
+				dbuf_clear(db, &evict_list); /* exits db_mtx */
 			} else {
 				mutex_exit(&db->db_mtx);
 			}
-
+			ASSERT(MUTEX_NOT_HELD(&db->db_mtx));
+			dmu_buf_process_user_evicts(&evict_list);
 		}
 		list_remove(&dn->dn_dbufs, &marker);
 		/*
@@ -426,10 +430,11 @@ dnode_evict_dbufs(dnode_t *dn)
 	rw_enter(&dn->dn_struct_rwlock, RW_WRITER);
 	if (dn->dn_bonus && refcount_is_zero(&dn->dn_bonus->db_holds)) {
 		mutex_enter(&dn->dn_bonus->db_mtx);
-		dbuf_evict(dn->dn_bonus);
+		dbuf_evict(dn->dn_bonus, &evict_list);
 		dn->dn_bonus = NULL;
 	}
 	rw_exit(&dn->dn_struct_rwlock);
+	dmu_buf_destroy_user_evict_list(&evict_list);
 }
 
 static void

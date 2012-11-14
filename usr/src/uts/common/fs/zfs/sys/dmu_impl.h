@@ -32,6 +32,7 @@
 #include <sys/dnode.h>
 #include <sys/zfs_context.h>
 #include <sys/zfs_ioctl.h>
+#include <sys/dmu.h>
 
 #ifdef	__cplusplus
 extern "C" {

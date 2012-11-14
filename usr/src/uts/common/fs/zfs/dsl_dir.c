@@ -43,11 +43,13 @@ static uint64_t dsl_dir_space_towrite(dsl_dir_t *dd);
 
 /* ARGSUSED */
 static void
-dsl_dir_evict(dmu_buf_t *db, void *arg)
+dsl_dir_evict(dmu_buf_user_t *dbu)
 {
-	dsl_dir_t *dd = arg;
+	dsl_dir_t *dd = (dsl_dir_t *)dbu;
 	dsl_pool_t *dp = dd->dd_pool;
 	int t;
+
+	dd->dd_dbuf = NULL;
 
 	for (t = 0; t < TXG_SIZE; t++) {
 		ASSERT(!txg_list_member(&dp->dp_dirty_dirs, dd, t));
@@ -82,7 +84,7 @@ dsl_dir_hold_obj(dsl_pool_t *dp, uint64_t ddobj,
 	err = dmu_bonus_hold(dp->dp_meta_objset, ddobj, tag, &dbuf);
 	if (err != 0)
 		return (err);
-	dd = dmu_buf_get_user(dbuf);
+	dd = (dsl_dir_t *)dmu_buf_get_user(dbuf);
 #ifdef ZFS_DEBUG
 	{
 		dmu_object_info_t doi;
@@ -98,7 +100,6 @@ dsl_dir_hold_obj(dsl_pool_t *dp, uint64_t ddobj,
 		dd->dd_object = ddobj;
 		dd->dd_dbuf = dbuf;
 		dd->dd_pool = dp;
-		dd->dd_phys = dbuf->db_data;
 		mutex_init(&dd->dd_lock, NULL, MUTEX_DEFAULT, NULL);
 
 		list_create(&dd->dd_prop_cbs, sizeof (dsl_prop_cb_record_t),
@@ -151,8 +152,8 @@ dsl_dir_hold_obj(dsl_pool_t *dp, uint64_t ddobj,
 			dmu_buf_rele(origin_bonus, FTAG);
 		}
 
-		winner = dmu_buf_set_user_ie(dbuf, dd, &dd->dd_phys,
-		    dsl_dir_evict);
+		dmu_buf_init_user(&dd->db_evict, dsl_dir_evict);
+		winner = (dsl_dir_t *)dmu_buf_set_user_ie(dbuf, &dd->db_evict);
 		if (winner) {
 			if (dd->dd_parent)
 				dsl_dir_rele(dd->dd_parent, dd);

@@ -127,6 +127,11 @@ typedef struct zap_leaf_phys {
 	uint16_t l_hash[1];
 } zap_leaf_phys_t;
 
+typedef struct zap_leaf_dbuf {
+	uint8_t zldb_pad[offsetof(dmu_buf_t, db_data)];
+	zap_leaf_phys_t *zldb_data;
+} zap_leaf_dbuf_t;
+
 typedef union zap_leaf_chunk {
 	struct zap_leaf_entry {
 		uint8_t le_type; 		/* always ZAP_CHUNK_ENTRY */
@@ -152,13 +157,18 @@ typedef union zap_leaf_chunk {
 } zap_leaf_chunk_t;
 
 typedef struct zap_leaf {
+	dmu_buf_user_t db_evict;
 	krwlock_t l_rwlock;
 	uint64_t l_blkid;		/* 1<<ZAP_BLOCK_SHIFT byte block off */
 	int l_bs;			/* block size shift */
-	dmu_buf_t *l_dbuf;
-	zap_leaf_phys_t *l_phys;
+	union {
+		dmu_buf_t *l_dmu_db;
+		zap_leaf_dbuf_t *l_db;
+	} zl_db_u;
 } zap_leaf_t;
 
+#define	l_dbuf zl_db_u.l_dmu_db
+#define	l_phys zl_db_u.l_db->zldb_data
 
 typedef struct zap_entry_handle {
 	/* below is set by zap_leaf.c and is public to zap.c */

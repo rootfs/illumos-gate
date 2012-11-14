@@ -74,11 +74,20 @@ typedef struct dsl_dir_phys {
 	uint64_t dd_pad[13]; /* pad out to 256 bytes for good measure */
 } dsl_dir_phys_t;
 
+typedef struct dsl_dir_dbuf {
+	uint8_t dddb_pad[offsetof(dmu_buf_t, db_data)];
+	dsl_dir_phys_t *dddb_data;
+} dsl_dir_dbuf_t;
+
 struct dsl_dir {
+	dmu_buf_user_t db_evict;
+
 	/* These are immutable; no lock needed: */
 	uint64_t dd_object;
-	dsl_dir_phys_t *dd_phys;
-	dmu_buf_t *dd_dbuf;
+	union {
+		dmu_buf_t *dd_dmu_db;
+		dsl_dir_dbuf_t *dd_db;
+	} dd_db_u;
 	dsl_pool_t *dd_pool;
 
 	/* protected by lock on pool's dp_dirty_dirs list */
@@ -101,6 +110,10 @@ struct dsl_dir {
 	/* protected by dd_lock; keep at end of struct for better locality */
 	char dd_myname[MAXNAMELEN];
 };
+
+/* See sys/dmu.h:dmu_buf_user_t for why we have these. */
+#define	dd_dbuf dd_db_u.dd_dmu_db
+#define	dd_phys dd_db_u.dd_db->dddb_data
 
 void dsl_dir_rele(dsl_dir_t *dd, void *tag);
 int dsl_dir_hold(dsl_pool_t *dp, const char *name, void *tag,

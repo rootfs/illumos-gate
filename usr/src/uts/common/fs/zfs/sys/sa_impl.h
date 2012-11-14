@@ -209,6 +209,7 @@ typedef enum sa_data_op {
  */
 
 struct sa_handle {
+	dmu_buf_user_t	db_evict;
 	kmutex_t	sa_lock;
 	dmu_buf_t	*sa_bonus;
 	dmu_buf_t	*sa_spill;
