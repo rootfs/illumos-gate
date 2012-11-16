@@ -53,6 +53,7 @@ extern int zfs_flags;
 #define	ZFS_DEBUG_DNODE_VERIFY	0x0004
 #define	ZFS_DEBUG_SNAPNAMES	0x0008
 #define	ZFS_DEBUG_MODIFY	0x0010
+#define	ZFS_DEBUG_DBUF_STATE	0x0020
 
 #ifdef ZFS_DEBUG
 extern void __dprintf(const char *file, const char *func,

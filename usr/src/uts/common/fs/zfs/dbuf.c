@@ -96,6 +96,30 @@ dbuf_hash(void *os, uint64_t obj, uint8_t lvl, uint64_t blkid)
 	return (crc);
 }
 
+#ifdef ZFS_DEBUG
+#define	DBUF_STATE_CHANGE(db, op, state, why) do {			\
+	(db)->db_state op state;					\
+	if (zfs_flags & ZFS_DEBUG_DBUF_STATE) {				\
+		uint64_t __db_obj = (db)->db.db_object;			\
+		char __db_buf[32];					\
+		if (__db_obj == DMU_META_DNODE_OBJECT)			\
+			strcpy(__db_buf, "mdn");			\
+		else							\
+			(void) snprintf(__db_buf, sizeof(__db_buf),	\
+			    "%lld", (u_longlong_t)__db_obj);		\
+		__dprintf(__FILE__, __func__, __LINE__,			\
+		    "%s: dbp=%p arc=%p obj=%s, lvl=%u blkid=%lld "	\
+		    "state change (" #op " " #state "): %s\n",		\
+		    __func__, db, (db)->db_buf, __db_buf,		\
+		    (db)->db_level, (u_longlong_t)(db)->db_blkid, why);	\
+	}								\
+} while(0)
+#else
+#define	DBUF_STATE_CHANGE(db, op, state, why) do {			\
+	(db)->db_state op state;					\
+} while(0)
+#endif
+
 #define	DBUF_HASH(os, obj, level, blkid) dbuf_hash(os, obj, level, blkid);
 
 #define	DBUF_EQUAL(dbuf, os, obj, level, blkid)		\
@@ -431,7 +455,7 @@ dbuf_set_data(dmu_buf_impl_t *db, arc_buf_t *buf)
 		dbuf_evict_user(db);
 		db->db.db_data = NULL;
 		if (db->db_state != DB_NOFILL)
-			db->db_state = DB_UNCACHED;
+			DBUF_STATE_CHANGE(db, =, DB_UNCACHED, "clear data");
 	}
 }
 
@@ -492,15 +516,15 @@ dbuf_read_done(zio_t *zio, arc_buf_t *buf, void *vdb)
 		arc_buf_freeze(buf);
 		db->db_freed_in_flight = FALSE;
 		dbuf_set_data(db, buf);
-		db->db_state = DB_CACHED;
+		DBUF_STATE_CHANGE(db, =, DB_CACHED, "freed in flight");
 	} else if (zio == NULL || zio->io_error == 0) {
 		dbuf_set_data(db, buf);
-		db->db_state = DB_CACHED;
+		DBUF_STATE_CHANGE(db, =, DB_CACHED, "read completed");
 	} else {
 		ASSERT(db->db_blkid != DMU_BONUS_BLKID);
 		ASSERT3P(db->db_buf, ==, NULL);
 		VERIFY(arc_buf_remove_ref(buf, db) == 1);
-		db->db_state = DB_UNCACHED;
+		DBUF_STATE_CHANGE(db, =, DB_UNCACHED, "read failed");
 	}
 	cv_broadcast(&db->db_changed);
 	dbuf_rele_and_unlock(db, NULL);
@@ -536,7 +560,7 @@ dbuf_read_impl(dmu_buf_impl_t *db, zio_t *zio, uint32_t *flags)
 			bcopy(DN_BONUS(dn->dn_phys), db->db.db_data, bonuslen);
 		DB_DNODE_EXIT(db);
 		dbuf_update_data(db);
-		db->db_state = DB_CACHED;
+		DBUF_STATE_CHANGE(db, =, DB_CACHED, "bonus buffer filled");
 		mutex_exit(&db->db_mtx);
 		return;
 	}
@@ -555,7 +579,7 @@ dbuf_read_impl(dmu_buf_impl_t *db, zio_t *zio, uint32_t *flags)
 		    db->db.db_size, db, type));
 		DB_DNODE_EXIT(db);
 		bzero(db->db.db_data, db->db.db_size);
-		db->db_state = DB_CACHED;
+		DBUF_STATE_CHANGE(db, =, DB_CACHED, "hole read satisfied");
 		*flags |= DB_RF_CACHED;
 		mutex_exit(&db->db_mtx);
 		return;
@@ -564,7 +588,7 @@ dbuf_read_impl(dmu_buf_impl_t *db, zio_t *zio, uint32_t *flags)
 	spa = dn->dn_objset->os_spa;
 	DB_DNODE_EXIT(db);
 
-	db->db_state = DB_READ;
+	DBUF_STATE_CHANGE(db, =, DB_READ, "read issued");
 	mutex_exit(&db->db_mtx);
 
 	if (DBUF_IS_L2CACHEABLE(db))
@@ -687,7 +711,7 @@ dbuf_noread(dmu_buf_impl_t *db)
 		ASSERT(db->db.db_data == NULL);
 		DB_GET_SPA(&spa, db);
 		dbuf_set_data(db, arc_buf_alloc(spa, db->db.db_size, db, type));
-		db->db_state = DB_FILL;
+		DBUF_STATE_CHANGE(db, =, DB_FILL, "filling block");
 	} else if (db->db_state == DB_NOFILL) {
 		dbuf_set_data(db, NULL);
 	} else {
@@ -1401,7 +1425,7 @@ dmu_buf_will_not_fill(dmu_buf_t *db_fake, dmu_tx_t *tx)
 {
 	dmu_buf_impl_t *db = (dmu_buf_impl_t *)db_fake;
 
-	db->db_state = DB_NOFILL;
+	DBUF_STATE_CHANGE(db, =, DB_NOFILL, "allocating NOFILL buffer");
 
 	dmu_buf_will_fill(db_fake, tx);
 }
@@ -1439,7 +1463,7 @@ dbuf_fill_done(dmu_buf_impl_t *db, dmu_tx_t *tx)
 			bzero(db->db.db_data, db->db.db_size);
 			db->db_freed_in_flight = FALSE;
 		}
-		db->db_state = DB_CACHED;
+		DBUF_STATE_CHANGE(db, =, DB_CACHED, "fill completed");
 		cv_broadcast(&db->db_changed);
 	}
 	mutex_exit(&db->db_mtx);
@@ -1502,7 +1526,7 @@ dbuf_assign_arcbuf(dmu_buf_impl_t *db, arc_buf_t *buf, dmu_tx_t *tx)
 	}
 	ASSERT(db->db_buf == NULL);
 	dbuf_set_data(db, buf);
-	db->db_state = DB_FILL;
+	DBUF_STATE_CHANGE(db, =, DB_FILL, "assigning filled buffer");
 	mutex_exit(&db->db_mtx);
 	(void) dbuf_dirty(db, tx);
 	dbuf_fill_done(db, tx);
@@ -1541,13 +1565,13 @@ dbuf_clear(dmu_buf_impl_t *db)
 			arc_space_return(DN_MAX_BONUSLEN, ARC_SPACE_OTHER);
 		}
 		db->db.db_data = NULL;
-		db->db_state = DB_UNCACHED;
+		DBUF_STATE_CHANGE(db, =, DB_UNCACHED, "buffer cleared");
 	}
 
 	ASSERT(db->db_state == DB_UNCACHED || db->db_state == DB_NOFILL);
 	ASSERT(db->db_data_pending == NULL);
 
-	db->db_state = DB_EVICTING;
+	DBUF_STATE_CHANGE(db, =, DB_EVICTING, "buffer eviction started");
 	db->db_blkptr = NULL;
 
 	DB_DNODE_ENTER(db);
@@ -1687,7 +1711,7 @@ dbuf_create(dnode_t *dn, uint8_t level, uint64_t blkid,
 		    (dn->dn_nblkptr-1) * sizeof (blkptr_t);
 		ASSERT3U(db->db.db_size, >=, dn->dn_bonuslen);
 		db->db.db_offset = DMU_BONUS_BLKID;
-		db->db_state = DB_UNCACHED;
+		DBUF_STATE_CHANGE(db, =, DB_UNCACHED, "bonus buffer created");
 		/* the bonus dbuf is not placed in the hash table */
 		arc_space_consume(sizeof (dmu_buf_impl_t), ARC_SPACE_OTHER);
 		return (db);
@@ -1710,7 +1734,7 @@ dbuf_create(dnode_t *dn, uint8_t level, uint64_t blkid,
 	 * dn_dbufs list.
 	 */
 	mutex_enter(&dn->dn_dbufs_mtx);
-	db->db_state = DB_EVICTING;
+	db->db_state = DB_EVICTING; /* not worth logging this state change */
 	if ((odb = dbuf_hash_insert(db)) != NULL) {
 		/* someone else inserted it first */
 		kmem_cache_free(dbuf_cache, db);
@@ -1718,7 +1742,7 @@ dbuf_create(dnode_t *dn, uint8_t level, uint64_t blkid,
 		return (odb);
 	}
 	list_insert_head(&dn->dn_dbufs, db);
-	db->db_state = DB_UNCACHED;
+	DBUF_STATE_CHANGE(db, =, DB_UNCACHED, "regular buffer created");
 	mutex_exit(&dn->dn_dbufs_mtx);
 	arc_space_consume(sizeof (dmu_buf_impl_t), ARC_SPACE_OTHER);
 
