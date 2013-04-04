@@ -25,10 +25,6 @@
  */
 
 /*
- * Copyright (c) 2012 by Delphix. All rights reserved.
- */
-
-/*
  * DTrace Process Control
  *
  * This file provides a set of routines that permit libdtrace and its clients
@@ -81,7 +77,9 @@
  */
 
 #include <sys/wait.h>
+#if defined(sun)
 #include <sys/lwp.h>
+#endif
 #include <strings.h>
 #include <signal.h>
 #include <assert.h>
@@ -90,6 +88,12 @@
 #include <dt_proc.h>
 #include <dt_pid.h>
 #include <dt_impl.h>
+
+#if !defined(sun)
+#include <sys/syscall.h>
+#include <libproc_compat.h>
+#define	SYS_forksys SYS_fork
+#endif
 
 #define	IS_SYS_EXEC(w)	(w == SYS_execve)
 #define	IS_SYS_FORK(w)	(w == SYS_vfork || w == SYS_forksys)
@@ -100,7 +104,7 @@ dt_proc_bpcreate(dt_proc_t *dpr, uintptr_t addr, dt_bkpt_f *func, void *data)
 	struct ps_prochandle *P = dpr->dpr_proc;
 	dt_bkpt_t *dbp;
 
-	assert(MUTEX_HELD(&dpr->dpr_lock));
+	assert(DT_MUTEX_HELD(&dpr->dpr_lock));
 
 	if ((dbp = dt_zalloc(dpr->dpr_hdl, sizeof (dt_bkpt_t))) != NULL) {
 		dbp->dbp_func = func;
@@ -122,7 +126,7 @@ dt_proc_bpdestroy(dt_proc_t *dpr, int delbkpts)
 	int state = Pstate(dpr->dpr_proc);
 	dt_bkpt_t *dbp, *nbp;
 
-	assert(MUTEX_HELD(&dpr->dpr_lock));
+	assert(DT_MUTEX_HELD(&dpr->dpr_lock));
 
 	for (dbp = dt_list_next(&dpr->dpr_bps); dbp != NULL; dbp = nbp) {
 		if (delbkpts && dbp->dbp_active &&
@@ -139,20 +143,38 @@ dt_proc_bpdestroy(dt_proc_t *dpr, int delbkpts)
 static void
 dt_proc_bpmatch(dtrace_hdl_t *dtp, dt_proc_t *dpr)
 {
+#if defined(sun)
 	const lwpstatus_t *psp = &Pstatus(dpr->dpr_proc)->pr_lwp;
+#else
+	unsigned long pc;
+#endif
 	dt_bkpt_t *dbp;
 
-	assert(MUTEX_HELD(&dpr->dpr_lock));
+	assert(DT_MUTEX_HELD(&dpr->dpr_lock));
+
+#if !defined(sun)
+	proc_regget(dpr->dpr_proc, REG_PC, &pc);
+	proc_bkptregadj(&pc);
+#endif
 
 	for (dbp = dt_list_next(&dpr->dpr_bps);
 	    dbp != NULL; dbp = dt_list_next(dbp)) {
+#if defined(sun)
 		if (psp->pr_reg[R_PC] == dbp->dbp_addr)
 			break;
+#else
+		if (pc == dbp->dbp_addr)
+			break;
+#endif
 	}
 
 	if (dbp == NULL) {
 		dt_dprintf("pid %d: spurious breakpoint wakeup for %lx\n",
+#if defined(sun)
 		    (int)dpr->dpr_pid, (ulong_t)psp->pr_reg[R_PC]);
+#else
+		    (int)dpr->dpr_pid, pc);
+#endif
 		return;
 	}
 
@@ -168,7 +190,7 @@ dt_proc_bpenable(dt_proc_t *dpr)
 {
 	dt_bkpt_t *dbp;
 
-	assert(MUTEX_HELD(&dpr->dpr_lock));
+	assert(DT_MUTEX_HELD(&dpr->dpr_lock));
 
 	for (dbp = dt_list_next(&dpr->dpr_bps);
 	    dbp != NULL; dbp = dt_list_next(dbp)) {
@@ -185,7 +207,7 @@ dt_proc_bpdisable(dt_proc_t *dpr)
 {
 	dt_bkpt_t *dbp;
 
-	assert(MUTEX_HELD(&dpr->dpr_lock));
+	assert(DT_MUTEX_HELD(&dpr->dpr_lock));
 
 	for (dbp = dt_list_next(&dpr->dpr_bps);
 	    dbp != NULL; dbp = dt_list_next(dbp)) {
@@ -233,7 +255,7 @@ dt_proc_notify(dtrace_hdl_t *dtp, dt_proc_hash_t *dph, dt_proc_t *dpr,
 static void
 dt_proc_stop(dt_proc_t *dpr, uint8_t why)
 {
-	assert(MUTEX_HELD(&dpr->dpr_lock));
+	assert(DT_MUTEX_HELD(&dpr->dpr_lock));
 	assert(why != DT_PROC_STOP_IDLE);
 
 	if (dpr->dpr_stop & why) {
@@ -320,7 +342,12 @@ dt_proc_rdwatch(dt_proc_t *dpr, rd_event_e event, const char *evname)
 	}
 
 	(void) dt_proc_bpcreate(dpr, rdn.u.bptaddr,
+#if defined(sun)
 	    (dt_bkpt_f *)dt_proc_rdevent, (void *)evname);
+#else
+	    /* XXX ugly */
+	    (dt_bkpt_f *)dt_proc_rdevent, __DECONST(void *, evname));
+#endif
 }
 
 /*
@@ -330,25 +357,34 @@ dt_proc_rdwatch(dt_proc_t *dpr, rd_event_e event, const char *evname)
 static void
 dt_proc_attach(dt_proc_t *dpr, int exec)
 {
+#if defined(sun)
 	const pstatus_t *psp = Pstatus(dpr->dpr_proc);
+#endif
 	rd_err_e err;
 	GElf_Sym sym;
 
-	assert(MUTEX_HELD(&dpr->dpr_lock));
+	assert(DT_MUTEX_HELD(&dpr->dpr_lock));
 
 	if (exec) {
+#if defined(sun)
 		if (psp->pr_lwp.pr_errno != 0)
 			return; /* exec failed: nothing needs to be done */
+#endif
 
 		dt_proc_bpdestroy(dpr, B_FALSE);
+#if defined(sun)
 		Preset_maps(dpr->dpr_proc);
+#endif
 	}
-
 	if ((dpr->dpr_rtld = Prd_agent(dpr->dpr_proc)) != NULL &&
 	    (err = rd_event_enable(dpr->dpr_rtld, B_TRUE)) == RD_OK) {
+#if defined(sun)
 		dt_proc_rdwatch(dpr, RD_PREINIT, "RD_PREINIT");
+#endif
 		dt_proc_rdwatch(dpr, RD_POSTINIT, "RD_POSTINIT");
+#if defined(sun)
 		dt_proc_rdwatch(dpr, RD_DLACTIVITY, "RD_DLACTIVITY");
+#endif
 	} else {
 		dt_dprintf("pid %d: failed to enable rtld events: %s\n",
 		    (int)dpr->dpr_pid, dpr->dpr_rtld ? rd_errstr(err) :
@@ -390,6 +426,8 @@ dt_proc_attach(dt_proc_t *dpr, int exec)
 static void
 dt_proc_waitrun(dt_proc_t *dpr)
 {
+printf("%s:%s(%d): DOODAD\n",__FUNCTION__,__FILE__,__LINE__);
+#ifdef DOODAD
 	struct ps_prochandle *P = dpr->dpr_proc;
 	const lwpstatus_t *psp = &Pstatus(P)->pr_lwp;
 
@@ -400,7 +438,7 @@ dt_proc_waitrun(dt_proc_t *dpr)
 	const long wstop = PCWSTOP;
 	int pfd = Pctlfd(P);
 
-	assert(MUTEX_HELD(&dpr->dpr_lock));
+	assert(DT_MUTEX_HELD(&dpr->dpr_lock));
 	assert(psp->pr_flags & PR_STOPPED);
 	assert(Pstate(P) == PS_STOP);
 
@@ -439,6 +477,7 @@ dt_proc_waitrun(dt_proc_t *dpr)
 	}
 
 	(void) pthread_mutex_lock(&dpr->dpr_lock);
+#endif
 }
 
 typedef struct dt_proc_control_data {
@@ -464,13 +503,15 @@ dt_proc_control(void *arg)
 	dt_proc_control_data_t *datap = arg;
 	dtrace_hdl_t *dtp = datap->dpcd_hdl;
 	dt_proc_t *dpr = datap->dpcd_proc;
-	dt_proc_hash_t *dph = dtp->dt_procs;
+	dt_proc_hash_t *dph = dpr->dpr_hdl->dt_procs;
 	struct ps_prochandle *P = dpr->dpr_proc;
-
-	int pfd = Pctlfd(P);
 	int pid = dpr->dpr_pid;
 
+#if defined(sun)
+	int pfd = Pctlfd(P);
+
 	const long wstop = PCWSTOP;
+#endif
 	int notify = B_FALSE;
 
 	/*
@@ -488,6 +529,7 @@ dt_proc_control(void *arg)
 	 */
 	(void) pthread_mutex_lock(&dpr->dpr_lock);
 
+#if defined(sun)
 	(void) Punsetflags(P, PR_ASYNC);	/* require synchronous mode */
 	(void) Psetflags(P, PR_BPTADJ);		/* always adjust eip on x86 */
 	(void) Punsetflags(P, PR_FORK);		/* do not inherit on fork */
@@ -513,13 +555,18 @@ dt_proc_control(void *arg)
 	(void) Psysexit(P, SYS_forksys, B_TRUE);
 
 	Psync(P);				/* enable all /proc changes */
+#endif
 	dt_proc_attach(dpr, B_FALSE);		/* enable rtld breakpoints */
 
 	/*
 	 * If PR_KLC is set, we created the process; otherwise we grabbed it.
 	 * Check for an appropriate stop request and wait for dt_proc_continue.
 	 */
+#if defined(sun)
 	if (Pstatus(P)->pr_flags & PR_KLC)
+#else
+	if (proc_getflags(P) & PR_KLC)
+#endif
 		dt_proc_stop(dpr, DT_PROC_STOP_CREATE);
 	else
 		dt_proc_stop(dpr, DT_PROC_STOP_GRAB);
@@ -543,19 +590,33 @@ dt_proc_control(void *arg)
 	while (!dpr->dpr_quit) {
 		const lwpstatus_t *psp;
 
+#if defined(sun)
 		if (write(pfd, &wstop, sizeof (wstop)) == -1 && errno == EINTR)
 			continue; /* check dpr_quit and continue waiting */
+#else
+		/* Wait for the process to report status. */
+		proc_wstatus(P);
+		if (errno == EINTR)
+			continue; /* check dpr_quit and continue waiting */
+#endif
 
 		(void) pthread_mutex_lock(&dpr->dpr_lock);
+
+#if defined(sun)
 pwait_locked:
 		if (Pstopstatus(P, PCNULL, 0) == -1 && errno == EINTR) {
 			(void) pthread_mutex_unlock(&dpr->dpr_lock);
 			continue; /* check dpr_quit and continue waiting */
 		}
+#endif
 
 		switch (Pstate(P)) {
 		case PS_STOP:
+#if defined(sun)
 			psp = &Pstatus(P)->pr_lwp;
+#else
+			psp = proc_getlwpstatus(P);
+#endif
 
 			dt_dprintf("pid %d: proc stopped showing %d/%d\n",
 			    pid, psp->pr_why, psp->pr_what);
@@ -600,8 +661,10 @@ pwait_locked:
 			break;
 
 		case PS_LOST:
+#if defined(sun)
 			if (Preopen(P) == 0)
 				goto pwait_locked;
+#endif
 
 			dt_dprintf("pid %d: proc lost: %s\n",
 			    pid, strerror(errno));
@@ -671,7 +734,11 @@ dt_proc_t *
 dt_proc_lookup(dtrace_hdl_t *dtp, struct ps_prochandle *P, int remove)
 {
 	dt_proc_hash_t *dph = dtp->dt_procs;
+#if defined(sun)
 	pid_t pid = Pstatus(P)->pr_pid;
+#else
+	pid_t pid = proc_getpid(P);
+#endif
 	dt_proc_t *dpr, **dpp = &dph->dph_hash[pid & (dph->dph_hashlen - 1)];
 
 	for (dpr = *dpp; dpr != NULL; dpr = dpr->dpr_hash) {
@@ -705,10 +772,18 @@ dt_proc_destroy(dtrace_hdl_t *dtp, struct ps_prochandle *P)
 	 * an external debugger and we were waiting in dt_proc_waitrun().
 	 * Leave the process in this condition using PRELEASE_HANG.
 	 */
+#if defined(sun)
 	if (!(Pstatus(dpr->dpr_proc)->pr_flags & (PR_KLC | PR_RLC))) {
+#else
+	if (!(proc_getflags(dpr->dpr_proc) & (PR_KLC | PR_RLC))) {
+#endif
 		dt_dprintf("abandoning pid %d\n", (int)dpr->dpr_pid);
 		rflag = PRELEASE_HANG;
+#if defined(sun)
 	} else if (Pstatus(dpr->dpr_proc)->pr_flags & PR_KLC) {
+#else
+	} else if (proc_getflags(dpr->dpr_proc) & PR_KLC) {
+#endif
 		dt_dprintf("killing pid %d\n", (int)dpr->dpr_pid);
 		rflag = PRELEASE_KILL; /* apply kill-on-last-close */
 	} else {
@@ -733,7 +808,11 @@ dt_proc_destroy(dtrace_hdl_t *dtp, struct ps_prochandle *P)
 		 */
 		(void) pthread_mutex_lock(&dpr->dpr_lock);
 		dpr->dpr_quit = B_TRUE;
+#if defined(sun)
 		(void) _lwp_kill(dpr->dpr_tid, SIGCANCEL);
+#else
+		pthread_kill(dpr->dpr_tid, SIGTHR);
+#endif
 
 		/*
 		 * If the process is currently idling in dt_proc_stop(), re-
@@ -801,7 +880,11 @@ dt_proc_create_thread(dtrace_hdl_t *dtp, dt_proc_t *dpr, uint_t stop)
 
 	(void) sigfillset(&nset);
 	(void) sigdelset(&nset, SIGABRT);	/* unblocked for assert() */
+#if defined(sun)
 	(void) sigdelset(&nset, SIGCANCEL);	/* see dt_proc_destroy() */
+#else
+	(void) sigdelset(&nset, SIGUSR1);	/* see dt_proc_destroy() */
+#endif
 
 	data.dpcd_hdl = dtp;
 	data.dpcd_proc = dpr;
@@ -829,11 +912,15 @@ dt_proc_create_thread(dtrace_hdl_t *dtp, dt_proc_t *dpr, uint_t stop)
 		 * small amount of useful information to help figure it out.
 		 */
 		if (dpr->dpr_done) {
+#if defined(sun)
 			const psinfo_t *prp = Ppsinfo(dpr->dpr_proc);
 			int stat = prp ? prp->pr_wstat : 0;
 			int pid = dpr->dpr_pid;
-
-			if (Pstate(dpr->dpr_proc) == PS_LOST) {
+#else
+			int stat = proc_getwstat(dpr->dpr_proc);
+			int pid = proc_getpid(dpr->dpr_proc);
+#endif
+			if (proc_state(dpr->dpr_proc) == PS_LOST) {
 				(void) dt_proc_error(dpr->dpr_hdl, dpr,
 				    "failed to control pid %d: process exec'd "
 				    "set-id or unobservable program\n", pid);
@@ -855,14 +942,16 @@ dt_proc_create_thread(dtrace_hdl_t *dtp, dt_proc_t *dpr, uint_t stop)
 		    (int)dpr->dpr_pid, strerror(err));
 	}
 
-	(void) pthread_mutex_unlock(&dpr->dpr_lock);
+	if (err == 0)
+		(void) pthread_mutex_unlock(&dpr->dpr_lock);
 	(void) pthread_attr_destroy(&a);
 
 	return (err);
 }
 
 struct ps_prochandle *
-dt_proc_create(dtrace_hdl_t *dtp, const char *file, char *const *argv)
+dt_proc_create(dtrace_hdl_t *dtp, const char *file, char *const *argv,
+    proc_child_func *pcf, void *child_arg)
 {
 	dt_proc_hash_t *dph = dtp->dt_procs;
 	dt_proc_t *dpr;
@@ -874,14 +963,22 @@ dt_proc_create(dtrace_hdl_t *dtp, const char *file, char *const *argv)
 	(void) pthread_mutex_init(&dpr->dpr_lock, NULL);
 	(void) pthread_cond_init(&dpr->dpr_cv, NULL);
 
-	dpr->dpr_proc = Pxcreate(file, argv, dtp->dt_proc_env, &err, NULL, 0);
-	if (dpr->dpr_proc == NULL) {
+#if defined(sun)
+	if ((dpr->dpr_proc = Pcreate(file, argv, &err, NULL, 0)) == NULL) {
+#else
+	if ((err = proc_create(file, argv, pcf, child_arg,
+	    &dpr->dpr_proc)) != 0) {
+#endif
 		return (dt_proc_error(dtp, dpr,
 		    "failed to execute %s: %s\n", file, Pcreate_error(err)));
 	}
 
 	dpr->dpr_hdl = dtp;
+#if defined(sun)
 	dpr->dpr_pid = Pstatus(dpr->dpr_proc)->pr_pid;
+#else
+	dpr->dpr_pid = proc_getpid(dpr->dpr_proc);
+#endif
 
 	(void) Punsetflags(dpr->dpr_proc, PR_RLC);
 	(void) Psetflags(dpr->dpr_proc, PR_KLC);
@@ -942,7 +1039,11 @@ dt_proc_grab(dtrace_hdl_t *dtp, pid_t pid, int flags, int nomonitor)
 	(void) pthread_mutex_init(&dpr->dpr_lock, NULL);
 	(void) pthread_cond_init(&dpr->dpr_cv, NULL);
 
+#if defined(sun)
 	if ((dpr->dpr_proc = Pgrab(pid, flags, &err)) == NULL) {
+#else
+	if ((err = proc_attach(pid, flags, &dpr->dpr_proc)) != 0) {
+#endif
 		return (dt_proc_error(dtp, dpr,
 		    "failed to grab pid %d: %s\n", (int)pid, Pgrab_error(err)));
 	}
@@ -1039,85 +1140,46 @@ dt_proc_unlock(dtrace_hdl_t *dtp, struct ps_prochandle *P)
 }
 
 void
-dt_proc_init(dtrace_hdl_t *dtp)
+dt_proc_hash_create(dtrace_hdl_t *dtp)
 {
-	extern char **environ;
-	static char *envdef[] = {
-		"LD_NOLAZYLOAD=1",	/* linker lazy loading hides funcs */
-		NULL
-	};
-	char **p;
-	int i;
-
 	if ((dtp->dt_procs = dt_zalloc(dtp, sizeof (dt_proc_hash_t) +
-	    sizeof (dt_proc_t *) * _dtrace_pidbuckets - 1)) == NULL)
-		return;
+	    sizeof (dt_proc_t *) * _dtrace_pidbuckets - 1)) != NULL) {
 
-	(void) pthread_mutex_init(&dtp->dt_procs->dph_lock, NULL);
-	(void) pthread_cond_init(&dtp->dt_procs->dph_cv, NULL);
+		(void) pthread_mutex_init(&dtp->dt_procs->dph_lock, NULL);
+		(void) pthread_cond_init(&dtp->dt_procs->dph_cv, NULL);
 
-	dtp->dt_procs->dph_hashlen = _dtrace_pidbuckets;
-	dtp->dt_procs->dph_lrulim = _dtrace_pidlrulim;
-
-
-	/*
-	 * Count how big our environment needs to be.
-	 */
-	for (i = 1, p = environ; *p != NULL; i++, p++)
-		continue;
-	for (p = envdef; *p != NULL; i++, p++)
-		continue;
-
-	if ((dtp->dt_proc_env = dt_zalloc(dtp, sizeof (char *) * i)) == NULL)
-		return;
-
-	for (i = 0, p = environ; *p != NULL; i++, p++) {
-		if ((dtp->dt_proc_env[i] = strdup(*p)) == NULL)
-			goto err;
+		dtp->dt_procs->dph_hashlen = _dtrace_pidbuckets;
+		dtp->dt_procs->dph_lrulim = _dtrace_pidlrulim;
 	}
-	for (p = envdef; *p != NULL; i++, p++) {
-		if ((dtp->dt_proc_env[i] = strdup(*p)) == NULL)
-			goto err;
-	}
-
-	return;
-
-err:
-	while (--i != 0) {
-		dt_free(dtp, dtp->dt_proc_env[i]);
-	}
-	dt_free(dtp, dtp->dt_proc_env);
-	dtp->dt_proc_env = NULL;
 }
 
 void
-dt_proc_fini(dtrace_hdl_t *dtp)
+dt_proc_hash_destroy(dtrace_hdl_t *dtp)
 {
 	dt_proc_hash_t *dph = dtp->dt_procs;
 	dt_proc_t *dpr;
-	char **p;
 
 	while ((dpr = dt_list_next(&dph->dph_lrulist)) != NULL)
 		dt_proc_destroy(dtp, dpr->dpr_proc);
 
 	dtp->dt_procs = NULL;
 	dt_free(dtp, dph);
-
-	for (p = dtp->dt_proc_env; *p != NULL; p++)
-		dt_free(dtp, *p);
-
-	dt_free(dtp, dtp->dt_proc_env);
-	dtp->dt_proc_env = NULL;
 }
 
 struct ps_prochandle *
-dtrace_proc_create(dtrace_hdl_t *dtp, const char *file, char *const *argv)
+dtrace_proc_create(dtrace_hdl_t *dtp, const char *file, char *const *argv,
+    proc_child_func *pcf, void *child_arg)
 {
 	dt_ident_t *idp = dt_idhash_lookup(dtp->dt_macros, "target");
-	struct ps_prochandle *P = dt_proc_create(dtp, file, argv);
+	struct ps_prochandle *P = dt_proc_create(dtp, file, argv, pcf, child_arg);
 
-	if (P != NULL && idp != NULL && idp->di_id == 0)
+	if (P != NULL && idp != NULL && idp->di_id == 0) {
+#if defined(sun)
 		idp->di_id = Pstatus(P)->pr_pid; /* $target = created pid */
+#else
+		idp->di_id = proc_getpid(P); /* $target = created pid */
+#endif
+	}
 
 	return (P);
 }

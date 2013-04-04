@@ -20,7 +20,6 @@
  */
 /*
  * Copyright (c) 2005, 2010, Oracle and/or its affiliates. All rights reserved.
- * Copyright (c) 2012 by Delphix. All rights reserved.
  */
 
 #ifndef	_SYS_ZFS_IOCTL_H
@@ -40,15 +39,6 @@
 #ifdef	__cplusplus
 extern "C" {
 #endif
-
-/*
- * The structures in this file are passed between userland and the
- * kernel.  Userland may be running a 32-bit process, while the kernel
- * is 64-bit.  Therefore, these structures need to compile the same in
- * 32-bit and 64-bit.  This means not using type "long", and adding
- * explicit padding so that the 32-bit structure will not be packed more
- * tightly than the 64-bit structure (which requires 64-bit alignment).
- */
 
 /*
  * Property values for snapdir
@@ -125,6 +115,87 @@ typedef enum drr_headertype {
 /*
  * zfs ioctl command structure
  */
+struct drr_begin {
+	uint64_t drr_magic;
+	uint64_t drr_versioninfo; /* was drr_version */
+	uint64_t drr_creation_time;
+	dmu_objset_type_t drr_type;
+	uint32_t drr_flags;
+	uint64_t drr_toguid;
+	uint64_t drr_fromguid;
+	char drr_toname[MAXNAMELEN];
+};
+
+struct drr_end {
+	zio_cksum_t drr_checksum;
+	uint64_t drr_toguid;
+};
+
+struct drr_object {
+	uint64_t drr_object;
+	dmu_object_type_t drr_type;
+	dmu_object_type_t drr_bonustype;
+	uint32_t drr_blksz;
+	uint32_t drr_bonuslen;
+	uint8_t drr_checksumtype;
+	uint8_t drr_compress;
+	uint8_t drr_pad[6];
+	uint64_t drr_toguid;
+	/* bonus content follows */
+};
+
+struct drr_freeobjects {
+	uint64_t drr_firstobj;
+	uint64_t drr_numobjs;
+	uint64_t drr_toguid;
+};
+
+struct drr_write {
+	uint64_t drr_object;
+	dmu_object_type_t drr_type;
+	uint32_t drr_pad;
+	uint64_t drr_offset;
+	uint64_t drr_length;
+	uint64_t drr_toguid;
+	uint8_t drr_checksumtype;
+	uint8_t drr_checksumflags;
+	uint8_t drr_pad2[6];
+	ddt_key_t drr_key; /* deduplication key */
+	/* content follows */
+};
+
+struct drr_free {
+	uint64_t drr_object;
+	uint64_t drr_offset;
+	uint64_t drr_length;
+	uint64_t drr_toguid;
+};
+
+struct drr_write_byref {
+	/* where to put the data */
+	uint64_t drr_object;
+	uint64_t drr_offset;
+	uint64_t drr_length;
+	uint64_t drr_toguid;
+	/* where to find the prior copy of the data */
+	uint64_t drr_refguid;
+	uint64_t drr_refobject;
+	uint64_t drr_refoffset;
+	/* properties of the data */
+	uint8_t drr_checksumtype;
+	uint8_t drr_checksumflags;
+	uint8_t drr_pad2[6];
+	ddt_key_t drr_key; /* deduplication key */
+};
+
+struct drr_spill {
+	uint64_t drr_object;
+	uint64_t drr_length;
+	uint64_t drr_toguid;
+	uint64_t drr_pad[4]; /* needed for crypto */
+	/* spill data follows */
+};
+
 typedef struct dmu_replay_record {
 	enum {
 		DRR_BEGIN, DRR_OBJECT, DRR_FREEOBJECTS,
@@ -133,79 +204,14 @@ typedef struct dmu_replay_record {
 	} drr_type;
 	uint32_t drr_payloadlen;
 	union {
-		struct drr_begin {
-			uint64_t drr_magic;
-			uint64_t drr_versioninfo; /* was drr_version */
-			uint64_t drr_creation_time;
-			dmu_objset_type_t drr_type;
-			uint32_t drr_flags;
-			uint64_t drr_toguid;
-			uint64_t drr_fromguid;
-			char drr_toname[MAXNAMELEN];
-		} drr_begin;
-		struct drr_end {
-			zio_cksum_t drr_checksum;
-			uint64_t drr_toguid;
-		} drr_end;
-		struct drr_object {
-			uint64_t drr_object;
-			dmu_object_type_t drr_type;
-			dmu_object_type_t drr_bonustype;
-			uint32_t drr_blksz;
-			uint32_t drr_bonuslen;
-			uint8_t drr_checksumtype;
-			uint8_t drr_compress;
-			uint8_t drr_pad[6];
-			uint64_t drr_toguid;
-			/* bonus content follows */
-		} drr_object;
-		struct drr_freeobjects {
-			uint64_t drr_firstobj;
-			uint64_t drr_numobjs;
-			uint64_t drr_toguid;
-		} drr_freeobjects;
-		struct drr_write {
-			uint64_t drr_object;
-			dmu_object_type_t drr_type;
-			uint32_t drr_pad;
-			uint64_t drr_offset;
-			uint64_t drr_length;
-			uint64_t drr_toguid;
-			uint8_t drr_checksumtype;
-			uint8_t drr_checksumflags;
-			uint8_t drr_pad2[6];
-			ddt_key_t drr_key; /* deduplication key */
-			/* content follows */
-		} drr_write;
-		struct drr_free {
-			uint64_t drr_object;
-			uint64_t drr_offset;
-			uint64_t drr_length;
-			uint64_t drr_toguid;
-		} drr_free;
-		struct drr_write_byref {
-			/* where to put the data */
-			uint64_t drr_object;
-			uint64_t drr_offset;
-			uint64_t drr_length;
-			uint64_t drr_toguid;
-			/* where to find the prior copy of the data */
-			uint64_t drr_refguid;
-			uint64_t drr_refobject;
-			uint64_t drr_refoffset;
-			/* properties of the data */
-			uint8_t drr_checksumtype;
-			uint8_t drr_checksumflags;
-			uint8_t drr_pad2[6];
-			ddt_key_t drr_key; /* deduplication key */
-		} drr_write_byref;
-		struct drr_spill {
-			uint64_t drr_object;
-			uint64_t drr_length;
-			uint64_t drr_toguid;
-			uint64_t drr_pad[4]; /* needed for crypto */
-			/* spill data follows */
-		} drr_spill;
+		struct drr_begin drr_begin;
+		struct drr_end drr_end;
+		struct drr_object drr_object;
+		struct drr_freeobjects drr_freeobjects;
+		struct drr_write drr_write;
+		struct drr_free drr_free;
+		struct drr_write_byref drr_write_byref;
+		struct drr_spill drr_spill;
 	} drr_u;
 } dmu_replay_record_t;
 
@@ -240,23 +246,11 @@ typedef struct zinject_record {
 	uint32_t	zi_iotype;
 	int32_t		zi_duration;
 	uint64_t	zi_timer;
-	uint32_t	zi_cmd;
-	uint32_t	zi_pad;
 } zinject_record_t;
 
 #define	ZINJECT_NULL		0x1
 #define	ZINJECT_FLUSH_ARC	0x2
 #define	ZINJECT_UNLOAD_SPA	0x4
-
-typedef enum zinject_type {
-	ZINJECT_UNINITIALIZED,
-	ZINJECT_DATA_FAULT,
-	ZINJECT_DEVICE_FAULT,
-	ZINJECT_LABEL_FAULT,
-	ZINJECT_IGNORED_WRITES,
-	ZINJECT_PANIC,
-	ZINJECT_DELAY_IO,
-} zinject_type_t;
 
 typedef struct zfs_share {
 	uint64_t	z_exportdata;
@@ -278,33 +272,27 @@ typedef enum zfs_case {
 } zfs_case_t;
 
 typedef struct zfs_cmd {
-	char		zc_name[MAXPATHLEN];	/* name of pool or dataset */
-	uint64_t	zc_nvlist_src;		/* really (char *) */
-	uint64_t	zc_nvlist_src_size;
-	uint64_t	zc_nvlist_dst;		/* really (char *) */
-	uint64_t	zc_nvlist_dst_size;
-	boolean_t	zc_nvlist_dst_filled;	/* put an nvlist in dst? */
-	int		zc_pad2;
-
-	/*
-	 * The following members are for legacy ioctls which haven't been
-	 * converted to the new method.
-	 */
-	uint64_t	zc_history;		/* really (char *) */
+	char		zc_name[MAXPATHLEN];
 	char		zc_value[MAXPATHLEN * 2];
 	char		zc_string[MAXNAMELEN];
 	char		zc_top_ds[MAXPATHLEN];
 	uint64_t	zc_guid;
 	uint64_t	zc_nvlist_conf;		/* really (char *) */
 	uint64_t	zc_nvlist_conf_size;
+	uint64_t	zc_nvlist_src;		/* really (char *) */
+	uint64_t	zc_nvlist_src_size;
+	uint64_t	zc_nvlist_dst;		/* really (char *) */
+	uint64_t	zc_nvlist_dst_size;
 	uint64_t	zc_cookie;
 	uint64_t	zc_objset_type;
 	uint64_t	zc_perm_action;
-	uint64_t	zc_history_len;
+	uint64_t 	zc_history;		/* really (char *) */
+	uint64_t 	zc_history_len;
 	uint64_t	zc_history_offset;
 	uint64_t	zc_obj;
 	uint64_t	zc_iflags;		/* internal to zfs(7fs) */
 	zfs_share_t	zc_share;
+	uint64_t	zc_jailid;
 	dmu_objset_stats_t zc_objset_stats;
 	struct drr_begin zc_begin_record;
 	zinject_record_t zc_inject_record;
@@ -312,7 +300,8 @@ typedef struct zfs_cmd {
 	boolean_t	zc_temphold;
 	uint64_t	zc_action_handle;
 	int		zc_cleanup_fd;
-	uint8_t		zc_pad[4];		/* alignment */
+	uint8_t		zc_simple;
+	uint8_t		zc_pad[3];		/* alignment */
 	uint64_t	zc_sendobj;
 	uint64_t	zc_fromobj;
 	uint64_t	zc_createtxg;
@@ -337,8 +326,6 @@ typedef struct zfs_creat {
 	nvlist_t	*zct_zplprops;
 	nvlist_t	*zct_props;
 } zfs_creat_t;
-
-extern dev_info_t *zfs_dip;
 
 extern int zfs_secpolicy_snapshot_perms(const char *name, cred_t *cr);
 extern int zfs_secpolicy_rename_perms(const char *from,
@@ -367,7 +354,6 @@ extern void *zfsdev_get_soft_state(minor_t minor,
 extern minor_t zfsdev_minor_alloc(void);
 
 extern void *zfsdev_state;
-extern kmutex_t zfsdev_state_lock;
 
 #endif	/* _KERNEL */
 

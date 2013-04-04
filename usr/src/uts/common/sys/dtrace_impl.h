@@ -17,6 +17,8 @@
  * information: Portions Copyright [yyyy] [name of copyright owner]
  *
  * CDDL HEADER END
+ *
+ * $FreeBSD: stable/9/sys/cddl/contrib/opensolaris/uts/common/sys/dtrace_impl.h 211608 2010-08-22 10:53:32Z rpaulo $
  */
 
 /*
@@ -24,13 +26,10 @@
  * Use is subject to license terms.
  */
 
-/*
- * Copyright (c) 2011, Joyent, Inc. All rights reserved.
- * Copyright (c) 2012 by Delphix. All rights reserved.
- */
-
 #ifndef _SYS_DTRACE_IMPL_H
 #define	_SYS_DTRACE_IMPL_H
+
+#pragma ident	"%Z%%M%	%I%	%E% SMI"
 
 #ifdef	__cplusplus
 extern "C" {
@@ -48,6 +47,14 @@ extern "C" {
  */
 
 #include <sys/dtrace.h>
+#if !defined(sun)
+#ifdef __sparcv9
+typedef uint32_t		pc_t;
+#else
+typedef uintptr_t		pc_t;
+#endif
+typedef	u_long			greg_t;
+#endif
 
 /*
  * DTrace Implementation Constants and Typedefs
@@ -117,13 +124,13 @@ struct dtrace_probe {
 typedef int dtrace_probekey_f(const char *, const char *, int);
 
 typedef struct dtrace_probekey {
-	const char *dtpk_prov;			/* provider name to match */
+	char *dtpk_prov;			/* provider name to match */
 	dtrace_probekey_f *dtpk_pmatch;		/* provider matching function */
-	const char *dtpk_mod;			/* module name to match */
+	char *dtpk_mod;				/* module name to match */
 	dtrace_probekey_f *dtpk_mmatch;		/* module matching function */
-	const char *dtpk_func;			/* func name to match */
+	char *dtpk_func;			/* func name to match */
 	dtrace_probekey_f *dtpk_fmatch;		/* func matching function */
-	const char *dtpk_name;			/* name to match */
+	char *dtpk_name;			/* name to match */
 	dtrace_probekey_f *dtpk_nmatch;		/* name matching function */
 	dtrace_id_t dtpk_id;			/* identifier to match */
 } dtrace_probekey_t;
@@ -200,18 +207,15 @@ typedef struct dtrace_hash {
  * predicate is non-NULL, the DIF object is executed.  If the result is
  * non-zero, the action list is processed, with each action being executed
  * accordingly.  When the action list has been completely executed, processing
- * advances to the next ECB. The ECB abstraction allows disjoint consumers
- * to multiplex on single probes.
- *
- * Execution of the ECB results in consuming dte_size bytes in the buffer
- * to record data.  During execution, dte_needed bytes must be available in
- * the buffer.  This space is used for both recorded data and tuple data.
+ * advances to the next ECB.  processing advances to the next ECB.  If the
+ * result is non-zero; For each ECB, it first determines the The ECB
+ * abstraction allows disjoint consumers to multiplex on single probes.
  */
 struct dtrace_ecb {
 	dtrace_epid_t dte_epid;			/* enabled probe ID */
 	uint32_t dte_alignment;			/* required alignment */
-	size_t dte_needed;			/* space needed for execution */
-	size_t dte_size;			/* size of recorded payload */
+	size_t dte_needed;			/* bytes needed */
+	size_t dte_size;			/* total size of payload */
 	dtrace_predicate_t *dte_predicate;	/* predicate, if any */
 	dtrace_action_t *dte_action;		/* actions, if any */
 	dtrace_ecb_t *dte_next;			/* next ECB on probe */
@@ -269,30 +273,27 @@ typedef struct dtrace_aggregation {
  * the EPID, the consumer can determine the data layout.  (The data buffer
  * layout is shown schematically below.)  By assuring that one can determine
  * data layout from the EPID, the metadata stream can be separated from the
- * data stream -- simplifying the data stream enormously.  The ECB always
- * proceeds the recorded data as part of the dtrace_rechdr_t structure that
- * includes the EPID and a high-resolution timestamp used for output ordering
- * consistency.
+ * data stream -- simplifying the data stream enormously.
  *
- *      base of data buffer --->  +--------+--------------------+--------+
- *                                | rechdr | data               | rechdr |
- *                                +--------+------+--------+----+--------+
- *                                | data          | rechdr | data        |
- *                                +---------------+--------+-------------+
- *                                | data, cont.                          |
- *                                +--------+--------------------+--------+
- *                                | rechdr | data               |        |
- *                                +--------+--------------------+        |
- *                                |                ||                    |
- *                                |                ||                    |
- *                                |                \/                    |
- *                                :                                      :
- *                                .                                      .
- *                                .                                      .
- *                                .                                      .
- *                                :                                      :
- *                                |                                      |
- *     limit of data buffer --->  +--------------------------------------+
+ *      base of data buffer --->  +------+--------------------+------+
+ *                                | EPID | data               | EPID |
+ *                                +------+--------+------+----+------+
+ *                                | data          | EPID | data      |
+ *                                +---------------+------+-----------+
+ *                                | data, cont.                      |
+ *                                +------+--------------------+------+
+ *                                | EPID | data               |      |
+ *                                +------+--------------------+      |
+ *                                |                ||                |
+ *                                |                ||                |
+ *                                |                \/                |
+ *                                :                                  :
+ *                                .                                  .
+ *                                .                                  .
+ *                                .                                  .
+ *                                :                                  :
+ *                                |                                  |
+ *     limit of data buffer --->  +----------------------------------+
  *
  * When evaluating an ECB, dtrace_probe() determines if the ECB's needs of the
  * principal buffer (both scratch and payload) exceed the available space.  If
@@ -428,11 +429,8 @@ typedef struct dtrace_buffer {
 	uint32_t dtb_errors;			/* number of errors */
 	uint32_t dtb_xamot_errors;		/* errors in inactive buffer */
 #ifndef _LP64
-	uint64_t dtb_pad1;			/* pad out to 64 bytes */
+	uint64_t dtb_pad1;
 #endif
-	uint64_t dtb_switched;			/* time of last switch */
-	uint64_t dtb_interval;			/* observed switch interval */
-	uint64_t dtb_pad2[6];			/* pad to avoid false sharing */
 } dtrace_buffer_t;
 
 /*
@@ -936,8 +934,7 @@ typedef struct dtrace_mstate {
  * Access flag used by dtrace_mstate.dtms_access.
  */
 #define	DTRACE_ACCESS_KERNEL	0x1		/* the priv to read kmem */
-#define	DTRACE_ACCESS_PROC	0x2		/* the priv for proc state */
-#define	DTRACE_ACCESS_ARGS	0x4		/* the priv to examine args */
+
 
 /*
  * DTrace Activity
@@ -1112,7 +1109,11 @@ typedef struct dtrace_cred {
  * dtrace_state structure.
  */
 struct dtrace_state {
+#if defined(sun)
 	dev_t dts_dev;				/* device */
+#else
+	struct cdev *dts_dev;			/* device */
+#endif
 	int dts_necbs;				/* total number of ECBs */
 	dtrace_ecb_t **dts_ecbs;		/* array of ECBs */
 	dtrace_epid_t dts_epid;			/* next EPID to allocate */
@@ -1126,7 +1127,11 @@ struct dtrace_state {
 	int dts_nspeculations;			/* number of speculations */
 	int dts_naggregations;			/* number of aggregations */
 	dtrace_aggregation_t **dts_aggregations; /* aggregation array */
+#if defined(sun)
 	vmem_t *dts_aggid_arena;		/* arena for aggregation IDs */
+#else
+	struct unrhdr *dts_aggid_arena;		/* arena for aggregation IDs */
+#endif
 	uint64_t dts_errors;			/* total number of errors */
 	uint32_t dts_speculations_busy;		/* number of spec. busy */
 	uint32_t dts_speculations_unavail;	/* number of spec unavail */
@@ -1134,8 +1139,13 @@ struct dtrace_state {
 	uint32_t dts_dblerrors;			/* errors in ERROR probes */
 	uint32_t dts_reserve;			/* space reserved for END */
 	hrtime_t dts_laststatus;		/* time of last status */
+#if defined(sun)
 	cyclic_id_t dts_cleaner;		/* cleaning cyclic */
 	cyclic_id_t dts_deadman;		/* deadman cyclic */
+#else
+	struct callout dts_cleaner;		/* Cleaning callout. */
+	struct callout dts_deadman;		/* Deadman callout. */
+#endif
 	hrtime_t dts_alive;			/* time last alive */
 	char dts_speculates;			/* boolean: has speculations */
 	char dts_destructive;			/* boolean: has dest. actions */
@@ -1152,7 +1162,7 @@ struct dtrace_provider {
 	dtrace_pops_t dtpv_pops;		/* provider operations */
 	char *dtpv_name;			/* provider name */
 	void *dtpv_arg;				/* provider argument */
-	hrtime_t dtpv_defunct;			/* when made defunct */
+	uint_t dtpv_defunct;			/* boolean: defunct provider */
 	struct dtrace_provider *dtpv_next;	/* next provider */
 };
 
@@ -1251,15 +1261,14 @@ extern greg_t dtrace_getfp(void);
 extern int dtrace_getipl(void);
 extern uintptr_t dtrace_caller(int);
 extern uint32_t dtrace_cas32(uint32_t *, uint32_t, uint32_t);
-extern void *dtrace_casptr(void *, void *, void *);
+extern void *dtrace_casptr(volatile void *, volatile void *, volatile void *);
 extern void dtrace_copyin(uintptr_t, uintptr_t, size_t, volatile uint16_t *);
 extern void dtrace_copyinstr(uintptr_t, uintptr_t, size_t, volatile uint16_t *);
 extern void dtrace_copyout(uintptr_t, uintptr_t, size_t, volatile uint16_t *);
 extern void dtrace_copyoutstr(uintptr_t, uintptr_t, size_t,
     volatile uint16_t *);
 extern void dtrace_getpcstack(pc_t *, int, int, uint32_t *);
-extern ulong_t dtrace_getreg(struct regs *, uint_t);
-extern uint64_t dtrace_getvmreg(uint_t, volatile uint16_t *);
+extern ulong_t dtrace_getreg(struct trapframe *, uint_t);
 extern int dtrace_getstackdepth(int);
 extern void dtrace_getupcstack(uint64_t *, int);
 extern void dtrace_getufpstack(uint64_t *, uint64_t *, int);
@@ -1273,7 +1282,9 @@ extern void dtrace_probe_error(dtrace_state_t *, dtrace_epid_t, int, int,
     int, uintptr_t);
 extern int dtrace_assfail(const char *, const char *, int);
 extern int dtrace_attached(void);
-extern hrtime_t dtrace_gethrestime();
+#if defined(sun)
+extern hrtime_t dtrace_gethrestime(void);
+#endif
 
 #ifdef __sparc
 extern void dtrace_flush_windows(void);

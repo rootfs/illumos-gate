@@ -57,7 +57,6 @@
 #include <sys/arc.h>
 #include <sys/ddt.h>
 #include <sys/zfeature.h>
-#include <zfs_comutil.h>
 #undef ZFS_MAXNAMELEN
 #undef verify
 #include <libzfs.h>
@@ -88,7 +87,6 @@ extern void dump_intent_log(zilog_t *);
 uint64_t *zopt_object = NULL;
 int zopt_objects = 0;
 libzfs_handle_t *g_zfs;
-uint64_t max_inflight = 200;
 
 /*
  * These libumem hooks provide a reasonable set of defaults for the allocator's
@@ -110,17 +108,16 @@ static void
 usage(void)
 {
 	(void) fprintf(stderr,
-	    "Usage: %s [-CumdibcsDvhLXFPA] [-t txg] [-e [-p path...]] "
-	    "[-U config] [-M inflight I/Os] poolname [object...]\n"
-	    "       %s [-divPA] [-e -p path...] [-U config] dataset "
-	    "[object...]\n"
-	    "       %s -m [-LXFPA] [-t txg] [-e [-p path...]] [-U config] "
-	    "poolname [vdev [metaslab...]]\n"
-	    "       %s -R [-A] [-e [-p path...]] poolname "
-	    "vdev:offset:size[:flags]\n"
-	    "       %s -S [-PA] [-e [-p path...]] [-U config] poolname\n"
-	    "       %s -l [-uA] device\n"
-	    "       %s -C [-A] [-U config]\n\n",
+            "Usage: %s [-CumdibcsDvhLXFPA] [-t txg] [-e [-p path...]]"
+            "poolname [object...]\n"
+            "       %s [-divPA] [-e -p path...] dataset [object...]\n"
+            "       %s -m [-LXFPA] [-t txg] [-e [-p path...]]"
+            "poolname [vdev [metaslab...]]\n"
+            "       %s -R [-A] [-e [-p path...]] poolname "
+            "vdev:offset:size[:flags]\n"
+            "       %s -S [-PA] [-e [-p path...]] poolname\n"
+            "       %s -l [-uA] device\n"
+            "       %s -C [-A] [-U config]\n\n",
 	    cmdname, cmdname, cmdname, cmdname, cmdname, cmdname, cmdname);
 
 	(void) fprintf(stderr, "    Dataset name must include at least one "
@@ -162,11 +159,9 @@ usage(void)
 	    "has altroot/not in a cachefile\n");
 	(void) fprintf(stderr, "        -p <path> -- use one or more with "
 	    "-e to specify path to vdev dir\n");
-	(void) fprintf(stderr, "        -P print numbers in parseable form\n");
+	(void) fprintf(stderr, "	-P print numbers in parseable form\n");
 	(void) fprintf(stderr, "        -t <txg> -- highest txg to use when "
 	    "searching for uberblocks\n");
-	(void) fprintf(stderr, "        -M <number of inflight I/Os> -- "
-	    "specify the maximum number of checksumming I/Os [default is 200]");
 	(void) fprintf(stderr, "Specify an option more than once (e.g. -bb) "
 	    "to make only that option verbose\n");
 	(void) fprintf(stderr, "Default is to dump everything non-verbosely\n");
@@ -209,27 +204,6 @@ dump_packed_nvlist(objset_t *os, uint64_t object, void *data, size_t size)
 	dump_nvlist(nv, 8);
 
 	nvlist_free(nv);
-}
-
-/* ARGSUSED */
-static void
-dump_history_offsets(objset_t *os, uint64_t object, void *data, size_t size)
-{
-	spa_history_phys_t *shp = data;
-
-	if (shp == NULL)
-		return;
-
-	(void) printf("\t\tpool_create_len = %llu\n",
-	    (u_longlong_t)shp->sh_pool_create_len);
-	(void) printf("\t\tphys_max_off = %llu\n",
-	    (u_longlong_t)shp->sh_phys_max_off);
-	(void) printf("\t\tbof = %llu\n",
-	    (u_longlong_t)shp->sh_bof);
-	(void) printf("\t\teof = %llu\n",
-	    (u_longlong_t)shp->sh_eof);
-	(void) printf("\t\trecords_lost = %llu\n",
-	    (u_longlong_t)shp->sh_records_lost);
 }
 
 static void
@@ -571,7 +545,7 @@ static void
 dump_metaslab_stats(metaslab_t *msp)
 {
 	char maxbuf[32];
-	space_map_t *sm = msp->ms_map;
+	space_map_t *sm = &msp->ms_map;
 	avl_tree_t *t = sm->sm_pp_root;
 	int free_pct = sm->sm_space * 100 / sm->sm_size;
 
@@ -587,7 +561,7 @@ dump_metaslab(metaslab_t *msp)
 {
 	vdev_t *vd = msp->ms_group->mg_vd;
 	spa_t *spa = vd->vdev_spa;
-	space_map_t *sm = msp->ms_map;
+	space_map_t *sm = &msp->ms_map;
 	space_map_obj_t *smo = &msp->ms_smo;
 	char freebuf[32];
 
@@ -881,22 +855,21 @@ dump_history(spa_t *spa)
 	for (int i = 0; i < num; i++) {
 		uint64_t time, txg, ievent;
 		char *cmd, *intstr;
-		boolean_t printed = B_FALSE;
 
 		if (nvlist_lookup_uint64(events[i], ZPOOL_HIST_TIME,
 		    &time) != 0)
-			goto next;
+			continue;
 		if (nvlist_lookup_string(events[i], ZPOOL_HIST_CMD,
 		    &cmd) != 0) {
 			if (nvlist_lookup_uint64(events[i],
 			    ZPOOL_HIST_INT_EVENT, &ievent) != 0)
-				goto next;
+				continue;
 			verify(nvlist_lookup_uint64(events[i],
 			    ZPOOL_HIST_TXG, &txg) == 0);
 			verify(nvlist_lookup_string(events[i],
 			    ZPOOL_HIST_INT_STR, &intstr) == 0);
-			if (ievent >= ZFS_NUM_LEGACY_HISTORY_EVENTS)
-				goto next;
+			if (ievent >= LOG_END)
+				continue;
 
 			(void) snprintf(internalstr,
 			    sizeof (internalstr),
@@ -909,14 +882,6 @@ dump_history(spa_t *spa)
 		(void) localtime_r(&tsec, &t);
 		(void) strftime(tbuf, sizeof (tbuf), "%F.%T", &t);
 		(void) printf("%s %s\n", tbuf, cmd);
-		printed = B_TRUE;
-
-next:
-		if (dump_opt['h'] > 1) {
-			if (!printed)
-				(void) printf("unrecognized record:\n");
-			dump_nvlist(events[i], 2);
-		}
 	}
 }
 
@@ -1016,7 +981,7 @@ visit_indirect(spa_t *spa, const dnode_phys_t *dnp,
 		arc_buf_t *buf;
 		uint64_t fill = 0;
 
-		err = arc_read(NULL, spa, bp, arc_getbuf_func, &buf,
+		err = arc_read_nolock(NULL, spa, bp, arc_getbuf_func, &buf,
 		    ZIO_PRIORITY_ASYNC_READ, ZIO_FLAG_CANFAIL, &flags, zb);
 		if (err)
 			return (err);
@@ -1493,7 +1458,7 @@ static object_viewer_t *object_viewer[DMU_OT_NUMTYPES + 1] = {
 	dump_zap,		/* other ZAP			*/
 	dump_zap,		/* persistent error log		*/
 	dump_uint8,		/* SPA history			*/
-	dump_history_offsets,	/* SPA history offsets		*/
+	dump_uint64,		/* SPA history offsets		*/
 	dump_zap,		/* Pool properties		*/
 	dump_zap,		/* DSL permissions		*/
 	dump_acl,		/* ZFS ACL			*/
@@ -2034,47 +1999,9 @@ zdb_count_block(zdb_cb_t *zcb, zilog_t *zilog, const blkptr_t *bp,
 	    bp, NULL, NULL, ZIO_FLAG_CANFAIL)), ==, 0);
 }
 
-static void
-zdb_blkptr_done(zio_t *zio)
-{
-	spa_t *spa = zio->io_spa;
-	blkptr_t *bp = zio->io_bp;
-	int ioerr = zio->io_error;
-	zdb_cb_t *zcb = zio->io_private;
-	zbookmark_t *zb = &zio->io_bookmark;
-
-	zio_data_buf_free(zio->io_data, zio->io_size);
-
-	mutex_enter(&spa->spa_scrub_lock);
-	spa->spa_scrub_inflight--;
-	cv_broadcast(&spa->spa_scrub_io_cv);
-
-	if (ioerr && !(zio->io_flags & ZIO_FLAG_SPECULATIVE)) {
-		char blkbuf[BP_SPRINTF_LEN];
-
-		zcb->zcb_haderrors = 1;
-		zcb->zcb_errors[ioerr]++;
-
-		if (dump_opt['b'] >= 2)
-			sprintf_blkptr(blkbuf, bp);
-		else
-			blkbuf[0] = '\0';
-
-		(void) printf("zdb_blkptr_cb: "
-		    "Got error %d reading "
-		    "<%llu, %llu, %lld, %llx> %s -- skipping\n",
-		    ioerr,
-		    (u_longlong_t)zb->zb_objset,
-		    (u_longlong_t)zb->zb_object,
-		    (u_longlong_t)zb->zb_level,
-		    (u_longlong_t)zb->zb_blkid,
-		    blkbuf);
-	}
-	mutex_exit(&spa->spa_scrub_lock);
-}
-
+/* ARGSUSED */
 static int
-zdb_blkptr_cb(spa_t *spa, zilog_t *zilog, const blkptr_t *bp,
+zdb_blkptr_cb(spa_t *spa, zilog_t *zilog, const blkptr_t *bp, arc_buf_t *pbuf,
     const zbookmark_t *zb, const dnode_phys_t *dnp, void *arg)
 {
 	zdb_cb_t *zcb = arg;
@@ -2093,23 +2020,39 @@ zdb_blkptr_cb(spa_t *spa, zilog_t *zilog, const blkptr_t *bp,
 	is_metadata = (BP_GET_LEVEL(bp) != 0 || DMU_OT_IS_METADATA(type));
 
 	if (dump_opt['c'] > 1 || (dump_opt['c'] && is_metadata)) {
+		int ioerr;
 		size_t size = BP_GET_PSIZE(bp);
-		void *data = zio_data_buf_alloc(size);
+		void *data = malloc(size);
 		int flags = ZIO_FLAG_CANFAIL | ZIO_FLAG_SCRUB | ZIO_FLAG_RAW;
 
 		/* If it's an intent log block, failure is expected. */
 		if (zb->zb_level == ZB_ZIL_LEVEL)
 			flags |= ZIO_FLAG_SPECULATIVE;
 
-		mutex_enter(&spa->spa_scrub_lock);
-		while (spa->spa_scrub_inflight > max_inflight)
-			cv_wait(&spa->spa_scrub_io_cv, &spa->spa_scrub_lock);
-		spa->spa_scrub_inflight++;
-		mutex_exit(&spa->spa_scrub_lock);
+		ioerr = zio_wait(zio_read(NULL, spa, bp, data, size,
+		    NULL, NULL, ZIO_PRIORITY_ASYNC_READ, flags, zb));
 
-		zio_nowait(zio_read(NULL, spa, bp, data, size,
-		    zdb_blkptr_done, zcb, ZIO_PRIORITY_ASYNC_READ, flags, zb));
+		free(data);
 
+		if (ioerr && !(flags & ZIO_FLAG_SPECULATIVE)) {
+			zcb->zcb_haderrors = 1;
+			zcb->zcb_errors[ioerr]++;
+
+			if (dump_opt['b'] >= 2)
+				sprintf_blkptr(blkbuf, bp);
+			else
+				blkbuf[0] = '\0';
+
+			(void) printf("zdb_blkptr_cb: "
+			    "Got error %d reading "
+			    "<%llu, %llu, %lld, %llx> %s -- skipping\n",
+			    ioerr,
+			    (u_longlong_t)zb->zb_objset,
+			    (u_longlong_t)zb->zb_object,
+			    (u_longlong_t)zb->zb_level,
+			    (u_longlong_t)zb->zb_blkid,
+			    blkbuf);
+		}
 	}
 
 	zcb->zcb_readfails = 0;
@@ -2216,11 +2159,11 @@ zdb_leak_init(spa_t *spa, zdb_cb_t *zcb)
 			for (int m = 0; m < vd->vdev_ms_count; m++) {
 				metaslab_t *msp = vd->vdev_ms[m];
 				mutex_enter(&msp->ms_lock);
-				space_map_unload(msp->ms_map);
-				VERIFY(space_map_load(msp->ms_map,
+				space_map_unload(&msp->ms_map);
+				VERIFY(space_map_load(&msp->ms_map,
 				    &zdb_space_map_ops, SM_ALLOC, &msp->ms_smo,
 				    spa->spa_meta_objset) == 0);
-				msp->ms_map->sm_ppd = vd;
+				msp->ms_map.sm_ppd = vd;
 				mutex_exit(&msp->ms_lock);
 			}
 		}
@@ -2243,7 +2186,7 @@ zdb_leak_fini(spa_t *spa)
 			for (int m = 0; m < vd->vdev_ms_count; m++) {
 				metaslab_t *msp = vd->vdev_ms[m];
 				mutex_enter(&msp->ms_lock);
-				space_map_unload(msp->ms_map);
+				space_map_unload(&msp->ms_map);
 				mutex_exit(&msp->ms_lock);
 			}
 		}
@@ -2297,8 +2240,10 @@ dump_block_stats(spa_t *spa)
 	 */
 	(void) bpobj_iterate_nofree(&spa->spa_deferred_bpobj,
 	    count_block_cb, &zcb, NULL);
-	(void) bpobj_iterate_nofree(&spa->spa_dsl_pool->dp_free_bpobj,
-	    count_block_cb, &zcb, NULL);
+	if (spa_version(spa) >= SPA_VERSION_DEADLISTS) {
+		(void) bpobj_iterate_nofree(&spa->spa_dsl_pool->dp_free_bpobj,
+		    count_block_cb, &zcb, NULL);
+	}
 	if (spa_feature_is_active(spa,
 	    &spa_feature_table[SPA_FEATURE_ASYNC_DESTROY])) {
 		VERIFY3U(0, ==, bptree_iterate(spa->spa_meta_objset,
@@ -2310,18 +2255,6 @@ dump_block_stats(spa_t *spa)
 		flags |= TRAVERSE_PREFETCH_DATA;
 
 	zcb.zcb_haderrors |= traverse_pool(spa, 0, flags, zdb_blkptr_cb, &zcb);
-
-	/*
-	 * If we've traversed the data blocks then we need to wait for those
-	 * I/Os to complete. We leverage "The Godfather" zio to wait on
-	 * all async I/Os to complete.
-	 */
-	if (dump_opt['c']) {
-		(void) zio_wait(spa->spa_async_zio_root);
-		spa->spa_async_zio_root = zio_root(spa, NULL, NULL,
-		    ZIO_FLAG_CANFAIL | ZIO_FLAG_SPECULATIVE |
-		    ZIO_FLAG_GODFATHER);
-	}
 
 	if (zcb.zcb_haderrors) {
 		(void) printf("\nError counts:\n\n");
@@ -2475,7 +2408,7 @@ typedef struct zdb_ddt_entry {
 /* ARGSUSED */
 static int
 zdb_ddt_add_cb(spa_t *spa, zilog_t *zilog, const blkptr_t *bp,
-    const zbookmark_t *zb, const dnode_phys_t *dnp, void *arg)
+    arc_buf_t *pbuf, const zbookmark_t *zb, const dnode_phys_t *dnp, void *arg)
 {
 	avl_tree_t *t = arg;
 	avl_index_t where;
@@ -3080,7 +3013,7 @@ main(int argc, char **argv)
 
 	dprintf_setup(&argc, argv);
 
-	while ((c = getopt(argc, argv, "bcdhilmM:suCDRSAFLXevp:t:U:P")) != -1) {
+	while ((c = getopt(argc, argv, "bcdhilmsuCDRSAFLXevp:t:U:P")) != -1) {
 		switch (c) {
 		case 'b':
 		case 'c':
@@ -3108,15 +3041,6 @@ main(int argc, char **argv)
 			break;
 		case 'v':
 			verbose++;
-			break;
-		case 'M':
-			max_inflight = strtoull(optarg, NULL, 0);
-			if (max_inflight == 0) {
-				(void) fprintf(stderr, "maximum number "
-				    "of inflight I/Os must be greater "
-				    "than 0\n");
-				usage();
-			}
 			break;
 		case 'p':
 			if (searchdirs == NULL) {

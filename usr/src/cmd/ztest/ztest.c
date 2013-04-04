@@ -22,6 +22,7 @@
  * Copyright (c) 2005, 2010, Oracle and/or its affiliates. All rights reserved.
  * Copyright (c) 2012 by Delphix. All rights reserved.
  * Copyright 2011 Nexenta Systems, Inc.  All rights reserved.
+ * Copyright (c) 2012 Martin Matuska <mm@FreeBSD.org>.  All rights reserved.
  */
 
 /*
@@ -116,11 +117,12 @@
 #include <dlfcn.h>
 #include <ctype.h>
 #include <math.h>
+#include <errno.h>
 #include <sys/fs/zfs.h>
 #include <libnvpair.h>
 
-static int ztest_fd_data = -1;
-static int ztest_fd_rand = -1;
+#define	ZTEST_FD_DATA 3
+#define	ZTEST_FD_RAND 4
 
 typedef struct ztest_shared_hdr {
 	uint64_t	zh_hdr_size;
@@ -711,17 +713,14 @@ process_options(int argc, char **argv)
 	    UINT64_MAX >> 2);
 
 	if (strlen(altdir) > 0) {
-		char *cmd;
-		char *realaltdir;
+		char cmd[MAXNAMELEN];
+		char realaltdir[MAXNAMELEN];
 		char *bin;
 		char *ztest;
 		char *isa;
 		int isalen;
 
-		cmd = umem_alloc(MAXPATHLEN, UMEM_NOFAIL);
-		realaltdir = umem_alloc(MAXPATHLEN, UMEM_NOFAIL);
-
-		VERIFY(NULL != realpath(getexecname(), cmd));
+		(void) realpath(getexecname(), cmd);
 		if (0 != access(altdir, F_OK)) {
 			ztest_dump_core = B_FALSE;
 			fatal(B_TRUE, "invalid alternate ztest path: %s",
@@ -752,9 +751,6 @@ process_options(int argc, char **argv)
 			fatal(B_TRUE, "invalid alternate lib directory %s",
 			    zo->zo_alt_libpath);
 		}
-
-		umem_free(cmd, MAXPATHLEN);
-		umem_free(realaltdir, MAXPATHLEN);
 	}
 }
 
@@ -771,12 +767,10 @@ ztest_random(uint64_t range)
 {
 	uint64_t r;
 
-	ASSERT3S(ztest_fd_rand, >=, 0);
-
 	if (range == 0)
 		return (0);
 
-	if (read(ztest_fd_rand, &r, sizeof (r)) != sizeof (r))
+	if (read(ZTEST_FD_RAND, &r, sizeof (r)) != sizeof (r))
 		fatal(1, "short read from /dev/urandom");
 
 	return (r % range);
@@ -2330,7 +2324,7 @@ ztest_spa_create_destroy(ztest_ds_t *zd, uint64_t id)
 	 */
 	nvroot = make_vdev_root("/dev/bogus", NULL, NULL, 0, 0, 0, 0, 0, 1);
 	VERIFY3U(ENOENT, ==,
-	    spa_create("ztest_bad_file", nvroot, NULL, NULL));
+	    spa_create("ztest_bad_file", nvroot, NULL, NULL, NULL));
 	nvlist_free(nvroot);
 
 	/*
@@ -2338,7 +2332,7 @@ ztest_spa_create_destroy(ztest_ds_t *zd, uint64_t id)
 	 */
 	nvroot = make_vdev_root("/dev/bogus", NULL, NULL, 0, 0, 0, 0, 2, 1);
 	VERIFY3U(ENOENT, ==,
-	    spa_create("ztest_bad_mirror", nvroot, NULL, NULL));
+	    spa_create("ztest_bad_mirror", nvroot, NULL, NULL, NULL));
 	nvlist_free(nvroot);
 
 	/*
@@ -2347,7 +2341,7 @@ ztest_spa_create_destroy(ztest_ds_t *zd, uint64_t id)
 	 */
 	(void) rw_rdlock(&ztest_name_lock);
 	nvroot = make_vdev_root("/dev/bogus", NULL, NULL, 0, 0, 0, 0, 0, 1);
-	VERIFY3U(EEXIST, ==, spa_create(zo->zo_pool, nvroot, NULL, NULL));
+	VERIFY3U(EEXIST, ==, spa_create(zo->zo_pool, nvroot, NULL, NULL, NULL));
 	nvlist_free(nvroot);
 	VERIFY3U(0, ==, spa_open(zo->zo_pool, &spa, FTAG));
 	VERIFY3U(EBUSY, ==, spa_destroy(zo->zo_pool));
@@ -2405,7 +2399,7 @@ ztest_spa_upgrade(ztest_ds_t *zd, uint64_t id)
 	props = fnvlist_alloc();
 	fnvlist_add_uint64(props,
 	    zpool_prop_to_name(ZPOOL_PROP_VERSION), version);
-	VERIFY0(spa_create(name, nvroot, props, NULL));
+	VERIFY0(spa_create(name, nvroot, props, NULL, NULL));
 	fnvlist_free(nvroot);
 	fnvlist_free(props);
 
@@ -3206,7 +3200,8 @@ ztest_snapshot_create(char *osname, uint64_t id)
 	(void) snprintf(snapname, MAXNAMELEN, "%s@%llu", osname,
 	    (u_longlong_t)id);
 
-	error = dmu_objset_snapshot_one(osname, strchr(snapname, '@') + 1);
+	error = dmu_objset_snapshot(osname, strchr(snapname, '@') + 1,
+	    NULL, NULL, B_FALSE, B_FALSE, -1);
 	if (error == ENOSPC) {
 		ztest_record_enospc(FTAG);
 		return (B_FALSE);
@@ -3406,7 +3401,8 @@ ztest_dsl_dataset_promote_busy(ztest_ds_t *zd, uint64_t id)
 	(void) snprintf(clone2name, MAXNAMELEN, "%s/c2_%llu", osname, id);
 	(void) snprintf(snap3name, MAXNAMELEN, "%s@s3_%llu", clone1name, id);
 
-	error = dmu_objset_snapshot_one(osname, strchr(snap1name, '@') + 1);
+	error = dmu_objset_snapshot(osname, strchr(snap1name, '@')+1,
+	    NULL, NULL, B_FALSE, B_FALSE, -1);
 	if (error && error != EEXIST) {
 		if (error == ENOSPC) {
 			ztest_record_enospc(FTAG);
@@ -3429,7 +3425,8 @@ ztest_dsl_dataset_promote_busy(ztest_ds_t *zd, uint64_t id)
 		fatal(0, "dmu_objset_create(%s) = %d", clone1name, error);
 	}
 
-	error = dmu_objset_snapshot_one(clone1name, strchr(snap2name, '@') + 1);
+	error = dmu_objset_snapshot(clone1name, strchr(snap2name, '@')+1,
+	    NULL, NULL, B_FALSE, B_FALSE, -1);
 	if (error && error != EEXIST) {
 		if (error == ENOSPC) {
 			ztest_record_enospc(FTAG);
@@ -3438,7 +3435,8 @@ ztest_dsl_dataset_promote_busy(ztest_ds_t *zd, uint64_t id)
 		fatal(0, "dmu_open_snapshot(%s) = %d", snap2name, error);
 	}
 
-	error = dmu_objset_snapshot_one(clone1name, strchr(snap3name, '@') + 1);
+	error = dmu_objset_snapshot(clone1name, strchr(snap3name, '@')+1,
+	    NULL, NULL, B_FALSE, B_FALSE, -1);
 	if (error && error != EEXIST) {
 		if (error == ENOSPC) {
 			ztest_record_enospc(FTAG);
@@ -4626,7 +4624,8 @@ ztest_dmu_snapshot_hold(ztest_ds_t *zd, uint64_t id)
 	 * Create snapshot, clone it, mark snap for deferred destroy,
 	 * destroy clone, verify snap was also destroyed.
 	 */
-	error = dmu_objset_snapshot_one(osname, snapname);
+	error = dmu_objset_snapshot(osname, snapname, NULL, NULL, FALSE,
+	    FALSE, -1);
 	if (error) {
 		if (error == ENOSPC) {
 			ztest_record_enospc("dmu_objset_snapshot");
@@ -4668,7 +4667,8 @@ ztest_dmu_snapshot_hold(ztest_ds_t *zd, uint64_t id)
 	 * destroy a held snapshot, mark for deferred destroy,
 	 * release hold, verify snapshot was destroyed.
 	 */
-	error = dmu_objset_snapshot_one(osname, snapname);
+	error = dmu_objset_snapshot(osname, snapname, NULL, NULL, FALSE,
+	    FALSE, -1);
 	if (error) {
 		if (error == ENOSPC) {
 			ztest_record_enospc("dmu_objset_snapshot");
@@ -4716,7 +4716,7 @@ ztest_fault_inject(ztest_ds_t *zd, uint64_t id)
 	int fd;
 	uint64_t offset;
 	uint64_t leaves;
-	uint64_t bad = 0x1990c0ffeedecade;
+	uint64_t bad = 0x1990c0ffeedecadeULL;
 	uint64_t top, leaf;
 	char path0[MAXPATHLEN];
 	char pathrand[MAXPATHLEN];
@@ -4836,18 +4836,7 @@ ztest_fault_inject(ztest_ds_t *zd, uint64_t id)
 			if (islog)
 				(void) rw_unlock(&ztest_name_lock);
 		} else {
-			/*
-			 * Ideally we would like to be able to randomly
-			 * call vdev_[on|off]line without holding locks
-			 * to force unpredictable failures but the side
-			 * effects of vdev_[on|off]line prevent us from
-			 * doing so. We grab the ztest_vdev_lock here to
-			 * prevent a race between injection testing and
-			 * aux_vdev removal.
-			 */
-			VERIFY(mutex_lock(&ztest_vdev_lock) == 0);
 			(void) vdev_online(spa, guid0, 0, NULL);
-			VERIFY(mutex_unlock(&ztest_vdev_lock) == 0);
 		}
 	}
 
@@ -5102,7 +5091,7 @@ ztest_run_zdb(char *pool)
 	int isalen;
 	FILE *fp;
 
-	(void) realpath(getexecname(), zdb);
+	strlcpy(zdb, "/usr/bin/ztest", sizeof(zdb));
 
 	/* zdb lives in /usr/sbin, while ztest lives in /usr/bin */
 	bin = strstr(zdb, "/usr/bin/");
@@ -5125,6 +5114,7 @@ ztest_run_zdb(char *pool)
 		(void) printf("Executing %s\n", strstr(zdb, "zdb "));
 
 	fp = popen(zdb, "r");
+	assert(fp != NULL);
 
 	while (fgets(zbuf, sizeof (zbuf), fp) != NULL)
 		if (ztest_opts.zo_verbose >= 3)
@@ -5782,7 +5772,8 @@ ztest_init(ztest_shared_t *zs)
 		    spa_feature_table[i].fi_uname);
 		VERIFY3U(0, ==, nvlist_add_uint64(props, buf, 0));
 	}
-	VERIFY3U(0, ==, spa_create(ztest_opts.zo_pool, nvroot, props, NULL));
+	VERIFY3U(0, ==, spa_create(ztest_opts.zo_pool, nvroot, props,
+	    NULL, NULL));
 	nvlist_free(nvroot);
 
 	VERIFY3U(0, ==, spa_open(ztest_opts.zo_pool, &spa, FTAG));
@@ -5804,15 +5795,28 @@ ztest_init(ztest_shared_t *zs)
 }
 
 static void
-setup_data_fd(void)
+setup_fds(void)
 {
-	static char ztest_name_data[] = "/tmp/ztest.data.XXXXXX";
+	int fd;
+#ifdef illumos
 
-	ztest_fd_data = mkstemp(ztest_name_data);
-	ASSERT3S(ztest_fd_data, >=, 0);
-	(void) unlink(ztest_name_data);
+	char *tmp = tempnam(NULL, NULL);
+	fd = open(tmp, O_RDWR | O_CREAT, 0700);
+	ASSERT3U(fd, ==, ZTEST_FD_DATA);
+	(void) unlink(tmp);
+	free(tmp);
+#else
+	char tmp[MAXPATHLEN];
+
+	strlcpy(tmp, ztest_opts.zo_dir, MAXPATHLEN);
+	strlcat(tmp, "/ztest.XXXXXX", MAXPATHLEN);
+	fd = mkstemp(tmp);
+	ASSERT3U(fd, ==, ZTEST_FD_DATA);
+#endif
+
+	fd = open("/dev/urandom", O_RDONLY);
+	ASSERT3U(fd, ==, ZTEST_FD_RAND);
 }
-
 
 static int
 shared_data_size(ztest_shared_hdr_t *hdr)
@@ -5834,11 +5838,15 @@ setup_hdr(void)
 	int size;
 	ztest_shared_hdr_t *hdr;
 
+#ifndef illumos
+	pwrite(ZTEST_FD_DATA, "", 1, 0);
+#endif
+
 	hdr = (void *)mmap(0, P2ROUNDUP(sizeof (*hdr), getpagesize()),
-	    PROT_READ | PROT_WRITE, MAP_SHARED, ztest_fd_data, 0);
+	    PROT_READ | PROT_WRITE, MAP_SHARED, ZTEST_FD_DATA, 0);
 	ASSERT(hdr != MAP_FAILED);
 
-	VERIFY3U(0, ==, ftruncate(ztest_fd_data, sizeof (ztest_shared_hdr_t)));
+	VERIFY3U(0, ==, ftruncate(ZTEST_FD_DATA, sizeof (ztest_shared_hdr_t)));
 
 	hdr->zh_hdr_size = sizeof (ztest_shared_hdr_t);
 	hdr->zh_opts_size = sizeof (ztest_shared_opts_t);
@@ -5849,7 +5857,7 @@ setup_hdr(void)
 	hdr->zh_ds_count = ztest_opts.zo_datasets;
 
 	size = shared_data_size(hdr);
-	VERIFY3U(0, ==, ftruncate(ztest_fd_data, size));
+	VERIFY3U(0, ==, ftruncate(ZTEST_FD_DATA, size));
 
 	(void) munmap((caddr_t)hdr, P2ROUNDUP(sizeof (*hdr), getpagesize()));
 }
@@ -5862,14 +5870,14 @@ setup_data(void)
 	uint8_t *buf;
 
 	hdr = (void *)mmap(0, P2ROUNDUP(sizeof (*hdr), getpagesize()),
-	    PROT_READ, MAP_SHARED, ztest_fd_data, 0);
+	    PROT_READ, MAP_SHARED, ZTEST_FD_DATA, 0);
 	ASSERT(hdr != MAP_FAILED);
 
 	size = shared_data_size(hdr);
 
 	(void) munmap((caddr_t)hdr, P2ROUNDUP(sizeof (*hdr), getpagesize()));
 	hdr = ztest_shared_hdr = (void *)mmap(0, P2ROUNDUP(size, getpagesize()),
-	    PROT_READ | PROT_WRITE, MAP_SHARED, ztest_fd_data, 0);
+	    PROT_READ | PROT_WRITE, MAP_SHARED, ZTEST_FD_DATA, 0);
 	ASSERT(hdr != MAP_FAILED);
 	buf = (uint8_t *)hdr;
 
@@ -5888,13 +5896,12 @@ exec_child(char *cmd, char *libpath, boolean_t ignorekill, int *statusp)
 {
 	pid_t pid;
 	int status;
-	char *cmdbuf = NULL;
+	char cmdbuf[MAXPATHLEN];
 
 	pid = fork();
 
 	if (cmd == NULL) {
-		cmdbuf = umem_alloc(MAXPATHLEN, UMEM_NOFAIL);
-		(void) strlcpy(cmdbuf, getexecname(), MAXPATHLEN);
+		(void) strlcpy(cmdbuf, getexecname(), sizeof (cmdbuf));
 		cmd = cmdbuf;
 	}
 
@@ -5903,27 +5910,19 @@ exec_child(char *cmd, char *libpath, boolean_t ignorekill, int *statusp)
 
 	if (pid == 0) {	/* child */
 		char *emptyargv[2] = { cmd, NULL };
-		char fd_data_str[12];
 
 		struct rlimit rl = { 1024, 1024 };
 		(void) setrlimit(RLIMIT_NOFILE, &rl);
-
-		(void) close(ztest_fd_rand);
-		VERIFY3U(11, >=,
-		    snprintf(fd_data_str, 12, "%d", ztest_fd_data));
-		VERIFY0(setenv("ZTEST_FD_DATA", fd_data_str, 1));
-
 		(void) enable_extended_FILE_stdio(-1, -1);
 		if (libpath != NULL)
 			VERIFY(0 == setenv("LD_LIBRARY_PATH", libpath, 1));
+#ifdef illumos
 		(void) execv(cmd, emptyargv);
+#else
+		(void) execvp(cmd, emptyargv);
+#endif
 		ztest_dump_core = B_FALSE;
 		fatal(B_TRUE, "exec failed: %s", cmd);
-	}
-
-	if (cmdbuf != NULL) {
-		umem_free(cmdbuf, MAXPATHLEN);
-		cmd = NULL;
 	}
 
 	while (waitpid(pid, &status, 0) != pid)
@@ -5990,41 +5989,39 @@ main(int argc, char **argv)
 	char timebuf[100];
 	char numbuf[6];
 	spa_t *spa;
-	char *cmd;
+	char cmd[MAXNAMELEN];
 	boolean_t hasalt;
-	char *fd_data_str = getenv("ZTEST_FD_DATA");
+
+	boolean_t ischild = (0 == lseek(ZTEST_FD_DATA, 0, SEEK_CUR));
+	ASSERT(ischild || errno == EBADF);
 
 	(void) setvbuf(stdout, NULL, _IOLBF, 0);
 
 	dprintf_setup(&argc, argv);
 
-	ztest_fd_rand = open("/dev/urandom", O_RDONLY);
-	ASSERT3S(ztest_fd_rand, >=, 0);
-
-	if (!fd_data_str) {
+	if (!ischild) {
 		process_options(argc, argv);
 
-		setup_data_fd();
+		setup_fds();
 		setup_hdr();
 		setup_data();
 		bcopy(&ztest_opts, ztest_shared_opts,
 		    sizeof (*ztest_shared_opts));
 	} else {
-		ztest_fd_data = atoi(fd_data_str);
 		setup_data();
 		bcopy(ztest_shared_opts, &ztest_opts, sizeof (ztest_opts));
 	}
 	ASSERT3U(ztest_opts.zo_datasets, ==, ztest_shared_hdr->zh_ds_count);
 
 	/* Override location of zpool.cache */
-	VERIFY3U(asprintf((char **)&spa_config_path, "%s/zpool.cache",
-	    ztest_opts.zo_dir), !=, -1);
+	(void) asprintf((char **)&spa_config_path, "%s/zpool.cache",
+	    ztest_opts.zo_dir);
 
 	ztest_ds = umem_alloc(ztest_opts.zo_datasets * sizeof (ztest_ds_t),
 	    UMEM_NOFAIL);
 	zs = ztest_shared;
 
-	if (fd_data_str) {
+	if (ischild) {
 		metaslab_gang_bang = ztest_opts.zo_metaslab_gang_bang;
 		metaslab_df_alloc_threshold =
 		    zs->zs_metaslab_df_alloc_threshold;
@@ -6047,8 +6044,7 @@ main(int argc, char **argv)
 		    (u_longlong_t)ztest_opts.zo_time);
 	}
 
-	cmd = umem_alloc(MAXNAMELEN, UMEM_NOFAIL);
-	(void) strlcpy(cmd, getexecname(), MAXNAMELEN);
+	(void) strlcpy(cmd, getexecname(), sizeof (cmd));
 
 	zs->zs_do_init = B_TRUE;
 	if (strlen(ztest_opts.zo_alt_ztest) != 0) {
@@ -6188,8 +6184,6 @@ main(int argc, char **argv)
 		(void) printf("%d killed, %d completed, %.0f%% kill rate\n",
 		    kills, iters - kills, (100.0 * kills) / MAX(1, iters));
 	}
-
-	umem_free(cmd, MAXNAMELEN);
 
 	return (0);
 }

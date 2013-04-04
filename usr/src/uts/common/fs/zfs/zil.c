@@ -69,6 +69,10 @@
  * This global ZIL switch affects all pools
  */
 int zil_replay_disable = 0;    /* disable intent logging replay */
+SYSCTL_DECL(_vfs_zfs);
+TUNABLE_INT("vfs.zfs.zil_replay_disable", &zil_replay_disable);
+SYSCTL_INT(_vfs_zfs, OID_AUTO, zil_replay_disable, CTLFLAG_RW,
+    &zil_replay_disable, 0, "Disable intent logging replay");
 
 /*
  * Tunable parameter for debugging or performance analysis.  Setting
@@ -76,6 +80,9 @@ int zil_replay_disable = 0;    /* disable intent logging replay */
  * out-of-order write cache is enabled.
  */
 boolean_t zfs_nocacheflush = B_FALSE;
+TUNABLE_INT("vfs.zfs.cache_flush_disable", &zfs_nocacheflush);
+SYSCTL_INT(_vfs_zfs, OID_AUTO, cache_flush_disable, CTLFLAG_RDTUN,
+    &zfs_nocacheflush, 0, "Disable cache flush");
 
 static kmem_cache_t *zil_lwb_cache;
 
@@ -190,7 +197,7 @@ zil_read_log_block(zilog_t *zilog, const blkptr_t *bp, blkptr_t *nbp, void *dst,
 	SET_BOOKMARK(&zb, bp->blk_cksum.zc_word[ZIL_ZC_OBJSET],
 	    ZB_ZIL_OBJECT, ZB_ZIL_LEVEL, bp->blk_cksum.zc_word[ZIL_ZC_SEQ]);
 
-	error = arc_read(NULL, zilog->zl_spa, bp, arc_getbuf_func, &abuf,
+	error = dsl_read_nolock(NULL, zilog->zl_spa, bp, arc_getbuf_func, &abuf,
 	    ZIO_PRIORITY_SYNC_READ, zio_flags, &aflags, &zb);
 
 	if (error == 0) {
@@ -266,7 +273,7 @@ zil_read_log_data(zilog_t *zilog, const lr_write_t *lr, void *wbuf)
 	SET_BOOKMARK(&zb, dmu_objset_id(zilog->zl_os), lr->lr_foid,
 	    ZB_ZIL_LEVEL, lr->lr_offset / BP_GET_LSIZE(bp));
 
-	error = arc_read(NULL, zilog->zl_spa, bp, arc_getbuf_func, &abuf,
+	error = arc_read_nolock(NULL, zilog->zl_spa, bp, arc_getbuf_func, &abuf,
 	    ZIO_PRIORITY_SYNC_READ, zio_flags, &aflags, &zb);
 
 	if (error == 0) {
@@ -1344,7 +1351,7 @@ zil_clean(zilog_t *zilog, uint64_t synced_txg)
 	 * created a bad performance problem.
 	 */
 	if (taskq_dispatch(zilog->zl_clean_taskq,
-	    (void (*)(void *))zil_itxg_clean, clean_me, TQ_NOSLEEP) == NULL)
+	    (void (*)(void *))zil_itxg_clean, clean_me, TQ_NOSLEEP) == 0)
 		zil_itxg_clean(clean_me);
 }
 
@@ -1983,6 +1990,7 @@ zil_replay(objset_t *os, void *arg, zil_replay_func_t *replay_func[TX_MAX_TYPE])
 		zil_destroy(zilog, B_TRUE);
 		return;
 	}
+	//printf("ZFS: Replaying ZIL on %s...\n", os->os->os_spa->spa_name);
 
 	zr.zr_replay = replay_func;
 	zr.zr_arg = arg;
@@ -2004,6 +2012,7 @@ zil_replay(objset_t *os, void *arg, zil_replay_func_t *replay_func[TX_MAX_TYPE])
 	zil_destroy(zilog, B_FALSE);
 	txg_wait_synced(zilog->zl_dmu_pool, zilog->zl_destroy_txg);
 	zilog->zl_replay = B_FALSE;
+	//printf("ZFS: Replay of ZIL on %s finished.\n", os->os->os_spa->spa_name);
 }
 
 boolean_t

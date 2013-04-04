@@ -21,11 +21,13 @@
 
 /*
  * Copyright (c) 2005, 2010, Oracle and/or its affiliates. All rights reserved.
- * Copyright (c) 2012 by Delphix. All rights reserved.
+ * Copyright (c) 2011 Pawel Jakub Dawidek <pawel@dawidek.net>.
+ * All rights reserved.
+ * Copyright (c) 2011 by Delphix. All rights reserved.
  */
 
-#ifndef	_LIBZFS_IMPL_H
-#define	_LIBZFS_IMPL_H
+#ifndef	_LIBFS_IMPL_H
+#define	_LIBFS_IMPL_H
 
 #include <sys/dmu.h>
 #include <sys/fs/zfs.h>
@@ -33,12 +35,11 @@
 #include <sys/spa.h>
 #include <sys/nvpair.h>
 
+#include <libshare.h>
 #include <libuutil.h>
 #include <libzfs.h>
-#include <libshare.h>
-#include <libzfs_core.h>
 
-#include <fm/libtopo.h>
+#include "zfs_ioctl_compat.h"
 
 #ifdef	__cplusplus
 extern "C" {
@@ -68,6 +69,7 @@ struct libzfs_handle {
 	int libzfs_desc_active;
 	char libzfs_action[1024];
 	char libzfs_desc[1024];
+	char *libzfs_log_str;
 	int libzfs_printerr;
 	int libzfs_storeerr; /* stuff error messages into buffer */
 	void *libzfs_sharehdl; /* libshare handle */
@@ -75,7 +77,6 @@ struct libzfs_handle {
 	boolean_t libzfs_mnttab_enable;
 	avl_tree_t libzfs_mnttab_cache;
 	int libzfs_pool_iter;
-	topo_hdl_t *libzfs_topo_hdl;
 	libzfs_fru_t **libzfs_fru_hash;
 	libzfs_fru_t *libzfs_fru_list;
 	char libzfs_chassis_id[256];
@@ -149,7 +150,7 @@ int zpool_standard_error_fmt(libzfs_handle_t *, int, const char *, ...);
 int get_dependents(libzfs_handle_t *, boolean_t, const char *, char ***,
     size_t *);
 zfs_handle_t *make_dataset_handle_zc(libzfs_handle_t *, zfs_cmd_t *);
-
+zfs_handle_t *make_dataset_simple_handle_zc(zfs_handle_t *, zfs_cmd_t *);
 
 int zprop_parse_value(libzfs_handle_t *, nvpair_t *, int, zfs_type_t,
     nvlist_t *, char **, uint64_t *, const char *);
@@ -161,7 +162,11 @@ int zprop_expand_list(libzfs_handle_t *hdl, zprop_list_t **plp,
  * on each change node regardless of whether or not it is currently
  * mounted.
  */
-#define	CL_GATHER_MOUNT_ALWAYS	1
+#define	CL_GATHER_MOUNT_ALWAYS	0x01
+/*
+ * Use this changelist_gather() flag to prevent unmounting of file systems.
+ */
+#define	CL_GATHER_DONT_UNMOUNT	0x02
 
 typedef struct prop_changelist prop_changelist_t;
 
@@ -209,8 +214,46 @@ extern int zfs_unshare_proto(zfs_handle_t *,
 
 extern void libzfs_fru_clear(libzfs_handle_t *, boolean_t);
 
+#ifndef sun
+static int zfs_kernel_version = 0;
+
+/*
+ * This is FreeBSD version of ioctl, because Solaris' ioctl() updates
+ * zc_nvlist_dst_size even if an error is returned, on FreeBSD if an
+ * error is returned zc_nvlist_dst_size won't be updated.
+ */
+static __inline int
+zcmd_ioctl(int fd, unsigned long cmd, zfs_cmd_t *zc)
+{
+	size_t oldsize, zfs_kernel_version_size;
+	int version, ret, cflag = ZFS_CMD_COMPAT_NONE;
+
+	zfs_kernel_version_size = sizeof(zfs_kernel_version);
+	if (zfs_kernel_version == 0) {
+		sysctlbyname("vfs.zfs.version.spa", &zfs_kernel_version,
+		    &zfs_kernel_version_size, NULL, 0);
+	}
+
+	if (zfs_kernel_version == SPA_VERSION_15 ||
+	    zfs_kernel_version == SPA_VERSION_14 ||
+	    zfs_kernel_version == SPA_VERSION_13)
+		cflag = ZFS_CMD_COMPAT_V15;
+
+	oldsize = zc->zc_nvlist_dst_size;
+	ret = zcmd_ioctl_compat(fd, cmd, zc, cflag);
+
+	if (ret == 0 && oldsize < zc->zc_nvlist_dst_size) {
+		ret = -1;
+		errno = ENOMEM;
+	}
+
+	return (ret);
+}
+#define	ioctl(fd, cmd, zc)	zcmd_ioctl((fd), (cmd), (zc))
+#endif	/* !sun */
+
 #ifdef	__cplusplus
 }
 #endif
 
-#endif	/* _LIBZFS_IMPL_H */
+#endif	/* _LIBFS_IMPL_H */

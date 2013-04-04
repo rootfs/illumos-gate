@@ -20,13 +20,14 @@
  */
 /*
  * Copyright (c) 2005, 2010, Oracle and/or its affiliates. All rights reserved.
- * Copyright (c) 2012 by Delphix. All rights reserved.
  */
 
 #ifndef	_SYS_REFCOUNT_H
 #define	_SYS_REFCOUNT_H
 
-#include <sys/inttypes.h>
+#include <sys/cdefs.h>
+#include <sys/types.h>
+#include_next <sys/refcount.h>
 #include <sys/list.h>
 #include <sys/zfs_context.h>
 
@@ -53,8 +54,8 @@ typedef struct refcount {
 	kmutex_t rc_mtx;
 	list_t rc_list;
 	list_t rc_removed;
-	uint64_t rc_count;
-	uint64_t rc_removed_count;
+	int64_t rc_count;
+	int64_t rc_removed_count;
 } refcount_t;
 
 /* Note: refcount_t must be initialized with refcount_create() */
@@ -70,7 +71,7 @@ int64_t refcount_add_many(refcount_t *rc, uint64_t number, void *holder_tag);
 int64_t refcount_remove_many(refcount_t *rc, uint64_t number, void *holder_tag);
 void refcount_transfer(refcount_t *dst, refcount_t *src);
 
-void refcount_init(void);
+void refcount_sysinit(void);
 void refcount_fini(void);
 
 #else	/* ZFS_DEBUG */
@@ -96,7 +97,7 @@ typedef struct refcount {
 	atomic_add_64(&(dst)->rc_count, __tmp); \
 }
 
-#define	refcount_init()
+#define	refcount_sysinit()
 #define	refcount_fini()
 
 #endif	/* ZFS_DEBUG */

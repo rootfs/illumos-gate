@@ -21,7 +21,6 @@
 /*
  * Copyright (c) 2005, 2010, Oracle and/or its affiliates. All rights reserved.
  * Copyright (c) 2012 by Delphix. All rights reserved.
- * Copyright (c) 2011 Nexenta Systems, Inc. All rights reserved.
  */
 
 #include <sys/zfs_context.h>
@@ -36,6 +35,13 @@
 #include <sys/dmu_objset.h>
 #include <sys/arc.h>
 #include <sys/ddt.h>
+
+SYSCTL_DECL(_vfs_zfs);
+SYSCTL_NODE(_vfs_zfs, OID_AUTO, zio, CTLFLAG_RW, 0, "ZFS ZIO");
+static int zio_use_uma = 0;
+TUNABLE_INT("vfs.zfs.zio.use_uma", &zio_use_uma);
+SYSCTL_INT(_vfs_zfs_zio, OID_AUTO, use_uma, CTLFLAG_RDTUN, &zio_use_uma, 0,
+    "Use uma(9) for ZIO allocations");
 
 /*
  * ==========================================================================
@@ -95,8 +101,17 @@ extern int zfs_mg_alloc_failures;
  * regular blocks are not deferred.
  */
 int zfs_sync_pass_deferred_free = 2; /* defer frees starting in this pass */
+TUNABLE_INT("vfs.zfs.sync_pass_deferred_free", &zfs_sync_pass_deferred_free);
+SYSCTL_INT(_vfs_zfs, OID_AUTO, sync_pass_deferred_free, CTLFLAG_RDTUN,
+    &zfs_sync_pass_deferred_free, 0, "defer frees starting in this pass");
 int zfs_sync_pass_dont_compress = 5; /* don't compress starting in this pass */
+TUNABLE_INT("vfs.zfs.sync_pass_dont_compress", &zfs_sync_pass_dont_compress);
+SYSCTL_INT(_vfs_zfs, OID_AUTO, sync_pass_dont_compress, CTLFLAG_RDTUN,
+    &zfs_sync_pass_dont_compress, 0, "don't compress starting in this pass");
 int zfs_sync_pass_rewrite = 2; /* rewrite new bps starting in this pass */
+TUNABLE_INT("vfs.zfs.sync_pass_rewrite", &zfs_sync_pass_rewrite);
+SYSCTL_INT(_vfs_zfs, OID_AUTO, sync_pass_rewrite, CTLFLAG_RDTUN,
+    &zfs_sync_pass_rewrite, 0, "rewrite new bps starting in this pass");
 
 /*
  * An allocating zio is one that either currently has the DVA allocate
@@ -116,11 +131,6 @@ void
 zio_init(void)
 {
 	size_t c;
-	vmem_t *data_alloc_arena = NULL;
-
-#ifdef _KERNEL
-	data_alloc_arena = zio_alloc_arena;
-#endif
 	zio_cache = kmem_cache_create("zio_cache",
 	    sizeof (zio_t), 0, NULL, NULL, NULL, NULL, NULL, 0);
 	zio_link_cache = kmem_cache_create("zio_link_cache",
@@ -136,11 +146,12 @@ zio_init(void)
 		size_t size = (c + 1) << SPA_MINBLOCKSHIFT;
 		size_t p2 = size;
 		size_t align = 0;
-		size_t cflags = (size > zio_buf_debug_limit) ? KMC_NODEBUG : 0;
+		size_t cflags = (size > zio_buf_debug_limit) ? (KMC_NODEBUG|KMC_NOTOUCH) : 0;
 
 		while (p2 & (p2 - 1))
 			p2 &= p2 - 1;
 
+#ifdef illumos
 #ifndef _KERNEL
 		/*
 		 * If we are using watchpoints, put each buffer on its own page,
@@ -151,6 +162,7 @@ zio_init(void)
 		if (arc_watch && !IS_P2ALIGNED(size, PAGESIZE))
 			continue;
 #endif
+#endif /* illumos */
 		if (size <= 4 * SPA_MINBLOCKSIZE) {
 			align = SPA_MINBLOCKSIZE;
 		} else if (IS_P2ALIGNED(size, PAGESIZE)) {
@@ -172,7 +184,7 @@ zio_init(void)
 			 */
 			(void) sprintf(name, "zio_data_buf_%lu", (ulong_t)size);
 			zio_data_buf_cache[c] = kmem_cache_create(name, size,
-			    align, NULL, NULL, NULL, NULL, data_alloc_arena,
+			    align, NULL, NULL, NULL, NULL, NULL,
 			    cflags | KMC_NOTOUCH);
 		}
 	}
@@ -191,7 +203,10 @@ zio_init(void)
 	 * The zio write taskqs have 1 thread per cpu, allow 1/2 of the taskqs
 	 * to fail 3 times per txg or 8 failures, whichever is greater.
 	 */
-	zfs_mg_alloc_failures = MAX((3 * max_ncpus / 2), 8);
+	if (zfs_mg_alloc_failures == 0)
+		zfs_mg_alloc_failures = MAX((3 * max_ncpus / 2), 8);
+	else if (zfs_mg_alloc_failures < 8)
+		zfs_mg_alloc_failures = 8;
 
 	zio_inject_init();
 }
@@ -242,7 +257,10 @@ zio_buf_alloc(size_t size)
 
 	ASSERT(c < SPA_MAXBLOCKSIZE >> SPA_MINBLOCKSHIFT);
 
-	return (kmem_cache_alloc(zio_buf_cache[c], KM_PUSHPAGE));
+	if (zio_use_uma)
+		return (kmem_cache_alloc(zio_buf_cache[c], KM_PUSHPAGE));
+	else
+		return (kmem_alloc(size, KM_SLEEP));
 }
 
 /*
@@ -258,7 +276,10 @@ zio_data_buf_alloc(size_t size)
 
 	ASSERT(c < SPA_MAXBLOCKSIZE >> SPA_MINBLOCKSHIFT);
 
-	return (kmem_cache_alloc(zio_data_buf_cache[c], KM_PUSHPAGE));
+	if (zio_use_uma)
+		return (kmem_cache_alloc(zio_data_buf_cache[c], KM_PUSHPAGE));
+	else
+		return (kmem_alloc(size, KM_SLEEP | KM_NODEBUG));
 }
 
 void
@@ -268,7 +289,10 @@ zio_buf_free(void *buf, size_t size)
 
 	ASSERT(c < SPA_MAXBLOCKSIZE >> SPA_MINBLOCKSHIFT);
 
-	kmem_cache_free(zio_buf_cache[c], buf);
+	if (zio_use_uma)
+		kmem_cache_free(zio_buf_cache[c], buf);
+	else
+		kmem_free(buf, size);
 }
 
 void
@@ -278,7 +302,10 @@ zio_data_buf_free(void *buf, size_t size)
 
 	ASSERT(c < SPA_MAXBLOCKSIZE >> SPA_MINBLOCKSHIFT);
 
-	kmem_cache_free(zio_data_buf_cache[c], buf);
+	if (zio_use_uma)
+		kmem_cache_free(zio_data_buf_cache[c], buf);
+	else
+		kmem_free(buf, size);
 }
 
 /*
@@ -1111,7 +1138,9 @@ zio_taskq_dispatch(zio_t *zio, enum zio_taskq_type q, boolean_t cutinline)
 {
 	spa_t *spa = zio->io_spa;
 	zio_type_t t = zio->io_type;
-	int flags = (cutinline ? TQ_FRONT : 0);
+	int flags = TQ_SLEEP | (cutinline ? TQ_FRONT : 0);
+
+	ASSERT(q == ZIO_TASKQ_ISSUE || q == ZIO_TASKQ_INTERRUPT);
 
 	/*
 	 * If we're a config writer or a probe, the normal issue and
@@ -1135,15 +1164,13 @@ zio_taskq_dispatch(zio_t *zio, enum zio_taskq_type q, boolean_t cutinline)
 		q++;
 
 	ASSERT3U(q, <, ZIO_TASKQ_TYPES);
-
-	/*
-	 * NB: We are assuming that the zio can only be dispatched
-	 * to a single taskq at a time.  It would be a grievous error
-	 * to dispatch the zio to another taskq at the same time.
-	 */
-	ASSERT(zio->io_tqent.tqent_next == NULL);
-	taskq_dispatch_ent(spa->spa_zio_taskq[t][q],
-	    (task_func_t *)zio_execute, zio, flags, &zio->io_tqent);
+#ifdef _KERNEL
+	(void) taskq_dispatch_safe(spa->spa_zio_taskq[t][q],
+	    (task_func_t *)zio_execute, zio, flags, &zio->io_task);
+#else
+	(void) taskq_dispatch(spa->spa_zio_taskq[t][q],
+	    (task_func_t *)zio_execute, zio, flags);
+#endif
 }
 
 static boolean_t
@@ -1994,7 +2021,7 @@ zio_ddt_collision(zio_t *zio, ddt_t *ddt, ddt_entry_t *dde)
 
 			ddt_exit(ddt);
 
-			error = arc_read(NULL, spa, &blk,
+			error = arc_read_nolock(NULL, spa, &blk,
 			    arc_getbuf_func, &abuf, ZIO_PRIORITY_SYNC_READ,
 			    ZIO_FLAG_CANFAIL | ZIO_FLAG_SPECULATIVE,
 			    &aflags, &zio->io_bookmark);
@@ -3016,11 +3043,16 @@ zio_done(zio_t *zio)
 			 * Reexecution is potentially a huge amount of work.
 			 * Hand it off to the otherwise-unused claim taskq.
 			 */
-			ASSERT(zio->io_tqent.tqent_next == NULL);
-			taskq_dispatch_ent(
+#ifdef _KERNEL
+			(void) taskq_dispatch_safe(
 			    spa->spa_zio_taskq[ZIO_TYPE_CLAIM][ZIO_TASKQ_ISSUE],
-			    (task_func_t *)zio_reexecute, zio, 0,
-			    &zio->io_tqent);
+			    (task_func_t *)zio_reexecute, zio, TQ_SLEEP,
+			    &zio->io_task);
+#else
+			(void) taskq_dispatch(
+			    spa->spa_zio_taskq[ZIO_TYPE_CLAIM][ZIO_TASKQ_ISSUE],
+			    (task_func_t *)zio_reexecute, zio, TQ_SLEEP);
+#endif
 		}
 		return (ZIO_PIPELINE_STOP);
 	}

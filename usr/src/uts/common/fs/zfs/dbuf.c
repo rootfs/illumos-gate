@@ -258,7 +258,7 @@ dbuf_init(void)
 	 * with an average 4K block size.  The table will take up
 	 * totalmem*sizeof(void*)/4K (i.e. 2MB/GB with 8-byte pointers).
 	 */
-	while (hsize * 4096 < physmem * PAGESIZE)
+	while (hsize * 4096 < (uint64_t)physmem * PAGESIZE)
 		hsize <<= 1;
 
 retry:
@@ -513,6 +513,7 @@ dbuf_read_impl(dmu_buf_impl_t *db, zio_t *zio, uint32_t *flags)
 	spa_t *spa;
 	zbookmark_t zb;
 	uint32_t aflags = ARC_NOWAIT;
+	arc_buf_t *pbuf;
 
 	DB_DNODE_ENTER(db);
 	dn = DB_DNODE(db);
@@ -574,8 +575,14 @@ dbuf_read_impl(dmu_buf_impl_t *db, zio_t *zio, uint32_t *flags)
 	    db->db.db_object, db->db_level, db->db_blkid);
 
 	dbuf_add_ref(db, NULL);
+	/* ZIO_FLAG_CANFAIL callers have to check the parent zio's error */
 
-	(void) arc_read(zio, spa, db->db_blkptr,
+	if (db->db_parent)
+		pbuf = db->db_parent->db_buf;
+	else
+		pbuf = db->db_objset->os_phys_buf;
+
+	(void) dsl_read(zio, spa, db->db_blkptr, pbuf,
 	    dbuf_read_done, db, ZIO_PRIORITY_SYNC_READ,
 	    (*flags & DB_RF_CANFAIL) ? ZIO_FLAG_CANFAIL : ZIO_FLAG_MUSTSUCCEED,
 	    &aflags, &zb);
@@ -975,6 +982,7 @@ void
 dbuf_release_bp(dmu_buf_impl_t *db)
 {
 	objset_t *os;
+	zbookmark_t zb;
 
 	DB_GET_OBJSET(&os, db);
 	ASSERT(dsl_pool_sync_context(dmu_objset_pool(os)));
@@ -982,7 +990,13 @@ dbuf_release_bp(dmu_buf_impl_t *db)
 	    list_link_active(&os->os_dsl_dataset->ds_synced_link));
 	ASSERT(db->db_parent == NULL || arc_released(db->db_parent->db_buf));
 
-	(void) arc_release(db->db_buf, db);
+	zb.zb_objset = os->os_dsl_dataset ?
+	    os->os_dsl_dataset->ds_object : 0;
+	zb.zb_object = db->db.db_object;
+	zb.zb_level = db->db_level;
+	zb.zb_blkid = db->db_blkid;
+	(void) arc_release_bp(db->db_buf, db,
+	    db->db_blkptr, os->os_spa, &zb);
 }
 
 dbuf_dirty_record_t *
@@ -1817,6 +1831,7 @@ dbuf_prefetch(dnode_t *dn, uint64_t blkid)
 		if (bp && !BP_IS_HOLE(bp)) {
 			int priority = dn->dn_type == DMU_OT_DDT_ZAP ?
 			    ZIO_PRIORITY_DDT_PREFETCH : ZIO_PRIORITY_ASYNC_READ;
+			arc_buf_t *pbuf;
 			dsl_dataset_t *ds = dn->dn_objset->os_dsl_dataset;
 			uint32_t aflags = ARC_NOWAIT | ARC_PREFETCH;
 			zbookmark_t zb;
@@ -1824,8 +1839,13 @@ dbuf_prefetch(dnode_t *dn, uint64_t blkid)
 			SET_BOOKMARK(&zb, ds ? ds->ds_object : DMU_META_OBJSET,
 			    dn->dn_object, 0, blkid);
 
-			(void) arc_read(NULL, dn->dn_objset->os_spa,
-			    bp, NULL, NULL, priority,
+			if (db)
+				pbuf = db->db_buf;
+			else
+				pbuf = dn->dn_objset->os_phys_buf;
+
+			(void) dsl_read(NULL, dn->dn_objset->os_spa,
+			    bp, pbuf, NULL, NULL, priority,
 			    ZIO_FLAG_CANFAIL | ZIO_FLAG_SPECULATIVE,
 			    &aflags, &zb);
 		}
@@ -2071,24 +2091,7 @@ dbuf_rele_and_unlock(dmu_buf_impl_t *db, void *tag)
 			dbuf_evict(db);
 		} else {
 			VERIFY(arc_buf_remove_ref(db->db_buf, db) == 0);
-
-			/*
-			 * A dbuf will be eligible for eviction if either the
-			 * 'primarycache' property is set or a duplicate
-			 * copy of this buffer is already cached in the arc.
-			 *
-			 * In the case of the 'primarycache' a buffer
-			 * is considered for eviction if it matches the
-			 * criteria set in the property.
-			 *
-			 * To decide if our buffer is considered a
-			 * duplicate, we must call into the arc to determine
-			 * if multiple buffers are referencing the same
-			 * block on-disk. If so, then we simply evict
-			 * ourselves.
-			 */
-			if (!DBUF_IS_CACHEABLE(db) ||
-			    arc_buf_eviction_needed(db->db_buf))
+			if (!DBUF_IS_CACHEABLE(db))
 				dbuf_clear(db);
 			else
 				mutex_exit(&db->db_mtx);
@@ -2330,6 +2333,10 @@ dbuf_sync_leaf(dbuf_dirty_record_t *dr, dmu_tx_t *tx)
 		ASSERT(dr->dr_next == NULL);
 		ASSERT(dr->dr_dbuf == db);
 		*drp = dr->dr_next;
+		if (dr->dr_dbuf->db_level != 0) {
+			list_destroy(&dr->dt.di.dr_children);
+			mutex_destroy(&dr->dt.di.dr_mtx);
+		}
 		kmem_free(dr, sizeof (dbuf_dirty_record_t));
 		ASSERT(db->db_dirtycnt > 0);
 		db->db_dirtycnt -= 1;

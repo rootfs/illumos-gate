@@ -406,6 +406,7 @@ zfs_fuid_map_id(zfsvfs_t *zfsvfs, uint64_t fuid,
 	domain = zfs_fuid_find_by_idx(zfsvfs, index);
 	ASSERT(domain != NULL);
 
+#ifdef sun
 	if (type == ZFS_OWNER || type == ZFS_ACE_USER) {
 		(void) kidmap_getuidbysid(crgetzone(cr), domain,
 		    FUID_RID(fuid), &id);
@@ -413,6 +414,9 @@ zfs_fuid_map_id(zfsvfs_t *zfsvfs, uint64_t fuid,
 		(void) kidmap_getgidbysid(crgetzone(cr), domain,
 		    FUID_RID(fuid), &id);
 	}
+#else	/* !sun */
+	id = UID_NOBODY;
+#endif	/* !sun */
 	return (id);
 }
 
@@ -556,9 +560,9 @@ zfs_fuid_create(zfsvfs_t *zfsvfs, uint64_t id, cred_t *cr,
 	uint32_t fuid_idx = FUID_INDEX(id);
 	uint32_t rid;
 	idmap_stat status;
-	uint64_t idx = 0;
+	uint64_t idx;
 	zfs_fuid_t *zfuid = NULL;
-	zfs_fuid_info_t *fuidp = NULL;
+	zfs_fuid_info_t *fuidp;
 
 	/*
 	 * If POSIX ID, or entry is already a FUID then
@@ -583,9 +587,6 @@ zfs_fuid_create(zfsvfs_t *zfsvfs, uint64_t id, cred_t *cr,
 		if (fuidp == NULL)
 			return (UID_NOBODY);
 
-		VERIFY3U(type, >=, ZFS_OWNER);
-		VERIFY3U(type, <=, ZFS_ACE_GROUP);
-
 		switch (type) {
 		case ZFS_ACE_USER:
 		case ZFS_ACE_GROUP:
@@ -602,7 +603,7 @@ zfs_fuid_create(zfsvfs_t *zfsvfs, uint64_t id, cred_t *cr,
 			idx = FUID_INDEX(fuidp->z_fuid_group);
 			break;
 		};
-		domain = fuidp->z_domain_table[idx - 1];
+		domain = fuidp->z_domain_table[idx -1];
 	} else {
 		if (type == ZFS_OWNER || type == ZFS_ACE_USER)
 			status = kidmap_getsidbyuid(crgetzone(cr), id,
@@ -699,10 +700,13 @@ zfs_fuid_info_free(zfs_fuid_info_t *fuidp)
 boolean_t
 zfs_groupmember(zfsvfs_t *zfsvfs, uint64_t id, cred_t *cr)
 {
+#ifdef sun
 	ksid_t		*ksid = crgetsid(cr, KSID_GROUP);
 	ksidlist_t	*ksidlist = crgetsidlist(cr);
+#endif	/* !sun */
 	uid_t		gid;
 
+#ifdef sun
 	if (ksid && ksidlist) {
 		int 		i;
 		ksid_t		*ksid_groups;
@@ -734,6 +738,7 @@ zfs_groupmember(zfsvfs_t *zfsvfs, uint64_t id, cred_t *cr)
 			}
 		}
 	}
+#endif	/* !sun */
 
 	/*
 	 * Not found in ksidlist, check posix groups

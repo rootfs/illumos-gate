@@ -22,9 +22,6 @@
  * Copyright 2010 Sun Microsystems, Inc.  All rights reserved.
  * Use is subject to license terms.
  */
-/*
- * Copyright (c) 2012 by Delphix. All rights reserved.
- */
 
 /*
  * Common routines used by zfs and zpool property management.
@@ -42,7 +39,7 @@
 
 #if defined(_KERNEL)
 #include <sys/systm.h>
-#include <util/qsort.h>
+#include <sys/libkern.h>
 #else
 #include <stdlib.h>
 #include <string.h>
@@ -132,8 +129,7 @@ zprop_register_hidden(int prop, const char *name, zprop_type_t type,
     zprop_attr_t attr, int objset_types, const char *colname)
 {
 	zprop_register_impl(prop, name, type, 0, NULL, attr,
-	    objset_types, NULL, colname,
-	    type == PROP_TYPE_NUMBER, B_FALSE, NULL);
+	    objset_types, NULL, colname, B_FALSE, B_FALSE, NULL);
 }
 
 
@@ -166,7 +162,7 @@ int
 zprop_iter_common(zprop_func func, void *cb, boolean_t show_all,
     boolean_t ordered, zfs_type_t type)
 {
-	int i, num_props, size, prop;
+	int i, j, num_props, size, prop;
 	zprop_desc_t *prop_tbl;
 	zprop_desc_t **order;
 
@@ -181,7 +177,7 @@ zprop_iter_common(zprop_func func, void *cb, boolean_t show_all,
 		return (ZPROP_CONT);
 #endif
 
-	for (int j = 0; j < num_props; j++)
+	for (j = 0; j < num_props; j++)
 		order[j] = &prop_tbl[j];
 
 	if (ordered) {

@@ -24,7 +24,8 @@
  * Use is subject to license terms.
  */
 
-#include <sys/dtrace.h>
+#pragma ident	"%Z%%M%	%I%	%E% SMI"
+
 
 #define INTFUNC(x)			\
 	BEGIN				\
@@ -96,8 +97,6 @@ INTFUNC(ntohll(0x1234567890abcdefL))
 STRFUNC(inet_ntoa((ipaddr_t *)alloca(sizeof (ipaddr_t))))
 STRFUNC(inet_ntoa6((in6_addr_t *)alloca(sizeof (in6_addr_t))))
 STRFUNC(inet_ntop(AF_INET, (void *)alloca(sizeof (ipaddr_t))))
-STRFUNC(toupper("foo"))
-STRFUNC(tolower("BAR"))
 
 BEGIN
 /subr == DIF_SUBR_MAX + 1/

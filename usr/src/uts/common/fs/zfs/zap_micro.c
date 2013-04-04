@@ -263,10 +263,11 @@ mze_compare(const void *arg1, const void *arg2)
 	return (0);
 }
 
-static void
+static int
 mze_insert(zap_t *zap, int chunkid, uint64_t hash)
 {
 	mzap_ent_t *mze;
+	avl_index_t idx;
 
 	ASSERT(zap->zap_ismicro);
 	ASSERT(RW_WRITE_HELD(&zap->zap_rwlock));
@@ -276,7 +277,12 @@ mze_insert(zap_t *zap, int chunkid, uint64_t hash)
 	mze->mze_hash = hash;
 	mze->mze_cd = MZE_PHYS(zap, mze)->mze_cd;
 	ASSERT(MZE_PHYS(zap, mze)->mze_name[0] != 0);
-	avl_add(&zap->zap_m.zap_avl, mze);
+	if (avl_find(&zap->zap_m.zap_avl, mze, &idx) != NULL) {
+		kmem_free(mze, sizeof (mzap_ent_t));
+		return (EEXIST);
+	}
+	avl_insert(&zap->zap_m.zap_avl, mze, idx);
+	return (0);
 }
 
 static mzap_ent_t *
@@ -408,10 +414,15 @@ mzap_open(objset_t *os, uint64_t obj, dmu_buf_t *db)
 			if (mze->mze_name[0]) {
 				zap_name_t *zn;
 
-				zap->zap_m.zap_num_entries++;
 				zn = zap_name_alloc(zap, mze->mze_name,
 				    MT_EXACT);
-				mze_insert(zap, i, zn->zn_hash);
+				if (mze_insert(zap, i, zn->zn_hash) == 0)
+					zap->zap_m.zap_num_entries++;
+				else {
+					printf("ZFS WARNING: Duplicated ZAP "
+					    "entry detected (%s).\n",
+					    mze->mze_name);
+				}
 				zap_name_free(zn);
 			}
 		}
@@ -959,7 +970,7 @@ again:
 			if (zap->zap_m.zap_alloc_next ==
 			    zap->zap_m.zap_num_chunks)
 				zap->zap_m.zap_alloc_next = 0;
-			mze_insert(zap, i, zn->zn_hash);
+			VERIFY(0 == mze_insert(zap, i, zn->zn_hash));
 			return;
 		}
 	}

@@ -57,6 +57,31 @@ kmutex_t zfs_write_limit_lock;
 
 static pgcnt_t old_physmem = 0;
 
+SYSCTL_DECL(_vfs_zfs);
+TUNABLE_INT("vfs.zfs.no_write_throttle", &zfs_no_write_throttle);
+SYSCTL_INT(_vfs_zfs, OID_AUTO, no_write_throttle, CTLFLAG_RDTUN,
+    &zfs_no_write_throttle, 0, "");
+TUNABLE_INT("vfs.zfs.write_limit_shift", &zfs_write_limit_shift);
+SYSCTL_INT(_vfs_zfs, OID_AUTO, write_limit_shift, CTLFLAG_RDTUN,
+    &zfs_write_limit_shift, 0, "2^N of physical memory");
+SYSCTL_DECL(_vfs_zfs_txg);
+TUNABLE_INT("vfs.zfs.txg.synctime_ms", &zfs_txg_synctime_ms);
+SYSCTL_INT(_vfs_zfs_txg, OID_AUTO, synctime_ms, CTLFLAG_RDTUN,
+    &zfs_txg_synctime_ms, 0, "Target milliseconds to sync a txg");
+
+TUNABLE_QUAD("vfs.zfs.write_limit_min", &zfs_write_limit_min);
+SYSCTL_UQUAD(_vfs_zfs, OID_AUTO, write_limit_min, CTLFLAG_RDTUN,
+    &zfs_write_limit_min, 0, "Minimum write limit");
+TUNABLE_QUAD("vfs.zfs.write_limit_max", &zfs_write_limit_max);
+SYSCTL_UQUAD(_vfs_zfs, OID_AUTO, write_limit_max, CTLFLAG_RDTUN,
+    &zfs_write_limit_max, 0, "Maximum data payload per txg");
+TUNABLE_QUAD("vfs.zfs.write_limit_inflated", &zfs_write_limit_inflated);
+SYSCTL_UQUAD(_vfs_zfs, OID_AUTO, write_limit_inflated, CTLFLAG_RDTUN,
+    &zfs_write_limit_inflated, 0, "");
+TUNABLE_QUAD("vfs.zfs.write_limit_override", &zfs_write_limit_override);
+SYSCTL_UQUAD(_vfs_zfs, OID_AUTO, write_limit_override, CTLFLAG_RDTUN,
+    &zfs_write_limit_override, 0, "");
+
 int
 dsl_pool_open_special_dir(dsl_pool_t *dp, const char *name, dsl_dir_t **ddp)
 {

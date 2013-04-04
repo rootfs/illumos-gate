@@ -24,9 +24,7 @@
  * Use is subject to license terms.
  */
 
-/*
- * Copyright (c) 2012 by Delphix. All rights reserved.
- */
+#pragma ident	"%Z%%M%	%I%	%E% SMI"
 
 #include <sys/resource.h>
 #include <sys/mman.h>
@@ -37,7 +35,9 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <limits.h>
+#if defined(sun)
 #include <alloca.h>
+#endif
 #include <errno.h>
 #include <fcntl.h>
 
@@ -368,61 +368,6 @@ dt_opt_pgmax(dtrace_hdl_t *dtp, const char *arg, uintptr_t option)
 	return (0);
 }
 
-static int
-dt_opt_setenv(dtrace_hdl_t *dtp, const char *arg, uintptr_t option)
-{
-	char **p;
-	char *var;
-	int i;
-
-	/*
-	 * We can't effectively set environment variables from #pragma lines
-	 * since the processes have already been spawned.
-	 */
-	if (dtp->dt_pcb != NULL)
-		return (dt_set_errno(dtp, EDT_BADOPTCTX));
-
-	if (arg == NULL)
-		return (dt_set_errno(dtp, EDT_BADOPTVAL));
-
-	if (!option && strchr(arg, '=') != NULL)
-		return (dt_set_errno(dtp, EDT_BADOPTVAL));
-
-	for (i = 1, p = dtp->dt_proc_env; *p != NULL; i++, p++)
-		continue;
-
-	for (p = dtp->dt_proc_env; *p != NULL; p++) {
-		var = strchr(*p, '=');
-		if (var == NULL)
-			var = *p + strlen(*p);
-		if (strncmp(*p, arg, var - *p) == 0) {
-			dt_free(dtp, *p);
-			*p = dtp->dt_proc_env[i - 1];
-			dtp->dt_proc_env[i - 1] = NULL;
-			i--;
-		}
-	}
-
-	if (option) {
-		if ((var = strdup(arg)) == NULL)
-			return (dt_set_errno(dtp, EDT_NOMEM));
-
-		if ((p = dt_alloc(dtp, sizeof (char *) * (i + 1))) == NULL) {
-			dt_free(dtp, var);
-			return (dt_set_errno(dtp, EDT_NOMEM));
-		}
-
-		bcopy(dtp->dt_proc_env, p, sizeof (char *) * i);
-		dt_free(dtp, dtp->dt_proc_env);
-		dtp->dt_proc_env = p;
-
-		dtp->dt_proc_env[i - 1] = var;
-		dtp->dt_proc_env[i] = NULL;
-	}
-
-	return (0);
-}
-
 /*ARGSUSED*/
 static int
 dt_opt_stdc(dtrace_hdl_t *dtp, const char *arg, uintptr_t option)
@@ -465,6 +410,7 @@ dt_opt_syslibdir(dtrace_hdl_t *dtp, const char *arg, uintptr_t option)
 
 	return (0);
 }
+
 
 /*ARGSUSED*/
 static int
@@ -851,7 +797,12 @@ dt_options_load(dtrace_hdl_t *dtp)
 	bzero(&hdr, sizeof (dof_hdr_t));
 	hdr.dofh_loadsz = sizeof (dof_hdr_t);
 
+#if defined(sun)
 	if (dt_ioctl(dtp, DTRACEIOC_DOFGET, &hdr) == -1)
+#else
+	dof = &hdr;
+	if (dt_ioctl(dtp, DTRACEIOC_DOFGET, &dof) == -1)
+#endif
 		return (dt_set_errno(dtp, errno));
 
 	if (hdr.dofh_loadsz < sizeof (dof_hdr_t))
@@ -864,7 +815,11 @@ dt_options_load(dtrace_hdl_t *dtp)
 	for (i = 0; i < DTRACEOPT_MAX; i++)
 		dtp->dt_options[i] = DTRACEOPT_UNSET;
 
+#if defined(sun)
 	if (dt_ioctl(dtp, DTRACEIOC_DOFGET, dof) == -1)
+#else
+	if (dt_ioctl(dtp, DTRACEIOC_DOFGET, &dof) == -1)
+#endif
 		return (dt_set_errno(dtp, errno));
 
 	for (i = 0; i < dof->dofh_secnum; i++) {
@@ -889,6 +844,30 @@ dt_options_load(dtrace_hdl_t *dtp)
 
 		dtp->dt_options[opt->dofo_option] = opt->dofo_value;
 	}
+
+	return (0);
+}
+
+/*ARGSUSED*/
+static int
+dt_opt_preallocate(dtrace_hdl_t *dtp, const char *arg, uintptr_t option)
+{
+	dtrace_optval_t size;
+	void *p;
+
+	if (arg == NULL || dt_optval_parse(arg, &size) != 0)
+		return (dt_set_errno(dtp, EDT_BADOPTVAL));
+
+	if (size > SIZE_MAX)
+		size = SIZE_MAX;
+
+	if ((p = dt_zalloc(dtp, size)) == NULL) {
+		do {
+			size /= 2;
+		} while ((p = dt_zalloc(dtp, size)) == NULL);
+	}
+
+	dt_free(dtp, p);
 
 	return (0);
 }
@@ -931,8 +910,8 @@ static const dt_option_t _dtrace_ctoptions[] = {
 	{ "linktype", dt_opt_linktype },
 	{ "nolibs", dt_opt_cflags, DTRACE_C_NOLIBS },
 	{ "pgmax", dt_opt_pgmax },
+	{ "preallocate", dt_opt_preallocate },
 	{ "pspec", dt_opt_cflags, DTRACE_C_PSPEC },
-	{ "setenv", dt_opt_setenv, 1 },
 	{ "stdc", dt_opt_stdc },
 	{ "strip", dt_opt_dflags, DTRACE_D_STRIP },
 	{ "syslibdir", dt_opt_syslibdir },
@@ -941,11 +920,10 @@ static const dt_option_t _dtrace_ctoptions[] = {
 	{ "udefs", dt_opt_invcflags, DTRACE_C_UNODEF },
 	{ "undef", dt_opt_cpp_opts, (uintptr_t)"-U" },
 	{ "unodefs", dt_opt_cflags, DTRACE_C_UNODEF },
-	{ "unsetenv", dt_opt_setenv, 0 },
 	{ "verbose", dt_opt_cflags, DTRACE_C_DIFV },
 	{ "version", dt_opt_version },
 	{ "zdefs", dt_opt_cflags, DTRACE_C_ZDEFS },
-	{ NULL }
+	{ NULL, NULL, 0 }
 };
 
 /*
@@ -969,8 +947,7 @@ static const dt_option_t _dtrace_rtoptions[] = {
 	{ "statusrate", dt_opt_rate, DTRACEOPT_STATUSRATE },
 	{ "strsize", dt_opt_strsize, DTRACEOPT_STRSIZE },
 	{ "ustackframes", dt_opt_runtime, DTRACEOPT_USTACKFRAMES },
-	{ "temporal", dt_opt_runtime, DTRACEOPT_TEMPORAL },
-	{ NULL }
+	{ NULL, NULL, 0 }
 };
 
 /*
@@ -987,7 +964,7 @@ static const dt_option_t _dtrace_drtoptions[] = {
 	{ "rawbytes", dt_opt_runtime, DTRACEOPT_RAWBYTES },
 	{ "stackindent", dt_opt_runtime, DTRACEOPT_STACKINDENT },
 	{ "switchrate", dt_opt_rate, DTRACEOPT_SWITCHRATE },
-	{ NULL }
+	{ NULL, NULL, 0 }
 };
 
 int

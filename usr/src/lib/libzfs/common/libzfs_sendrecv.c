@@ -23,6 +23,8 @@
  * Copyright (c) 2005, 2010, Oracle and/or its affiliates. All rights reserved.
  * Copyright (c) 2012 by Delphix. All rights reserved.
  * Copyright (c) 2012, Joyent, Inc. All rights reserved.
+ * Copyright (c) 2012 Pawel Jakub Dawidek <pawel@dawidek.net>.
+ * All rights reserved.
  */
 
 #include <assert.h>
@@ -35,6 +37,7 @@
 #include <unistd.h>
 #include <stddef.h>
 #include <fcntl.h>
+#include <sys/param.h>
 #include <sys/mount.h>
 #include <pthread.h>
 #include <umem.h>
@@ -52,6 +55,8 @@
 
 /* in libzfs_dataset.c */
 extern void zfs_setprop_error(libzfs_handle_t *, zfs_prop_t, int, char *);
+/* We need to use something for ENODATA. */
+#define	ENODATA	EIDRM
 
 static int zfs_receive_impl(libzfs_handle_t *, const char *, recvflags_t *,
     int, const char *, nvlist_t *, avl_tree_t *, char **, int, uint64_t *);
@@ -722,7 +727,7 @@ send_iterate_fs(zfs_handle_t *zhp, void *arg)
 	sd->parent_fromsnap_guid = 0;
 	VERIFY(0 == nvlist_alloc(&sd->parent_snaps, NV_UNIQUE_NAME, 0));
 	VERIFY(0 == nvlist_alloc(&sd->snapprops, NV_UNIQUE_NAME, 0));
-	(void) zfs_iter_snapshots(zhp, send_iterate_snap, sd);
+	(void) zfs_iter_snapshots(zhp, B_FALSE, send_iterate_snap, sd);
 	VERIFY(0 == nvlist_add_nvlist(nvfs, "snaps", sd->parent_snaps));
 	VERIFY(0 == nvlist_add_nvlist(nvfs, "snapprops", sd->snapprops));
 	nvlist_free(sd->parent_snaps);
@@ -843,7 +848,6 @@ estimate_ioctl(zfs_handle_t *zhp, uint64_t fromsnap_obj,
 		case EIO:
 		case ENOLINK:
 		case ENOSPC:
-		case ENOSTR:
 		case ENXIO:
 		case EPIPE:
 		case ERANGE:
@@ -921,7 +925,9 @@ dump_ioctl(zfs_handle_t *zhp, const char *fromsnap, uint64_t fromsnap_obj,
 		case EIO:
 		case ENOLINK:
 		case ENOSPC:
+#ifdef sun
 		case ENOSTR:
+#endif
 		case ENXIO:
 		case EPIPE:
 		case ERANGE:
@@ -2668,7 +2674,7 @@ zfs_receive_one(libzfs_handle_t *hdl, int infd, const char *tosnap,
 			(void) printf("found clone origin %s\n", zc.zc_string);
 	}
 
-	stream_wantsnewfs = (drrb->drr_fromguid == NULL ||
+	stream_wantsnewfs = (drrb->drr_fromguid == 0 ||
 	    (drrb->drr_flags & DRR_FLAG_CLONE));
 
 	if (stream_wantsnewfs) {

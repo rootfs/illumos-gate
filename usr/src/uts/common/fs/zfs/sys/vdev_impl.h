@@ -104,8 +104,6 @@ struct vdev_queue {
 	avl_tree_t	vq_read_tree;
 	avl_tree_t	vq_write_tree;
 	avl_tree_t	vq_pending_tree;
-	uint64_t	vq_io_complete_ts;
-	uint64_t	vq_io_delta_ts;
 	kmutex_t	vq_lock;
 };
 
@@ -304,7 +302,11 @@ extern vdev_ops_t vdev_root_ops;
 extern vdev_ops_t vdev_mirror_ops;
 extern vdev_ops_t vdev_replacing_ops;
 extern vdev_ops_t vdev_raidz_ops;
+#ifdef _KERNEL
+extern vdev_ops_t vdev_geom_ops;
+#else
 extern vdev_ops_t vdev_disk_ops;
+#endif
 extern vdev_ops_t vdev_file_ops;
 extern vdev_ops_t vdev_missing_ops;
 extern vdev_ops_t vdev_hole_ops;
@@ -321,14 +323,6 @@ extern void vdev_set_min_asize(vdev_t *vd);
  * zdb uses this tunable, so it must be declared here to make lint happy.
  */
 extern int zfs_vdev_cache_size;
-
-/*
- * The vdev_buf_t is used to translate between zio_t and buf_t, and back again.
- */
-typedef struct vdev_buf {
-	buf_t	vb_buf;		/* buffer that describes the io */
-	zio_t	*vb_io;		/* pointer back to the original zio_t */
-} vdev_buf_t;
 
 #ifdef	__cplusplus
 }

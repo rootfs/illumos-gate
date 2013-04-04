@@ -54,21 +54,17 @@
 #include <sys/types.h>
 #include <sys/time.h>
 #include <sys/sysevent.h>
-#include <sys/sysevent_impl.h>
 #include <sys/nvpair.h>
 #include <sys/cmn_err.h>
 #include <sys/cpuvar.h>
 #include <sys/sysmacros.h>
 #include <sys/systm.h>
-#include <sys/ddifm.h>
-#include <sys/ddifm_impl.h>
-#include <sys/spl.h>
-#include <sys/dumphdr.h>
 #include <sys/compress.h>
 #include <sys/cpuvar.h>
-#include <sys/console.h>
-#include <sys/panic.h>
 #include <sys/kobj.h>
+#include <sys/kstat.h>
+#include <sys/processor.h>
+#include <sys/pcpu.h>
 #include <sys/sunddi.h>
 #include <sys/systeminfo.h>
 #include <sys/sysevent/eventdefs.h>
@@ -79,11 +75,13 @@
  * URL and SUNW-MSG-ID value to display for fm_panic(), defined below.  These
  * values must be kept in sync with the FMA source code in usr/src/cmd/fm.
  */
-static const char *fm_url = "http://illumos.org/msg";
+static const char *fm_url = "http://www.sun.com/msg";
 static const char *fm_msgid = "SUNOS-8000-0G";
 static char *volatile fm_panicstr = NULL;
 
+#ifdef sun
 errorq_t *ereport_errorq;
+#endif
 void *ereport_dumpbuf;
 size_t ereport_dumplen;
 
@@ -114,6 +112,7 @@ static struct erpt_kstat erpt_kstat_data = {
 	{ "payload-set-failed", KSTAT_DATA_UINT64 }
 };
 
+#ifdef sun
 /*ARGSUSED*/
 static void
 fm_drain(void *private, void *data, errorq_elem_t *eep)
@@ -125,17 +124,20 @@ fm_drain(void *private, void *data, errorq_elem_t *eep)
 	else
 		fm_nvprint(nvl);
 }
+#endif
 
 void
 fm_init(void)
 {
 	kstat_t *ksp;
 
+#ifdef sun
 	(void) sysevent_evc_bind(FM_ERROR_CHAN,
 	    &ereport_chan, EVCH_CREAT | EVCH_HOLD_PEND);
 
 	(void) sysevent_evc_control(ereport_chan,
 	    EVCH_SET_CHAN_LEN, &ereport_chanlen);
+#endif
 
 	if (ereport_qlen == 0)
 		ereport_qlen = ERPT_MAX_ERRS * MAX(max_ncpus, 4);
@@ -143,11 +145,13 @@ fm_init(void)
 	if (ereport_size == 0)
 		ereport_size = ERPT_DATA_SZ;
 
+#ifdef sun
 	ereport_errorq = errorq_nvcreate("fm_ereport_queue",
 	    (errorq_func_t)fm_drain, NULL, ereport_qlen, ereport_size,
 	    FM_ERR_PIL, ERRORQ_VITAL);
 	if (ereport_errorq == NULL)
 		panic("failed to create required ereport error queue");
+#endif
 
 	ereport_dumpbuf = kmem_alloc(ereport_size, KM_SLEEP);
 	ereport_dumplen = ereport_size;
@@ -166,6 +170,7 @@ fm_init(void)
 	}
 }
 
+#ifdef sun
 /*
  * Formatting utility function for fm_nvprintr.  We attempt to wrap chunks of
  * output so they aren't split across console lines, and return the end column.
@@ -503,6 +508,7 @@ fm_ereport_dump(void)
 
 	sysevent_evc_walk_fini(chq);
 }
+#endif
 
 /*
  * Post an error report (ereport) to the sysevent error channel.  The error
@@ -514,6 +520,7 @@ fm_ereport_post(nvlist_t *ereport, int evc_flag)
 {
 	size_t nvl_size = 0;
 	evchan_t *error_chan;
+	sysevent_id_t eid;
 
 	(void) nvlist_size(ereport, &nvl_size, NV_ENCODE_NATIVE);
 	if (nvl_size > ERPT_DATA_SZ || nvl_size == 0) {
@@ -521,6 +528,7 @@ fm_ereport_post(nvlist_t *ereport, int evc_flag)
 		return;
 	}
 
+#ifdef sun
 	if (sysevent_evc_bind(FM_ERROR_CHAN, &error_chan,
 	    EVCH_CREAT|EVCH_HOLD_PEND) != 0) {
 		atomic_add_64(&erpt_kstat_data.erpt_dropped.value.ui64, 1);
@@ -534,6 +542,10 @@ fm_ereport_post(nvlist_t *ereport, int evc_flag)
 		return;
 	}
 	(void) sysevent_evc_unbind(error_chan);
+#else
+	(void) ddi_log_sysevent(NULL, SUNW_VENDOR, EC_DEV_STATUS,
+	    ESC_DEV_DLE, ereport, &eid, DDI_SLEEP);
+#endif
 }
 
 /*
@@ -1185,7 +1197,7 @@ fm_ena_generate_cpu(uint64_t timestamp, processorid_t cpuid, uchar_t format)
 uint64_t
 fm_ena_generate(uint64_t timestamp, uchar_t format)
 {
-	return (fm_ena_generate_cpu(timestamp, CPU->cpu_id, format));
+	return (fm_ena_generate_cpu(timestamp, PCPU_GET(cpuid), format));
 }
 
 uint64_t
@@ -1253,6 +1265,7 @@ fm_ena_time_get(uint64_t ena)
 	return (time);
 }
 
+#ifdef sun
 /*
  * Convert a getpcstack() trace to symbolic name+offset, and add the resulting
  * string array to a Fault Management ereport as FM_EREPORT_PAYLOAD_NAME_STACK.
@@ -1278,13 +1291,16 @@ fm_payload_stack_add(nvlist_t *payload, const pc_t *stack, int depth)
 	fm_payload_set(payload, FM_EREPORT_PAYLOAD_NAME_STACK,
 	    DATA_TYPE_STRING_ARRAY, depth, stkpp, NULL);
 }
+#endif
 
+#ifdef sun
 void
 print_msg_hwerr(ctid_t ct_id, proc_t *p)
 {
 	uprintf("Killed process %d (%s) in contract id %d "
 	    "due to hardware error\n", p->p_pid, p->p_user.u_comm, ct_id);
 }
+#endif
 
 void
 fm_fmri_hc_create(nvlist_t *fmri, int version, const nvlist_t *auth,

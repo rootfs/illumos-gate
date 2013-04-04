@@ -40,25 +40,48 @@
 #include <sys/zfs_znode.h>
 
 struct diffarg {
-	struct vnode *da_vp;		/* file to which we are reporting */
+	struct file *da_fp;		/* file to which we are reporting */
 	offset_t *da_offp;
 	int da_err;			/* error that stopped diff search */
 	dmu_diff_record_t da_ddr;
+	kthread_t *da_td;
 };
+
+static int
+write_bytes(struct diffarg *da)
+{
+	struct uio auio;
+	struct iovec aiov;
+
+	aiov.iov_base = (caddr_t)&da->da_ddr;
+	aiov.iov_len = sizeof (da->da_ddr);
+	auio.uio_iov = &aiov;
+	auio.uio_iovcnt = 1;
+	auio.uio_resid = aiov.iov_len;
+	auio.uio_segflg = UIO_SYSSPACE;
+	auio.uio_rw = UIO_WRITE;
+	auio.uio_offset = (off_t)-1;
+	auio.uio_td = da->da_td;
+#ifdef _KERNEL
+	if (da->da_fp->f_type == DTYPE_VNODE)
+		bwillwrite();
+	return (fo_write(da->da_fp, &auio, da->da_td->td_ucred, 0, da->da_td));
+#else
+	fprintf(stderr, "%s: returning EOPNOTSUPP\n", __func__);
+	return (EOPNOTSUPP);
+#endif
+}
 
 static int
 write_record(struct diffarg *da)
 {
-	ssize_t resid; /* have to get resid to get detailed errno */
 
 	if (da->da_ddr.ddr_type == DDR_NONE) {
 		da->da_err = 0;
 		return (0);
 	}
 
-	da->da_err = vn_rdwr(UIO_WRITE, da->da_vp, (caddr_t)&da->da_ddr,
-	    sizeof (da->da_ddr), 0, UIO_SYSSPACE, FAPPEND,
-	    RLIM64_INFINITY, CRED(), &resid);
+	da->da_err = write_bytes(da);
 	*da->da_offp += sizeof (da->da_ddr);
 	return (da->da_err);
 }
@@ -105,7 +128,7 @@ report_dnode(struct diffarg *da, uint64_t object, dnode_phys_t *dnp)
 
 /* ARGSUSED */
 static int
-diff_cb(spa_t *spa, zilog_t *zilog, const blkptr_t *bp,
+diff_cb(spa_t *spa, zilog_t *zilog, const blkptr_t *bp, arc_buf_t *pbuf,
     const zbookmark_t *zb, const dnode_phys_t *dnp, void *arg)
 {
 	struct diffarg *da = arg;
@@ -132,9 +155,9 @@ diff_cb(spa_t *spa, zilog_t *zilog, const blkptr_t *bp,
 		int blksz = BP_GET_LSIZE(bp);
 		int i;
 
-		if (arc_read(NULL, spa, bp, arc_getbuf_func, &abuf,
-		    ZIO_PRIORITY_ASYNC_READ, ZIO_FLAG_CANFAIL,
-		    &aflags, zb) != 0)
+		if (dsl_read(NULL, spa, bp, pbuf,
+		    arc_getbuf_func, &abuf, ZIO_PRIORITY_ASYNC_READ,
+		    ZIO_FLAG_CANFAIL, &aflags, zb) != 0)
 			return (EIO);
 
 		blk = abuf->b_data;
@@ -155,7 +178,7 @@ diff_cb(spa_t *spa, zilog_t *zilog, const blkptr_t *bp,
 }
 
 int
-dmu_diff(objset_t *tosnap, objset_t *fromsnap, struct vnode *vp, offset_t *offp)
+dmu_diff(objset_t *tosnap, objset_t *fromsnap, struct file *fp, offset_t *offp)
 {
 	struct diffarg da;
 	dsl_dataset_t *ds = tosnap->os_dsl_dataset;
@@ -201,11 +224,12 @@ dmu_diff(objset_t *tosnap, objset_t *fromsnap, struct vnode *vp, offset_t *offp)
 	if (relds)
 		dsl_dataset_rele(relds, FTAG);
 
-	da.da_vp = vp;
+	da.da_fp = fp;
 	da.da_offp = offp;
 	da.da_ddr.ddr_type = DDR_NONE;
 	da.da_ddr.ddr_first = da.da_ddr.ddr_last = 0;
 	da.da_err = 0;
+	da.da_td = curthread;
 
 	err = traverse_dataset(ds, fromds->ds_phys->ds_creation_txg,
 	    TRAVERSE_PRE | TRAVERSE_PREFETCH_METADATA, diff_cb, &da);

@@ -38,7 +38,7 @@ static kmem_cache_t *reference_cache;
 static kmem_cache_t *reference_history_cache;
 
 void
-refcount_init(void)
+refcount_sysinit(void)
 {
 	reference_cache = kmem_cache_create("reference_cache",
 	    sizeof (reference_t), 0, NULL, NULL, NULL, NULL, NULL, 0);
@@ -110,7 +110,7 @@ refcount_count(refcount_t *rc)
 int64_t
 refcount_add_many(refcount_t *rc, uint64_t number, void *holder)
 {
-	reference_t *ref = NULL;
+	reference_t *ref;
 	int64_t count;
 
 	if (reference_tracking_enable) {

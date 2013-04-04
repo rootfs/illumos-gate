@@ -28,7 +28,6 @@
 #include <sys/sysmacros.h>
 #include <sys/cmn_err.h>
 #include <sys/kmem.h>
-#include <sys/thread.h>
 #include <sys/file.h>
 #include <sys/vfs.h>
 #include <sys/zfs_znode.h>
@@ -38,12 +37,10 @@
 #include <sys/byteorder.h>
 #include <sys/policy.h>
 #include <sys/stat.h>
-#include <sys/mode.h>
 #include <sys/acl.h>
 #include <sys/dmu.h>
 #include <sys/spa.h>
 #include <sys/zfs_fuid.h>
-#include <sys/ddi.h>
 #include <sys/dsl_dataset.h>
 
 /*
@@ -74,7 +71,11 @@ zfs_log_create_txtype(zil_create_t type, vsecattr_t *vsecp, vattr_t *vap)
 		if (vsecp == NULL && !isxvattr)
 			return (TX_CREATE);
 		if (vsecp && isxvattr)
+#ifdef TODO
 			return (TX_CREATE_ACL_ATTR);
+#else
+			panic("%s:%u: unsupported condition", __func__, __LINE__);
+#endif
 		if (vsecp)
 			return (TX_CREATE_ACL);
 		else
@@ -84,7 +85,11 @@ zfs_log_create_txtype(zil_create_t type, vsecattr_t *vsecp, vattr_t *vap)
 		if (vsecp == NULL && !isxvattr)
 			return (TX_MKDIR);
 		if (vsecp && isxvattr)
+#ifdef TODO
 			return (TX_MKDIR_ACL_ATTR);
+#else
+			panic("%s:%u: unsupported condition", __func__, __LINE__);
+#endif
 		if (vsecp)
 			return (TX_MKDIR_ACL);
 		else
@@ -238,7 +243,7 @@ zfs_log_create(zilog_t *zilog, dmu_tx_t *tx, uint64_t txtype,
 	itx_t *itx;
 	lr_create_t *lr;
 	lr_acl_create_t *lracl;
-	size_t aclsize = (vsecp != NULL) ? vsecp->vsa_aclentsz : 0;
+	size_t aclsize;
 	size_t xvatsize = 0;
 	size_t txsize;
 	xvattr_t *xvap = (xvattr_t *)vap;
@@ -268,6 +273,7 @@ zfs_log_create(zilog_t *zilog, dmu_tx_t *tx, uint64_t txtype,
 		txsize = sizeof (*lr) + namesize + fuidsz + xvatsize;
 		lrsize = sizeof (*lr);
 	} else {
+		aclsize = (vsecp) ? vsecp->vsa_aclentsz : 0;
 		txsize =
 		    sizeof (lr_acl_create_t) + namesize + fuidsz +
 		    ZIL_ACE_LENGTH(aclsize) + xvatsize;

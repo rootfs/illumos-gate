@@ -22,7 +22,6 @@
 /*
  * Copyright (c) 2003, 2010, Oracle and/or its affiliates. All rights reserved.
  * Copyright (c) 2011, Joyent Inc. All rights reserved.
- * Copyright (c) 2012 by Delphix. All rights reserved.
  */
 
 /*
@@ -87,6 +86,7 @@
 #include <sys/sysmacros.h>
 
 #include <assert.h>
+#include <string.h>
 #include <strings.h>
 #include <signal.h>
 #include <unistd.h>
@@ -663,54 +663,18 @@ static void
 dt_action_trace(dtrace_hdl_t *dtp, dt_node_t *dnp, dtrace_stmtdesc_t *sdp)
 {
 	dtrace_actdesc_t *ap = dt_stmt_action(dtp, sdp);
-	boolean_t istrace = (dnp->dn_ident->di_id == DT_ACT_TRACE);
-	const char *act = istrace ?  "trace" : "print";
 
 	if (dt_node_is_void(dnp->dn_args)) {
-		dnerror(dnp->dn_args, istrace ? D_TRACE_VOID : D_PRINT_VOID,
-		    "%s( ) may not be applied to a void expression\n", act);
+		dnerror(dnp->dn_args, D_TRACE_VOID,
+		    "trace( ) may not be applied to a void expression\n");
 	}
 
-	if (dt_node_resolve(dnp->dn_args, DT_IDENT_XLPTR) != NULL) {
-		dnerror(dnp->dn_args, istrace ? D_TRACE_DYN : D_PRINT_DYN,
-		    "%s( ) may not be applied to a translated pointer\n", act);
-	}
-
-	if (dnp->dn_args->dn_kind == DT_NODE_AGG) {
-		dnerror(dnp->dn_args, istrace ? D_TRACE_AGG : D_PRINT_AGG,
-		    "%s( ) may not be applied to an aggregation%s\n", act,
-		    istrace ? "" : " -- did you mean printa()?");
+	if (dt_node_is_dynamic(dnp->dn_args)) {
+		dnerror(dnp->dn_args, D_TRACE_DYN,
+		    "trace( ) may not be applied to a dynamic expression\n");
 	}
 
 	dt_cg(yypcb, dnp->dn_args);
-
-	/*
-	 * The print() action behaves identically to trace(), except that it
-	 * stores the CTF type of the argument (if present) within the DOF for
-	 * the DIFEXPR action.  To do this, we set the 'dtsd_strdata' to point
-	 * to the fully-qualified CTF type ID for the result of the DIF
-	 * action.  We use the ID instead of the name to handles complex types
-	 * like arrays and function pointers that can't be resolved by
-	 * ctf_type_lookup().  This is later processed by dtrace_dof_create()
-	 * and turned into a reference into the string table so that we can
-	 * get the type information when we process the data after the fact.
-	 */
-	if (dnp->dn_ident->di_id == DT_ACT_PRINT) {
-		dt_node_t *dret;
-		size_t n;
-		dt_module_t *dmp;
-
-		dret = yypcb->pcb_dret;
-		dmp = dt_module_lookup_by_ctf(dtp, dret->dn_ctfp);
-
-		n = snprintf(NULL, 0, "%s`%d", dmp->dm_name, dret->dn_type) + 1;
-		sdp->dtsd_strdata = dt_alloc(dtp, n);
-		if (sdp->dtsd_strdata == NULL)
-			longjmp(yypcb->pcb_jmpbuf, EDT_NOMEM);
-		(void) snprintf(sdp->dtsd_strdata, n, "%s`%d", dmp->dm_name,
-		    dret->dn_type);
-	}
-
 	ap->dtad_difo = dt_as(yypcb);
 	ap->dtad_kind = DTRACEACT_DIFEXPR;
 }
@@ -721,8 +685,7 @@ dt_action_tracemem(dtrace_hdl_t *dtp, dt_node_t *dnp, dtrace_stmtdesc_t *sdp)
 	dtrace_actdesc_t *ap = dt_stmt_action(dtp, sdp);
 
 	dt_node_t *addr = dnp->dn_args;
-	dt_node_t *max = dnp->dn_args->dn_list;
-	dt_node_t *size;
+	dt_node_t *size = dnp->dn_args->dn_list;
 
 	char n[DT_TYPE_NAMELEN];
 
@@ -734,37 +697,17 @@ dt_action_tracemem(dtrace_hdl_t *dtp, dt_node_t *dnp, dtrace_stmtdesc_t *sdp)
 		    dt_node_type_name(addr, n, sizeof (n)));
 	}
 
-	if (dt_node_is_posconst(max) == 0) {
-		dnerror(max, D_TRACEMEM_SIZE, "tracemem( ) argument #2 must "
+	if (dt_node_is_posconst(size) == 0) {
+		dnerror(size, D_TRACEMEM_SIZE, "tracemem( ) argument #2 must "
 		    "be a non-zero positive integral constant expression\n");
-	}
-
-	if ((size = max->dn_list) != NULL) {
-		if (size->dn_list != NULL) {
-			dnerror(size, D_TRACEMEM_ARGS, "tracemem ( ) prototype "
-			    "mismatch: expected at most 3 args\n");
-		}
-
-		if (!dt_node_is_scalar(size)) {
-			dnerror(size, D_TRACEMEM_DYNSIZE, "tracemem ( ) "
-			    "dynamic size (argument #3) must be of "
-			    "scalar type\n");
-		}
-
-		dt_cg(yypcb, size);
-		ap->dtad_difo = dt_as(yypcb);
-		ap->dtad_difo->dtdo_rtype = dt_int_rtype;
-		ap->dtad_kind = DTRACEACT_TRACEMEM_DYNSIZE;
-
-		ap = dt_stmt_action(dtp, sdp);
 	}
 
 	dt_cg(yypcb, addr);
 	ap->dtad_difo = dt_as(yypcb);
-	ap->dtad_kind = DTRACEACT_TRACEMEM;
+	ap->dtad_kind = DTRACEACT_DIFEXPR;
 
 	ap->dtad_difo->dtdo_rtype.dtdt_flags |= DIF_TF_BYREF;
-	ap->dtad_difo->dtdo_rtype.dtdt_size = max->dn_value;
+	ap->dtad_difo->dtdo_rtype.dtdt_size = size->dn_value;
 }
 
 static void
@@ -1005,6 +948,77 @@ dt_action_speculate(dtrace_hdl_t *dtp, dt_node_t *dnp, dtrace_stmtdesc_t *sdp)
 }
 
 static void
+dt_action_printm(dtrace_hdl_t *dtp, dt_node_t *dnp, dtrace_stmtdesc_t *sdp)
+{
+	dtrace_actdesc_t *ap = dt_stmt_action(dtp, sdp);
+
+	dt_node_t *size = dnp->dn_args;
+	dt_node_t *addr = dnp->dn_args->dn_list;
+
+	char n[DT_TYPE_NAMELEN];
+
+	if (dt_node_is_posconst(size) == 0) {
+		dnerror(size, D_PRINTM_SIZE, "printm( ) argument #1 must "
+		    "be a non-zero positive integral constant expression\n");
+	}
+
+	if (dt_node_is_pointer(addr) == 0) {
+		dnerror(addr, D_PRINTM_ADDR,
+		    "printm( ) argument #2 is incompatible with "
+		    "prototype:\n\tprototype: pointer\n"
+		    "\t argument: %s\n",
+		    dt_node_type_name(addr, n, sizeof (n)));
+	}
+
+	dt_cg(yypcb, addr);
+	ap->dtad_difo = dt_as(yypcb);
+	ap->dtad_kind = DTRACEACT_PRINTM;
+
+	ap->dtad_difo->dtdo_rtype.dtdt_flags |= DIF_TF_BYREF;
+	ap->dtad_difo->dtdo_rtype.dtdt_size = size->dn_value + sizeof(uintptr_t);
+}
+
+static void
+dt_action_printt(dtrace_hdl_t *dtp, dt_node_t *dnp, dtrace_stmtdesc_t *sdp)
+{
+	dtrace_actdesc_t *ap = dt_stmt_action(dtp, sdp);
+
+	dt_node_t *size = dnp->dn_args;
+	dt_node_t *addr = dnp->dn_args->dn_list;
+
+	char n[DT_TYPE_NAMELEN];
+
+	if (dt_node_is_posconst(size) == 0) {
+		dnerror(size, D_PRINTT_SIZE, "printt( ) argument #1 must "
+		    "be a non-zero positive integral constant expression\n");
+	}
+
+	if (addr == NULL || addr->dn_kind != DT_NODE_FUNC ||
+	    addr->dn_ident != dt_idhash_lookup(dtp->dt_globals, "typeref")) {
+		dnerror(addr, D_PRINTT_ADDR,
+		    "printt( ) argument #2 is incompatible with "
+		    "prototype:\n\tprototype: typeref()\n"
+		    "\t argument: %s\n",
+		    dt_node_type_name(addr, n, sizeof (n)));
+	}
+
+	dt_cg(yypcb, addr);
+	ap->dtad_difo = dt_as(yypcb);
+	ap->dtad_kind = DTRACEACT_PRINTT;
+
+	ap->dtad_difo->dtdo_rtype.dtdt_flags |= DIF_TF_BYREF;
+
+	/*
+	 * Allow additional buffer space for the data size, type size,
+	 * type string length and a stab in the dark (32 bytes) for the
+	 * type string. The type string is part of the typeref() that
+	 * this action references.
+	 */
+	ap->dtad_difo->dtdo_rtype.dtdt_size = size->dn_value + 3 * sizeof(uintptr_t) + 32;
+
+}
+
+static void
 dt_action_commit(dtrace_hdl_t *dtp, dt_node_t *dnp, dtrace_stmtdesc_t *sdp)
 {
 	dtrace_actdesc_t *ap = dt_stmt_action(dtp, sdp);
@@ -1064,14 +1078,17 @@ dt_compile_fun(dtrace_hdl_t *dtp, dt_node_t *dnp, dtrace_stmtdesc_t *sdp)
 	case DT_ACT_PANIC:
 		dt_action_panic(dtp, dnp->dn_expr, sdp);
 		break;
-	case DT_ACT_PRINT:
-		dt_action_trace(dtp, dnp->dn_expr, sdp);
-		break;
 	case DT_ACT_PRINTA:
 		dt_action_printa(dtp, dnp->dn_expr, sdp);
 		break;
 	case DT_ACT_PRINTF:
 		dt_action_printflike(dtp, dnp->dn_expr, sdp, DTRACEACT_PRINTF);
+		break;
+	case DT_ACT_PRINTM:
+		dt_action_printm(dtp, dnp->dn_expr, sdp);
+		break;
+	case DT_ACT_PRINTT:
+		dt_action_printt(dtp, dnp->dn_expr, sdp);
 		break;
 	case DT_ACT_RAISE:
 		dt_action_raise(dtp, dnp->dn_expr, sdp);
@@ -1410,7 +1427,8 @@ dt_compile_agg(dtrace_hdl_t *dtp, dt_node_t *dnp, dtrace_stmtdesc_t *sdp)
 
 			args[i].value = (uint16_t)llarg->dn_value;
 
-			assert(!(arg & (UINT16_MAX << args[i].shift)));
+			assert(!(arg & ((uint64_t)UINT16_MAX <<
+			    args[i].shift)));
 			arg |= ((uint64_t)args[i].value << args[i].shift);
 			llarg = llarg->dn_list;
 		}
@@ -1788,7 +1806,9 @@ dt_preproc(dtrace_hdl_t *dtp, FILE *ifp)
 	char **argv = malloc(sizeof (char *) * (argc + 5));
 	FILE *ofp = tmpfile();
 
+#if defined(sun)
 	char ipath[20], opath[20]; /* big enough for /dev/fd/ + INT_MAX + \0 */
+#endif
 	char verdef[32]; /* big enough for -D__SUNW_D_VERSION=0x%08x + \0 */
 
 	struct sigaction act, oact;
@@ -1796,7 +1816,11 @@ dt_preproc(dtrace_hdl_t *dtp, FILE *ifp)
 
 	int wstat, estat;
 	pid_t pid;
+#if defined(sun)
 	off64_t off;
+#else
+	off_t off = 0;
+#endif
 	int c;
 
 	if (argv == NULL || ofp == NULL) {
@@ -1823,8 +1847,10 @@ dt_preproc(dtrace_hdl_t *dtp, FILE *ifp)
 		(void) fseeko64(ifp, off, SEEK_SET);
 	}
 
+#if defined(sun)
 	(void) snprintf(ipath, sizeof (ipath), "/dev/fd/%d", fileno(ifp));
 	(void) snprintf(opath, sizeof (opath), "/dev/fd/%d", fileno(ofp));
+#endif
 
 	bcopy(dtp->dt_cpp_argv, argv, sizeof (char *) * argc);
 
@@ -1832,6 +1858,7 @@ dt_preproc(dtrace_hdl_t *dtp, FILE *ifp)
 	    "-D__SUNW_D_VERSION=0x%08x", dtp->dt_vmax);
 	argv[argc++] = verdef;
 
+#if defined(sun)
 	switch (dtp->dt_stdcmode) {
 	case DT_STDC_XA:
 	case DT_STDC_XT:
@@ -1844,6 +1871,9 @@ dt_preproc(dtrace_hdl_t *dtp, FILE *ifp)
 
 	argv[argc++] = ipath;
 	argv[argc++] = opath;
+#else
+	argv[argc++] = "-P";
+#endif
 	argv[argc] = NULL;
 
 	/*
@@ -1870,6 +1900,12 @@ dt_preproc(dtrace_hdl_t *dtp, FILE *ifp)
 	}
 
 	if (pid == 0) {
+#if !defined(sun)
+		if (isatty(fileno(ifp)) == 0)
+			lseek(fileno(ifp), off, SEEK_SET);
+		dup2(fileno(ifp), 0);
+		dup2(fileno(ofp), 1);
+#endif
 		(void) execvp(dtp->dt_cpp_path, argv);
 		_exit(errno == ENOENT ? 127 : 126);
 	}
@@ -2453,8 +2489,7 @@ dt_compile(dtrace_hdl_t *dtp, int context, dtrace_probespec_t pspec, void *arg,
 	}
 
 out:
-	if (context != DT_CTX_DTYPE && yypcb->pcb_root != NULL &&
-	    DT_TREEDUMP_PASS(dtp, 3))
+	if (context != DT_CTX_DTYPE && DT_TREEDUMP_PASS(dtp, 3))
 		dt_node_printr(yypcb->pcb_root, stderr, 0);
 
 	if (dtp->dt_cdefs_fd != -1 && (ftruncate64(dtp->dt_cdefs_fd, 0) == -1 ||

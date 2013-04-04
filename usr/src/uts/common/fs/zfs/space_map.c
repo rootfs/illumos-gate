@@ -107,7 +107,6 @@ space_map_add(space_map_t *sm, uint64_t start, uint64_t size)
 	int merge_before, merge_after;
 
 	ASSERT(MUTEX_HELD(sm->sm_lock));
-	VERIFY(!sm->sm_condensing);
 	VERIFY(size != 0);
 	VERIFY3U(start, >=, sm->sm_start);
 	VERIFY3U(end, <=, sm->sm_start + sm->sm_size);
@@ -170,20 +169,18 @@ space_map_add(space_map_t *sm, uint64_t start, uint64_t size)
 void
 space_map_remove(space_map_t *sm, uint64_t start, uint64_t size)
 {
-	avl_index_t where;
 	space_seg_t ssearch, *ss, *newseg;
 	uint64_t end = start + size;
 	int left_over, right_over;
 
 	ASSERT(MUTEX_HELD(sm->sm_lock));
-	VERIFY(!sm->sm_condensing);
 	VERIFY(size != 0);
 	VERIFY(P2PHASE(start, 1ULL << sm->sm_shift) == 0);
 	VERIFY(P2PHASE(size, 1ULL << sm->sm_shift) == 0);
 
 	ssearch.ss_start = start;
 	ssearch.ss_end = end;
-	ss = avl_find(&sm->sm_root, &ssearch, &where);
+	ss = avl_find(&sm->sm_root, &ssearch, NULL);
 
 	/* Make sure we completely overlap with someone */
 	if (ss == NULL) {
@@ -194,7 +191,7 @@ space_map_remove(space_map_t *sm, uint64_t start, uint64_t size)
 	}
 	VERIFY3U(ss->ss_start, <=, start);
 	VERIFY3U(ss->ss_end, >=, end);
-	VERIFY(sm->sm_space - size <= sm->sm_size);
+	VERIFY(sm->sm_space - size < sm->sm_size);
 
 	left_over = (ss->ss_start != start);
 	right_over = (ss->ss_end != end);
@@ -243,20 +240,6 @@ space_map_contains(space_map_t *sm, uint64_t start, uint64_t size)
 	ss = avl_find(&sm->sm_root, &ssearch, &where);
 
 	return (ss != NULL && ss->ss_start <= start && ss->ss_end >= end);
-}
-
-void
-space_map_swap(space_map_t **msrc, space_map_t **mdst)
-{
-	space_map_t *sm;
-
-	ASSERT(MUTEX_HELD((*msrc)->sm_lock));
-	ASSERT0((*mdst)->sm_space);
-	ASSERT0(avl_numnodes(&(*mdst)->sm_root));
-
-	sm = *msrc;
-	*msrc = *mdst;
-	*mdst = sm;
 }
 
 void
@@ -440,9 +423,9 @@ space_map_sync(space_map_t *sm, uint8_t maptype,
 	space_map_obj_t *smo, objset_t *os, dmu_tx_t *tx)
 {
 	spa_t *spa = dmu_objset_spa(os);
-	avl_tree_t *t = &sm->sm_root;
+	void *cookie = NULL;
 	space_seg_t *ss;
-	uint64_t bufsize, start, size, run_len, total, sm_space, nodes;
+	uint64_t bufsize, start, size, run_len, delta, sm_space;
 	uint64_t *entry, *entry_map, *entry_map_end;
 
 	ASSERT(MUTEX_HELD(sm->sm_lock));
@@ -471,14 +454,13 @@ space_map_sync(space_map_t *sm, uint8_t maptype,
 	    SM_DEBUG_SYNCPASS_ENCODE(spa_sync_pass(spa)) |
 	    SM_DEBUG_TXG_ENCODE(dmu_tx_get_txg(tx));
 
-	total = 0;
-	nodes = avl_numnodes(&sm->sm_root);
+	delta = 0;
 	sm_space = sm->sm_space;
-	for (ss = avl_first(t); ss != NULL; ss = AVL_NEXT(t, ss)) {
+	while ((ss = avl_destroy_nodes(&sm->sm_root, &cookie)) != NULL) {
 		size = ss->ss_end - ss->ss_start;
 		start = (ss->ss_start - sm->sm_start) >> sm->sm_shift;
 
-		total += size;
+		delta += size;
 		size >>= sm->sm_shift;
 
 		while (size) {
@@ -500,6 +482,7 @@ space_map_sync(space_map_t *sm, uint8_t maptype,
 			start += run_len;
 			size -= run_len;
 		}
+		kmem_cache_free(space_seg_cache, ss);
 	}
 
 	if (entry != entry_map) {
@@ -515,11 +498,12 @@ space_map_sync(space_map_t *sm, uint8_t maptype,
 	 * Ensure that the space_map's accounting wasn't changed
 	 * while we were in the middle of writing it out.
 	 */
-	VERIFY3U(nodes, ==, avl_numnodes(&sm->sm_root));
 	VERIFY3U(sm->sm_space, ==, sm_space);
-	VERIFY3U(sm->sm_space, ==, total);
 
 	zio_buf_free(entry_map, bufsize);
+
+	sm->sm_space -= delta;
+	VERIFY0(sm->sm_space);
 }
 
 void

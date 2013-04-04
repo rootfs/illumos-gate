@@ -38,8 +38,8 @@ extern "C" {
 
 typedef struct arc_buf_hdr arc_buf_hdr_t;
 typedef struct arc_buf arc_buf_t;
-typedef void arc_done_func_t(zio_t *zio, arc_buf_t *buf, void *private);
-typedef int arc_evict_func_t(void *private);
+typedef void arc_done_func_t(zio_t *zio, arc_buf_t *buf, void *priv);
+typedef int arc_evict_func_t(void *priv);
 
 /* generic arc_done_func_t's which you can use */
 arc_done_func_t arc_bcopy_func;
@@ -49,6 +49,7 @@ struct arc_buf {
 	arc_buf_hdr_t		*b_hdr;
 	arc_buf_t		*b_next;
 	kmutex_t		b_evict_lock;
+	krwlock_t		b_data_lock;
 	void			*b_data;
 	arc_evict_func_t	*b_efunc;
 	void			*b_private;
@@ -92,24 +93,28 @@ void arc_buf_add_ref(arc_buf_t *buf, void *tag);
 int arc_buf_remove_ref(arc_buf_t *buf, void *tag);
 int arc_buf_size(arc_buf_t *buf);
 void arc_release(arc_buf_t *buf, void *tag);
+int arc_release_bp(arc_buf_t *buf, void *tag, blkptr_t *bp, spa_t *spa,
+    zbookmark_t *zb);
 int arc_released(arc_buf_t *buf);
 int arc_has_callback(arc_buf_t *buf);
 void arc_buf_freeze(arc_buf_t *buf);
 void arc_buf_thaw(arc_buf_t *buf);
-boolean_t arc_buf_eviction_needed(arc_buf_t *buf);
 #ifdef ZFS_DEBUG
 int arc_referenced(arc_buf_t *buf);
 #endif
 
-int arc_read(zio_t *pio, spa_t *spa, const blkptr_t *bp,
-    arc_done_func_t *done, void *private, int priority, int flags,
+int arc_read(zio_t *pio, spa_t *spa, const blkptr_t *bp, arc_buf_t *pbuf,
+    arc_done_func_t *done, void *priv, int priority, int zio_flags,
+    uint32_t *arc_flags, const zbookmark_t *zb);
+int arc_read_nolock(zio_t *pio, spa_t *spa, const blkptr_t *bp,
+    arc_done_func_t *done, void *priv, int priority, int flags,
     uint32_t *arc_flags, const zbookmark_t *zb);
 zio_t *arc_write(zio_t *pio, spa_t *spa, uint64_t txg,
     blkptr_t *bp, arc_buf_t *buf, boolean_t l2arc, const zio_prop_t *zp,
-    arc_done_func_t *ready, arc_done_func_t *done, void *private,
+    arc_done_func_t *ready, arc_done_func_t *done, void *priv,
     int priority, int zio_flags, const zbookmark_t *zb);
 
-void arc_set_callback(arc_buf_t *buf, arc_evict_func_t *func, void *private);
+void arc_set_callback(arc_buf_t *buf, arc_evict_func_t *func, void *priv);
 int arc_buf_evict(arc_buf_t *buf);
 
 void arc_flush(spa_t *spa);
@@ -131,10 +136,12 @@ void l2arc_fini(void);
 void l2arc_start(void);
 void l2arc_stop(void);
 
+#ifdef illumos
 #ifndef _KERNEL
 extern boolean_t arc_watch;
 extern int arc_procfd;
 #endif
+#endif /* illumos */
 
 #ifdef	__cplusplus
 }

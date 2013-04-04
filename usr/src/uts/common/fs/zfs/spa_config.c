@@ -25,6 +25,7 @@
  * Copyright (c) 2012 by Delphix. All rights reserved.
  */
 
+#include <sys/zfs_context.h>
 #include <sys/spa.h>
 #include <sys/spa_impl.h>
 #include <sys/nvpair.h>
@@ -33,7 +34,6 @@
 #include <sys/vdev_impl.h>
 #include <sys/zfs_ioctl.h>
 #include <sys/utsname.h>
-#include <sys/systeminfo.h>
 #include <sys/sunddi.h>
 #include <sys/zfeature.h>
 #ifdef _KERNEL
@@ -86,8 +86,7 @@ spa_config_load(void)
 	 */
 	pathname = kmem_alloc(MAXPATHLEN, KM_SLEEP);
 
-	(void) snprintf(pathname, MAXPATHLEN, "%s%s",
-	    (rootdir != NULL) ? "./" : "", spa_config_path);
+	(void) snprintf(pathname, MAXPATHLEN, "%s", spa_config_path);
 
 	file = kobj_open_file(pathname);
 
@@ -182,7 +181,6 @@ spa_config_write(spa_config_dirent_t *dp, nvlist_t *nvl)
 			(void) vn_rename(temp, dp->scd_path, UIO_SYSSPACE);
 		}
 		(void) VOP_CLOSE(vp, oflags, 1, 0, kcred, NULL);
-		VN_RELE(vp);
 	}
 
 	(void) vn_remove(temp, UIO_SYSSPACE, RMFILE);
@@ -283,7 +281,7 @@ spa_all_configs(uint64_t *generation)
 
 	mutex_enter(&spa_namespace_lock);
 	while ((spa = spa_next(spa)) != NULL) {
-		if (INGLOBALZONE(curproc) ||
+		if (INGLOBALZONE(curthread) ||
 		    zone_dataset_visible(spa_name(spa), NULL)) {
 			mutex_enter(&spa->spa_props_lock);
 			VERIFY(nvlist_add_nvlist(pools, spa_name(spa),

@@ -23,10 +23,6 @@
  * Use is subject to license terms.
  */
 
-/*
- * Copyright (c) 2012 by Delphix. All rights reserved.
- */
-
 #ifndef _SYS_SPA_BOOT_H
 #define	_SYS_SPA_BOOT_H
 
@@ -38,8 +34,6 @@ extern "C" {
 
 extern char *spa_get_bootprop(char *prop);
 extern void spa_free_bootprop(char *prop);
-
-extern void spa_arch_init(void);
 
 #ifdef	__cplusplus
 }

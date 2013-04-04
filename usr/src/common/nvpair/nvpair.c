@@ -23,10 +23,7 @@
  * Copyright (c) 2000, 2010, Oracle and/or its affiliates. All rights reserved.
  */
 
-#include <sys/stropts.h>
 #include <sys/debug.h>
-#include <sys/isa_defs.h>
-#include <sys/int_limits.h>
 #include <sys/nvpair.h>
 #include <sys/nvpair_impl.h>
 #include <rpc/types.h>
@@ -34,7 +31,6 @@
 
 #if defined(_KERNEL) && !defined(_BOOT)
 #include <sys/varargs.h>
-#include <sys/ddi.h>
 #include <sys/sunddi.h>
 #else
 #include <stdarg.h>
@@ -2255,7 +2251,7 @@ nvlist_common(nvlist_t *nvl, char *buf, size_t *buflen, int encoding,
 	int err = 0;
 	nvstream_t nvs;
 	int nvl_endian;
-#ifdef	_LITTLE_ENDIAN
+#if BYTE_ORDER == _LITTLE_ENDIAN
 	int host_endian = 1;
 #else
 	int host_endian = 0;
@@ -2579,14 +2575,15 @@ nvpair_native_embedded(nvstream_t *nvs, nvpair_t *nvp)
 {
 	if (nvs->nvs_op == NVS_OP_ENCODE) {
 		nvs_native_t *native = (nvs_native_t *)nvs->nvs_private;
-		nvlist_t *packed = (void *)
+		char *packed = (void *)
 		    (native->n_curr - nvp->nvp_size + NVP_VALOFF(nvp));
 		/*
 		 * Null out the pointer that is meaningless in the packed
 		 * structure. The address may not be aligned, so we have
 		 * to use bzero.
 		 */
-		bzero(&packed->nvl_priv, sizeof (packed->nvl_priv));
+		bzero(packed + offsetof(nvlist_t, nvl_priv),
+		    sizeof(((nvlist_t *)NULL)->nvl_priv));
 	}
 
 	return (nvs_embedded(nvs, EMBEDDED_NVL(nvp)));
@@ -2599,7 +2596,6 @@ nvpair_native_embedded_array(nvstream_t *nvs, nvpair_t *nvp)
 		nvs_native_t *native = (nvs_native_t *)nvs->nvs_private;
 		char *value = native->n_curr - nvp->nvp_size + NVP_VALOFF(nvp);
 		size_t len = NVP_NELEM(nvp) * sizeof (uint64_t);
-		nvlist_t *packed = (nvlist_t *)((uintptr_t)value + len);
 		int i;
 		/*
 		 * Null out pointers that are meaningless in the packed
@@ -2608,13 +2604,17 @@ nvpair_native_embedded_array(nvstream_t *nvs, nvpair_t *nvp)
 		 */
 		bzero(value, len);
 
-		for (i = 0; i < NVP_NELEM(nvp); i++, packed++)
+		value += len;
+		for (i = 0; i < NVP_NELEM(nvp); i++) {
 			/*
 			 * Null out the pointer that is meaningless in the
 			 * packed structure. The address may not be aligned,
 			 * so we have to use bzero.
 			 */
-			bzero(&packed->nvl_priv, sizeof (packed->nvl_priv));
+			bzero(value + offsetof(nvlist_t, nvl_priv),
+			    sizeof(((nvlist_t *)NULL)->nvl_priv));
+			value += sizeof(nvlist_t);
+		}
 	}
 
 	return (nvs_embedded_nvl_array(nvs, nvp, NULL));

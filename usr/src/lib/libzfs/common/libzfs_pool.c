@@ -25,6 +25,8 @@
  * Copyright (c) 2012 by Delphix. All rights reserved.
  */
 
+#include <sys/types.h>
+#include <sys/stat.h>
 #include <ctype.h>
 #include <errno.h>
 #include <devid.h>
@@ -34,9 +36,6 @@
 #include <stdlib.h>
 #include <strings.h>
 #include <unistd.h>
-#include <libgen.h>
-#include <sys/efi_partition.h>
-#include <sys/vtoc.h>
 #include <sys/zfs_ioctl.h>
 #include <dlfcn.h>
 
@@ -178,7 +177,7 @@ zpool_get_prop_int(zpool_handle_t *zhp, zpool_prop_t prop, zprop_source_t *src)
 /*
  * Map VDEV STATE to printed strings.
  */
-char *
+const char *
 zpool_state_to_name(vdev_state_t state, vdev_aux_t aux)
 {
 	switch (state) {
@@ -200,6 +199,34 @@ zpool_state_to_name(vdev_state_t state, vdev_aux_t aux)
 		return (gettext("DEGRADED"));
 	case VDEV_STATE_HEALTHY:
 		return (gettext("ONLINE"));
+	}
+
+	return (gettext("UNKNOWN"));
+}
+
+/*
+ * Map POOL STATE to printed strings.
+ */
+const char *
+zpool_pool_state_to_name(pool_state_t state)
+{
+	switch (state) {
+	case POOL_STATE_ACTIVE:
+		return (gettext("ACTIVE"));
+	case POOL_STATE_EXPORTED:
+		return (gettext("EXPORTED"));
+	case POOL_STATE_DESTROYED:
+		return (gettext("DESTROYED"));
+	case POOL_STATE_SPARE:
+		return (gettext("SPARE"));
+	case POOL_STATE_L2CACHE:
+		return (gettext("L2CACHE"));
+	case POOL_STATE_UNINITIALIZED:
+		return (gettext("UNINITIALIZED"));
+	case POOL_STATE_UNAVAIL:
+		return (gettext("UNAVAIL"));
+	case POOL_STATE_POTENTIALLY_ACTIVE:
+		return (gettext("POTENTIALLY_ACTIVE"));
 	}
 
 	return (gettext("UNKNOWN"));
@@ -356,6 +383,7 @@ bootfs_name_valid(const char *pool, char *bootfs)
 static boolean_t
 pool_uses_efi(nvlist_t *config)
 {
+#ifdef sun
 	nvlist_t **child;
 	uint_t c, children;
 
@@ -367,6 +395,7 @@ pool_uses_efi(nvlist_t *config)
 		if (pool_uses_efi(child[c]))
 			return (B_TRUE);
 	}
+#endif	/* sun */
 	return (B_FALSE);
 }
 
@@ -521,6 +550,7 @@ zpool_valid_proplist(libzfs_handle_t *hdl, const char *poolname,
 			verify(nvlist_lookup_nvlist(zpool_get_config(zhp, NULL),
 			    ZPOOL_CONFIG_VDEV_TREE, &nvroot) == 0);
 
+#ifdef sun
 			/*
 			 * bootfs property cannot be set on a disk which has
 			 * been EFI labeled.
@@ -533,6 +563,7 @@ zpool_valid_proplist(libzfs_handle_t *hdl, const char *poolname,
 				zpool_close(zhp);
 				goto error;
 			}
+#endif	/* sun */
 			zpool_close(zhp);
 			break;
 
@@ -797,7 +828,7 @@ zpool_prop_get_feature(zpool_handle_t *zhp, const char *propname, char *buf,
 	const char *feature = strchr(propname, '@') + 1;
 
 	supported = zpool_prop_feature(propname);
-	ASSERT(supported || zfs_prop_unsupported(propname));
+	ASSERT(supported || zpool_prop_unsupported(propname));
 
 	/*
 	 * Convert from feature name to feature guid. This conversion is
@@ -1206,7 +1237,7 @@ create_failed:
  * datasets left in the pool.
  */
 int
-zpool_destroy(zpool_handle_t *zhp, const char *log_str)
+zpool_destroy(zpool_handle_t *zhp)
 {
 	zfs_cmd_t zc = { 0 };
 	zfs_handle_t *zfp = NULL;
@@ -1218,7 +1249,6 @@ zpool_destroy(zpool_handle_t *zhp, const char *log_str)
 		return (-1);
 
 	(void) strlcpy(zc.zc_name, zhp->zpool_name, sizeof (zc.zc_name));
-	zc.zc_history = (uint64_t)(uintptr_t)log_str;
 
 	if (zfs_ioctl(hdl, ZFS_IOC_POOL_DESTROY, &zc) != 0) {
 		(void) snprintf(msg, sizeof (msg), dgettext(TEXT_DOMAIN,
@@ -1373,9 +1403,8 @@ zpool_add(zpool_handle_t *zhp, nvlist_t *nvroot)
  * Exports the pool from the system.  The caller must ensure that there are no
  * mounted datasets in the pool.
  */
-static int
-zpool_export_common(zpool_handle_t *zhp, boolean_t force, boolean_t hardforce,
-    const char *log_str)
+int
+zpool_export_common(zpool_handle_t *zhp, boolean_t force, boolean_t hardforce)
 {
 	zfs_cmd_t zc = { 0 };
 	char msg[1024];
@@ -1386,7 +1415,6 @@ zpool_export_common(zpool_handle_t *zhp, boolean_t force, boolean_t hardforce,
 	(void) strlcpy(zc.zc_name, zhp->zpool_name, sizeof (zc.zc_name));
 	zc.zc_cookie = force;
 	zc.zc_guid = hardforce;
-	zc.zc_history = (uint64_t)(uintptr_t)log_str;
 
 	if (zfs_ioctl(zhp->zpool_hdl, ZFS_IOC_POOL_EXPORT, &zc) != 0) {
 		switch (errno) {
@@ -1408,15 +1436,15 @@ zpool_export_common(zpool_handle_t *zhp, boolean_t force, boolean_t hardforce,
 }
 
 int
-zpool_export(zpool_handle_t *zhp, boolean_t force, const char *log_str)
+zpool_export(zpool_handle_t *zhp, boolean_t force)
 {
-	return (zpool_export_common(zhp, force, B_FALSE, log_str));
+	return (zpool_export_common(zhp, force, B_FALSE));
 }
 
 int
-zpool_export_force(zpool_handle_t *zhp, const char *log_str)
+zpool_export_force(zpool_handle_t *zhp)
 {
-	return (zpool_export_common(zhp, B_TRUE, B_TRUE, log_str));
+	return (zpool_export_common(zhp, B_TRUE, B_TRUE));
 }
 
 static void
@@ -2163,7 +2191,7 @@ zpool_find_vdev(zpool_handle_t *zhp, const char *path, boolean_t *avail_spare,
 	} else if (zpool_vdev_is_interior(path)) {
 		verify(nvlist_add_string(search, ZPOOL_CONFIG_TYPE, path) == 0);
 	} else if (path[0] != '/') {
-		(void) snprintf(buf, sizeof (buf), "%s%s", "/dev/dsk/", path);
+		(void) snprintf(buf, sizeof (buf), "%s%s", _PATH_DEV, path);
 		verify(nvlist_add_string(search, ZPOOL_CONFIG_PATH, buf) == 0);
 	} else {
 		verify(nvlist_add_string(search, ZPOOL_CONFIG_PATH, path) == 0);
@@ -2338,6 +2366,7 @@ zpool_get_physpath(zpool_handle_t *zhp, char *physpath, size_t phypath_size)
 static int
 zpool_relabel_disk(libzfs_handle_t *hdl, const char *name)
 {
+#ifdef sun
 	char path[MAXPATHLEN];
 	char errbuf[1024];
 	int fd, error;
@@ -2367,6 +2396,7 @@ zpool_relabel_disk(libzfs_handle_t *hdl, const char *name)
 		    "relabel '%s': unable to read disk capacity"), name);
 		return (zfs_error(hdl, EZFS_NOCAP, errbuf));
 	}
+#endif	/* sun */
 	return (0);
 }
 
@@ -2679,6 +2709,16 @@ zpool_vdev_attach(zpool_handle_t *zhp,
 			(void) fprintf(stderr, dgettext(TEXT_DOMAIN, "Make "
 			    "sure to wait until resilver is done "
 			    "before rebooting.\n"));
+			(void) fprintf(stderr, "\n");
+			(void) fprintf(stderr, dgettext(TEXT_DOMAIN, "If "
+			    "you boot from pool '%s', you may need to update\n"
+			    "boot code on newly attached disk '%s'.\n\n"
+			    "Assuming you use GPT partitioning and 'da0' is "
+			    "your new boot disk\n"
+			    "you may use the following command:\n\n"
+			    "\tgpart bootcode -b /boot/pmbr -p "
+			    "/boot/gptzfsboot -i 1 da0\n\n"),
+			    zhp->zpool_name, new_disk);
 		}
 		return (0);
 	}
@@ -3351,15 +3391,25 @@ zpool_vdev_name(libzfs_handle_t *hdl, zpool_handle_t *zhp, nvlist_t *nv,
 	char buf[64];
 	vdev_stat_t *vs;
 	uint_t vsc;
+	int have_stats;
+	int have_path;
 
-	if (nvlist_lookup_uint64(nv, ZPOOL_CONFIG_NOT_PRESENT,
-	    &value) == 0) {
+	have_stats = nvlist_lookup_uint64_array(nv, ZPOOL_CONFIG_VDEV_STATS,
+	    (uint64_t **)&vs, &vsc) == 0;
+	have_path = nvlist_lookup_string(nv, ZPOOL_CONFIG_PATH, &path) == 0;
+
+	/*
+	 * If the device is not currently present, assume it will not
+	 * come back at the same device path.  Display the device by GUID.
+	 */
+	if (nvlist_lookup_uint64(nv, ZPOOL_CONFIG_NOT_PRESENT, &value) == 0 ||
+	    have_path && have_stats && vs->vs_state <= VDEV_STATE_CANT_OPEN) {
 		verify(nvlist_lookup_uint64(nv, ZPOOL_CONFIG_GUID,
 		    &value) == 0);
 		(void) snprintf(buf, sizeof (buf), "%llu",
 		    (u_longlong_t)value);
 		path = buf;
-	} else if (nvlist_lookup_string(nv, ZPOOL_CONFIG_PATH, &path) == 0) {
+	} else if (have_path) {
 
 		/*
 		 * If the device is dead (faulted, offline, etc) then don't
@@ -3367,8 +3417,7 @@ zpool_vdev_name(libzfs_handle_t *hdl, zpool_handle_t *zhp, nvlist_t *nv,
 		 * open a misbehaving device, which can have undesirable
 		 * effects.
 		 */
-		if ((nvlist_lookup_uint64_array(nv, ZPOOL_CONFIG_VDEV_STATS,
-		    (uint64_t **)&vs, &vsc) != 0 ||
+		if ((have_stats == 0 ||
 		    vs->vs_state >= VDEV_STATE_DEGRADED) &&
 		    zhp != NULL &&
 		    nvlist_lookup_string(nv, ZPOOL_CONFIG_DEVID, &devid) == 0) {
@@ -3399,6 +3448,7 @@ zpool_vdev_name(libzfs_handle_t *hdl, zpool_handle_t *zhp, nvlist_t *nv,
 				devid_str_free(newdevid);
 		}
 
+#ifdef sun
 		if (strncmp(path, "/dev/dsk/", 9) == 0)
 			path += 9;
 
@@ -3423,6 +3473,10 @@ zpool_vdev_name(libzfs_handle_t *hdl, zpool_handle_t *zhp, nvlist_t *nv,
 			}
 			return (tmp);
 		}
+#else	/* !sun */
+		if (strncmp(path, _PATH_DEV, sizeof(_PATH_DEV) - 1) == 0)
+			path += sizeof(_PATH_DEV) - 1;
+#endif	/* !sun */
 	} else {
 		verify(nvlist_lookup_string(nv, ZPOOL_CONFIG_TYPE, &path) == 0);
 
@@ -3578,30 +3632,40 @@ zpool_upgrade(zpool_handle_t *zhp, uint64_t new_version)
 }
 
 void
-zfs_save_arguments(int argc, char **argv, char *string, int len)
+zpool_set_history_str(const char *subcommand, int argc, char **argv,
+    char *history_str)
 {
-	(void) strlcpy(string, basename(argv[0]), len);
-	for (int i = 1; i < argc; i++) {
-		(void) strlcat(string, " ", len);
-		(void) strlcat(string, argv[i], len);
+	int i;
+
+	(void) strlcpy(history_str, subcommand, HIS_MAX_RECORD_LEN);
+	for (i = 1; i < argc; i++) {
+		if (strlen(history_str) + 1 + strlen(argv[i]) >
+		    HIS_MAX_RECORD_LEN)
+			break;
+		(void) strlcat(history_str, " ", HIS_MAX_RECORD_LEN);
+		(void) strlcat(history_str, argv[i], HIS_MAX_RECORD_LEN);
 	}
 }
 
+/*
+ * Stage command history for logging.
+ */
 int
-zpool_log_history(libzfs_handle_t *hdl, const char *message)
+zpool_stage_history(libzfs_handle_t *hdl, const char *history_str)
 {
-	zfs_cmd_t zc = { 0 };
-	nvlist_t *args;
-	int err;
+	if (history_str == NULL)
+		return (EINVAL);
 
-	args = fnvlist_alloc();
-	fnvlist_add_string(args, "message", message);
-	err = zcmd_write_src_nvlist(hdl, &zc, args);
-	if (err == 0)
-		err = ioctl(hdl->libzfs_fd, ZFS_IOC_LOG_HISTORY, &zc);
-	nvlist_free(args);
-	zcmd_free_nvlists(&zc);
-	return (err);
+	if (strlen(history_str) > HIS_MAX_RECORD_LEN)
+		return (EINVAL);
+
+	if (hdl->libzfs_log_str != NULL)
+		free(hdl->libzfs_log_str);
+
+	if ((hdl->libzfs_log_str = strdup(history_str)) == NULL)
+		return (no_memory(hdl));
+
+	return (0);
 }
 
 /*
@@ -3787,6 +3851,7 @@ zpool_obj_to_path(zpool_handle_t *zhp, uint64_t dsobj, uint64_t obj,
 	free(mntpnt);
 }
 
+#ifdef sun
 /*
  * Read the EFI label from the config, if a label does not exist then
  * pass back the error to the caller. If the caller has passed a non-NULL
@@ -3851,14 +3916,16 @@ find_start_block(nvlist_t *config)
 	}
 	return (MAXOFFSET_T);
 }
+#endif /* sun */
 
 /*
  * Label an individual disk.  The name provided is the short name,
  * stripped of any leading /dev path.
  */
 int
-zpool_label_disk(libzfs_handle_t *hdl, zpool_handle_t *zhp, char *name)
+zpool_label_disk(libzfs_handle_t *hdl, zpool_handle_t *zhp, const char *name)
 {
+#ifdef sun
 	char path[MAXPATHLEN];
 	struct dk_gpt *vtoc;
 	int fd;
@@ -3963,6 +4030,7 @@ zpool_label_disk(libzfs_handle_t *hdl, zpool_handle_t *zhp, char *name)
 
 	(void) close(fd);
 	efi_free(vtoc);
+#endif /* sun */
 	return (0);
 }
 

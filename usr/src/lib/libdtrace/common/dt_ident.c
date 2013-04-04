@@ -20,17 +20,26 @@
  */
 
 /*
- * Copyright (c) 2003, 2010, Oracle and/or its affiliates. All rights reserved.
+ * Copyright 2007 Sun Microsystems, Inc.  All rights reserved.
+ * Use is subject to license terms.
  */
 
+#pragma ident	"%Z%%M%	%I%	%E% SMI"
+
+#if defined(sun)
 #include <sys/sysmacros.h>
+#endif
 #include <strings.h>
 #include <stdlib.h>
+#if defined(sun)
 #include <alloca.h>
+#endif
 #include <assert.h>
 #include <errno.h>
 #include <ctype.h>
+#if defined(sun)
 #include <sys/procfs_isa.h>
+#endif
 #include <limits.h>
 
 #include <dt_ident.h>
@@ -178,7 +187,8 @@ dt_idcook_func(dt_node_t *dnp, dt_ident_t *idp, int argc, dt_node_t *args)
 		int i = 0;
 
 		assert(idp->di_iarg != NULL);
-		s = strdupa(idp->di_iarg);
+		s = alloca(strlen(idp->di_iarg) + 1);
+		(void) strcpy(s, idp->di_iarg);
 
 		if ((p2 = strrchr(s, ')')) != NULL)
 			*p2 = '\0'; /* mark end of parameter list string */

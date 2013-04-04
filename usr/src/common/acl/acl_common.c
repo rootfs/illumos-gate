@@ -26,10 +26,13 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <sys/avl.h>
+#include <sys/misc.h>
 #if defined(_KERNEL)
+#include <sys/kmem.h>
 #include <sys/systm.h>
 #include <sys/sysmacros.h>
 #include <acl/acl_common.h>
+#include <sys/debug.h>
 #else
 #include <errno.h>
 #include <stdlib.h>
@@ -259,6 +262,7 @@ cacl_free(void *ptr, size_t size)
 #endif
 }
 
+#if !defined(_KERNEL)
 acl_t *
 acl_alloc(enum acl_type type)
 {
@@ -778,9 +782,9 @@ acevals_init(acevals_t *vals, uid_t key)
 static void
 ace_list_init(ace_list_t *al, int dfacl_flag)
 {
-	acevals_init(&al->user_obj, NULL);
-	acevals_init(&al->group_obj, NULL);
-	acevals_init(&al->other_obj, NULL);
+	acevals_init(&al->user_obj, 0);
+	acevals_init(&al->group_obj, 0);
+	acevals_init(&al->other_obj, 0);
 	al->numusers = 0;
 	al->numgroups = 0;
 	al->acl_mask = 0;
@@ -1560,6 +1564,7 @@ out:
 	return (error);
 #endif
 }
+#endif /* !_KERNEL */
 
 #define	SET_ACE(acl, index, who, mask, type, flags) { \
 	acl[0][index].a_who = (uint32_t)who; \
@@ -1633,7 +1638,7 @@ acl_trivial_access_masks(mode_t mode, boolean_t isdir, trivial_acl_t *masks)
 int
 acl_trivial_create(mode_t mode, boolean_t isdir, ace_t **acl, int *count)
 {
-	int 		index = 0;
+	int		index = 0;
 	int		error;
 	trivial_acl_t	masks;
 
