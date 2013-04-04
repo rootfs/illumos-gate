@@ -36,7 +36,12 @@
 #endif
 #include <sys/zfs_fuid.h>
 
-/*
+#include <sys/acl.h>
+#include <sys/security_id.h>
+#include <sys/security_descriptor.h>
+
+/**
+ * \file zfs_fuid.c
  * FUID Domain table(s).
  *
  * The FUID table is stored as a packed nvlist of an array
@@ -65,7 +70,7 @@ typedef struct fuid_domain {
 
 static char *nulldomain = "";
 
-/*
+/**
  * Compare two indexes.
  */
 static int
@@ -81,7 +86,7 @@ idx_compare(const void *arg1, const void *arg2)
 	return (0);
 }
 
-/*
+/**
  * Compare two domain strings.
  */
 static int
@@ -106,7 +111,7 @@ zfs_fuid_avl_tree_create(avl_tree_t *idx_tree, avl_tree_t *domain_tree)
 	    sizeof (fuid_domain_t), offsetof(fuid_domain_t, f_domnode));
 }
 
-/*
+/**
  * load initial fuid domain and idx trees.  This function is used by
  * both the kernel and zdb.
  */
@@ -132,7 +137,7 @@ zfs_fuid_table_load(objset_t *os, uint64_t fuid_obj, avl_tree_t *idx_tree,
 
 		packed = kmem_alloc(fuid_size, KM_SLEEP);
 		VERIFY(dmu_read(os, fuid_obj, 0,
-		    fuid_size, packed, DMU_READ_PREFETCH) == 0);
+		    fuid_size, packed, DMU_CTX_FLAG_PREFETCH) == 0);
 		VERIFY(nvlist_unpack(packed, fuid_size,
 		    &nvp, 0) == 0);
 		VERIFY(nvlist_lookup_nvlist_array(nvp, FUID_NVP_ARRAY,
@@ -192,7 +197,7 @@ zfs_fuid_idx_domain(avl_tree_t *idx_tree, uint32_t idx)
 }
 
 #ifdef _KERNEL
-/*
+/**
  * Load the fuid table(s) into memory.
  */
 static void
@@ -219,7 +224,7 @@ zfs_fuid_init(zfsvfs_t *zfsvfs)
 	rw_exit(&zfsvfs->z_fuid_lock);
 }
 
-/*
+/**
  * sync out AVL trees to persistent storage.
  */
 void
@@ -289,7 +294,7 @@ zfs_fuid_sync(zfsvfs_t *zfsvfs, dmu_tx_t *tx)
 	rw_exit(&zfsvfs->z_fuid_lock);
 }
 
-/*
+/**
  * Query domain table for a given domain.
  *
  * If domain isn't found and addok is set, it is added to AVL trees and
@@ -356,10 +361,10 @@ retry:
 	}
 }
 
-/*
+/**
  * Query domain table by index, returning domain string
  *
- * Returns a pointer from an avl node of the domain string.
+ * \return  A pointer from an avl node of the domain string.
  *
  */
 const char *
@@ -383,6 +388,25 @@ zfs_fuid_find_by_idx(zfsvfs_t *zfsvfs, uint32_t idx)
 
 	ASSERT(domain);
 	return (domain);
+}
+
+int
+zfs_fuid_map_sid(zfsvfs_t *zfsvfs, uint64_t fuid, zfs_fuid_type_t type,
+    struct sid **psid)
+{
+	uint32_t index = FUID_INDEX(fuid);
+	const char *domain;
+
+	/*
+	 * Default to the NULL authority, until mapping
+	 * services are available for POSIX ids.
+	 */
+	domain = "S-1-0";
+	if (index != 0)
+		domain = zfs_fuid_find_by_idx(zfsvfs, index);
+	ASSERT(domain != NULL);
+
+	return (sid_from_domain_and_rid(psid, domain, FUID_RID(fuid)));
 }
 
 void
@@ -420,7 +444,7 @@ zfs_fuid_map_id(zfsvfs_t *zfsvfs, uint64_t fuid,
 	return (id);
 }
 
-/*
+/**
  * Add a FUID node to the list of fuid's being created for this
  * ACL
  *
@@ -486,7 +510,32 @@ zfs_fuid_node_add(zfs_fuid_info_t **fuidpp, const char *domain, uint32_t rid,
 	}
 }
 
-/*
+/**
+ * Create a file system FUID from domain relative id and domain.
+ */
+uint64_t
+zfs_fuid_create_rid_domain(zfsvfs_t *zfsvfs, zfs_fuid_type_t type,
+    uint32_t rid, const char *domain, zfs_fuid_info_t **fuidp)
+{
+	uint64_t	idx;
+	ksid_t		*ksid;
+	char 		*kdomain;
+	uid_t		id;
+
+	if (!zfsvfs->z_use_fuids) {
+		id = rid;
+
+		return ((uint64_t)id);
+	}
+
+	idx = zfs_fuid_find_by_domain(zfsvfs, domain, &kdomain, B_TRUE);
+
+	zfs_fuid_node_add(fuidp, kdomain, rid, idx, id, type);
+
+	return (FUID_ENCODE(idx, rid));
+}
+
+/**
  * Create a file system FUID, based on information in the users cred
  *
  * If cred contains KSID_OWNER then it should be used to determine
@@ -539,7 +588,7 @@ zfs_fuid_create_cred(zfsvfs_t *zfsvfs, zfs_fuid_type_t type,
 	return (FUID_ENCODE(idx, rid));
 }
 
-/*
+/**
  * Create a file system FUID for an ACL ace
  * or a chown/chgrp of the file.
  * This is similar to zfs_fuid_create_cred, except that
@@ -647,7 +696,7 @@ zfs_fuid_destroy(zfsvfs_t *zfsvfs)
 	rw_exit(&zfsvfs->z_fuid_lock);
 }
 
-/*
+/**
  * Allocate zfs_fuid_info for tracking FUIDs created during
  * zfs_mknode, VOP_SETATTR() or VOP_SETSECATTR()
  */
@@ -664,7 +713,7 @@ zfs_fuid_info_alloc(void)
 	return (fuidp);
 }
 
-/*
+/**
  * Release all memory associated with zfs_fuid_info_t
  */
 void
@@ -690,7 +739,7 @@ zfs_fuid_info_free(zfs_fuid_info_t *fuidp)
 	kmem_free(fuidp, sizeof (zfs_fuid_info_t));
 }
 
-/*
+/**
  * Check to see if id is a groupmember.  If cred
  * has ksid info then sidlist is checked first
  * and if still not found then POSIX groups are checked

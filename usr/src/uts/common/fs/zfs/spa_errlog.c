@@ -22,7 +22,8 @@
  * Copyright (c) 2006, 2010, Oracle and/or its affiliates. All rights reserved.
  */
 
-/*
+/**
+ * \file spa_errlog.c
  * Routines to manage the on-disk persistent error log.
  *
  * Each pool stores a log of all logical data errors seen during normal
@@ -54,7 +55,7 @@
 #include <sys/zio.h>
 
 
-/*
+/**
  * Convert a bookmark to a string.
  */
 static void
@@ -65,7 +66,7 @@ bookmark_to_name(zbookmark_t *zb, char *buf, size_t len)
 	    (u_longlong_t)zb->zb_level, (u_longlong_t)zb->zb_blkid);
 }
 
-/*
+/**
  * Convert a string to a bookmark
  */
 #ifdef _KERNEL
@@ -83,7 +84,7 @@ name_to_bookmark(char *buf, zbookmark_t *zb)
 }
 #endif
 
-/*
+/**
  * Log an uncorrectable error to the persistent error log.  We add it to the
  * spa's list of pending errors.  The changes are actually synced out to disk
  * during spa_errlog_sync().
@@ -128,7 +129,7 @@ spa_log_error(spa_t *spa, zio_t *zio)
 	mutex_exit(&spa->spa_errlist_lock);
 }
 
-/*
+/**
  * Return the number of errors currently in the error log.  This is actually the
  * sum of both the last log and the current log, since we don't know the union
  * of these logs until we reach userland.
@@ -182,8 +183,10 @@ process_error_log(spa_t *spa, uint64_t obj, void *addr, size_t *count)
 
 		if (copyout(&zb, (char *)addr +
 		    (*count - 1) * sizeof (zbookmark_t),
-		    sizeof (zbookmark_t)) != 0)
+		    sizeof (zbookmark_t)) != 0) {
+			zap_cursor_fini(&zc);
 			return (EFAULT);
+		}
 
 		*count -= 1;
 	}
@@ -215,7 +218,7 @@ process_error_list(avl_tree_t *list, void *addr, size_t *count)
 }
 #endif
 
-/*
+/**
  * Copy all known errors to userland as an array of bookmarks.  This is
  * actually a union of the on-disk last log and current log, as well as any
  * pending error requests.
@@ -255,7 +258,7 @@ spa_get_errlog(spa_t *spa, void *uaddr, size_t *count)
 	return (ret);
 }
 
-/*
+/**
  * Called when a scrub completes.  This simply set a bit which tells which AVL
  * tree to add new errors.  spa_errlog_sync() is responsible for actually
  * syncing the changes to the underlying objects.
@@ -268,7 +271,7 @@ spa_errlog_rotate(spa_t *spa)
 	mutex_exit(&spa->spa_errlist_lock);
 }
 
-/*
+/**
  * Discard any pending errors from the spa_t.  Called when unloading a faulted
  * pool, as the errors encountered during the open cannot be synced to disk.
  */
@@ -292,7 +295,7 @@ spa_errlog_drain(spa_t *spa)
 	mutex_exit(&spa->spa_errlist_lock);
 }
 
-/*
+/**
  * Process a list of errors into the current on-disk log.
  */
 static void
@@ -326,7 +329,7 @@ sync_error_list(spa_t *spa, avl_tree_t *t, uint64_t *obj, dmu_tx_t *tx)
 	}
 }
 
-/*
+/**
  * Sync the error log out to disk.  This is a little tricky because the act of
  * writing the error log requires the spa_errlist_lock.  So, we need to lock the
  * error lists, take a copy of the lists, and then reinitialize them.  Then, we

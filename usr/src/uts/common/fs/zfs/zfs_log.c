@@ -43,7 +43,10 @@
 #include <sys/zfs_fuid.h>
 #include <sys/dsl_dataset.h>
 
-/*
+/**
+ * \file zfs_log.c
+ * Routines to manage intent log entries
+ *
  * These zfs_log_* functions must be called within a dmu tx, in one
  * of 2 contexts depending on zilog->z_replay:
  *
@@ -101,7 +104,7 @@ zfs_log_create_txtype(zil_create_t type, vsecattr_t *vsecp, vattr_t *vap)
 	return (TX_MAX_TYPE);
 }
 
-/*
+/**
  * build up the log data necessary for logging xvattr_t
  * First lr_attr_t is initialized.  following the lr_attr_t
  * is the mapsize and attribute bitmap copied from the xvattr_t.
@@ -215,10 +218,9 @@ zfs_log_fuid_domains(zfs_fuid_info_t *fuidp, void *start)
 	return (start);
 }
 
-/*
- * zfs_log_create() is used to handle TX_CREATE, TX_CREATE_ATTR, TX_MKDIR,
- * TX_MKDIR_ATTR and TX_MKXATTR
- * transactions.
+/**
+ * Handles TX_CREATE, TX_CREATE_ATTR, TX_MKDIR, TX_MKDIR_ATTR and 
+ * TX_MKXATTR transactions.
  *
  * TX_CREATE and TX_MKDIR are standard creates, but they may have FUID
  * domain information appended prior to the name.  In this case the
@@ -345,8 +347,8 @@ zfs_log_create(zilog_t *zilog, dmu_tx_t *tx, uint64_t txtype,
 	zil_itx_assign(zilog, itx, tx);
 }
 
-/*
- * zfs_log_remove() handles both TX_REMOVE and TX_RMDIR transactions.
+/**
+ * handles both TX_REMOVE and TX_RMDIR transactions.
  */
 void
 zfs_log_remove(zilog_t *zilog, dmu_tx_t *tx, uint64_t txtype,
@@ -369,8 +371,8 @@ zfs_log_remove(zilog_t *zilog, dmu_tx_t *tx, uint64_t txtype,
 	zil_itx_assign(zilog, itx, tx);
 }
 
-/*
- * zfs_log_link() handles TX_LINK transactions.
+/**
+ * handles TX_LINK transactions.
  */
 void
 zfs_log_link(zilog_t *zilog, dmu_tx_t *tx, uint64_t txtype,
@@ -392,8 +394,8 @@ zfs_log_link(zilog_t *zilog, dmu_tx_t *tx, uint64_t txtype,
 	zil_itx_assign(zilog, itx, tx);
 }
 
-/*
- * zfs_log_symlink() handles TX_SYMLINK transactions.
+/**
+ * handles TX_SYMLINK transactions.
  */
 void
 zfs_log_symlink(zilog_t *zilog, dmu_tx_t *tx, uint64_t txtype,
@@ -424,8 +426,8 @@ zfs_log_symlink(zilog_t *zilog, dmu_tx_t *tx, uint64_t txtype,
 	zil_itx_assign(zilog, itx, tx);
 }
 
-/*
- * zfs_log_rename() handles TX_RENAME transactions.
+/**
+ * handles TX_RENAME transactions.
  */
 void
 zfs_log_rename(zilog_t *zilog, dmu_tx_t *tx, uint64_t txtype,
@@ -450,8 +452,8 @@ zfs_log_rename(zilog_t *zilog, dmu_tx_t *tx, uint64_t txtype,
 	zil_itx_assign(zilog, itx, tx);
 }
 
-/*
- * zfs_log_write() handles TX_WRITE transactions.
+/**
+ * handles TX_WRITE transactions.
  */
 ssize_t zfs_immediate_write_sz = 32768;
 
@@ -500,7 +502,7 @@ zfs_log_write(zilog_t *zilog, dmu_tx_t *tx, int txtype,
 		    (write_state == WR_COPIED ? len : 0));
 		lr = (lr_write_t *)&itx->itx_lr;
 		if (write_state == WR_COPIED && dmu_read(zp->z_zfsvfs->z_os,
-		    zp->z_id, off, len, lr + 1, DMU_READ_NO_PREFETCH) != 0) {
+		    zp->z_id, off, len, lr + 1, /*flags*/0) != 0) {
 			zil_itx_destroy(itx);
 			itx = zil_itx_create(txtype, sizeof (*lr));
 			lr = (lr_write_t *)&itx->itx_lr;
@@ -529,8 +531,8 @@ zfs_log_write(zilog_t *zilog, dmu_tx_t *tx, int txtype,
 	}
 }
 
-/*
- * zfs_log_truncate() handles TX_TRUNCATE transactions.
+/**
+ * handles TX_TRUNCATE transactions.
  */
 void
 zfs_log_truncate(zilog_t *zilog, dmu_tx_t *tx, int txtype,
@@ -552,8 +554,8 @@ zfs_log_truncate(zilog_t *zilog, dmu_tx_t *tx, int txtype,
 	zil_itx_assign(zilog, itx, tx);
 }
 
-/*
- * zfs_log_setattr() handles TX_SETATTR transactions.
+/**
+ * handles TX_SETATTR transactions.
  */
 void
 zfs_log_setattr(zilog_t *zilog, dmu_tx_t *tx, int txtype,
@@ -614,8 +616,58 @@ zfs_log_setattr(zilog_t *zilog, dmu_tx_t *tx, int txtype,
 	zil_itx_assign(zilog, itx, tx);
 }
 
-/*
- * zfs_log_acl() handles TX_ACL transactions.
+/**
+ * handles TX_SETATTR transactions caused by security descriptor based updates.
+ */
+void
+zfs_log_sd_setattr(zilog_t *zilog, dmu_tx_t *tx, int txtype,
+	znode_t *zp, uint_t mask_applied, uint64_t mode, zfs_fuid_info_t *fuidp)
+{
+	itx_t		*itx;
+	lr_setattr_t	*lr;
+	size_t		recsize = sizeof (lr_setattr_t);
+	void		*start;
+
+	if (zil_replaying(zilog, tx) || zp->z_unlinked)
+		return;
+
+	if (fuidp)
+		recsize += fuidp->z_domain_str_sz;
+
+	itx = zil_itx_create(txtype, recsize);
+	lr = (lr_setattr_t *)&itx->itx_lr;
+	lr->lr_foid = zp->z_id;
+
+	lr->lr_mask = (uint64_t)mask_applied;
+	lr->lr_mode = (uint64_t)mode;
+	if (mask_applied & AT_UID)
+		lr->lr_uid = fuidp->z_fuid_owner;
+	else
+		lr->lr_uid = 0;
+
+	if (mask_applied & AT_GID)
+		lr->lr_gid = fuidp->z_fuid_group;
+	else
+		lr->lr_gid = 0;
+
+	lr->lr_size = 0;
+	lr->lr_atime[0] = lr->lr_atime[1] = 0;
+	lr->lr_mtime[0] = lr->lr_mtime[1] = 0;
+	start = (lr_setattr_t *)(lr + 1);
+
+	/*
+	 * Now stick on domain information if any on end
+	 */
+
+	if (fuidp)
+		(void) zfs_log_fuid_domains(fuidp, start);
+
+	itx->itx_sync = (zp->z_sync_cnt != 0);
+	zil_itx_assign(zilog, itx, tx);
+}
+
+/**
+ * handles TX_ACL transactions.
  */
 void
 zfs_log_acl(zilog_t *zilog, dmu_tx_t *tx, znode_t *zp,

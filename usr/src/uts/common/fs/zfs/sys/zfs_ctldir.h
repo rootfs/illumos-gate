@@ -33,8 +33,6 @@
 extern "C" {
 #endif
 
-#define	ZFS_CTLDIR_NAME		".zfs"
-
 #define	zfs_has_ctldir(zdp)	\
 	((zdp)->z_id == (zdp)->z_zfsvfs->z_root && \
 	((zdp)->z_zfsvfs->z_ctldir != NULL))
@@ -42,12 +40,34 @@ extern "C" {
 	(zfs_has_ctldir(zdp) && \
 	((zdp)->z_zfsvfs->z_show_ctldir))
 
+extern long zfsctl_abbreviated_snapdir;
+
 void zfsctl_create(zfsvfs_t *);
 void zfsctl_destroy(zfsvfs_t *);
 vnode_t *zfsctl_root(znode_t *);
 void zfsctl_init(void);
 void zfsctl_fini(void);
 boolean_t zfsctl_is_node(vnode_t *);
+
+/**
+ * Returns the name of the special directory used for snapshots and shares
+ */
+inline const char*
+zfsctl_ctldir_name()
+{
+	return (zfsctl_abbreviated_snapdir ? ".snapshot" : ".zfs" );
+}
+
+/**
+ * Returns the name of the directory where snapshots are mounted, relative to
+ * the ctldir directory
+ */
+static inline char*
+zfsctl_snapdir_name()
+{
+	return (zfsctl_abbreviated_snapdir ? "." : "snapshot");
+}
+
 
 int zfsctl_rename_snapshot(const char *from, const char *to);
 int zfsctl_destroy_snapshot(const char *snapname, int force);

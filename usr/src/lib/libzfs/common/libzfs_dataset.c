@@ -2117,7 +2117,8 @@ zfs_prop_get(zfs_handle_t *zhp, zfs_prop_t prop, char *propbuf, size_t proplen,
 			    localtime_r(&time, &t) == NULL ||
 			    strftime(propbuf, proplen, "%a %b %e %k:%M %Y",
 			    &t) == 0)
-				(void) snprintf(propbuf, proplen, "%llu", val);
+				(void) snprintf(propbuf, proplen, "%"PRIu64,
+				    val);
 		}
 		break;
 
@@ -2460,6 +2461,7 @@ out:
 	return (err);
 #else	/* !sun */
 	assert(!"invalid code path");
+	return (-1);
 #endif	/* !sun */
 }
 
@@ -2631,7 +2633,7 @@ zfs_prop_get_userquota(zfs_handle_t *zhp, const char *propname,
 		return (err);
 
 	if (literal) {
-		(void) snprintf(propbuf, proplen, "%llu", propvalue);
+		(void) snprintf(propbuf, proplen, "%"PRIu64, propvalue);
 	} else if (propvalue == 0 &&
 	    (type == ZFS_PROP_USERQUOTA || type == ZFS_PROP_GROUPQUOTA)) {
 		(void) strlcpy(propbuf, "none", proplen);
@@ -2688,7 +2690,7 @@ zfs_prop_get_written(zfs_handle_t *zhp, const char *propname,
 		return (err);
 
 	if (literal) {
-		(void) snprintf(propbuf, proplen, "%llu", propvalue);
+		(void) snprintf(propbuf, proplen, "%"PRIu64, propvalue);
 	} else {
 		zfs_nicenum(propvalue, propbuf, proplen);
 	}
@@ -4400,6 +4402,15 @@ out:
 	return (err);
 }
 
+/**
+ * \brief Convert the zvol's volume size to an appropriate reservation.
+ *
+ * \param volsize	Volume size to convert.
+ * \param props		Volume properties to get other metadata from.
+ *
+ * \note	If this routine is updated, it is necessary to update the
+ * 		ZFS test suite's shell version in reservation.kshlib.
+ */
 uint64_t
 zvol_volsize_to_reservation(uint64_t volsize, nvlist_t *props)
 {

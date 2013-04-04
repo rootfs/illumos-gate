@@ -50,11 +50,13 @@ static void dsl_dir_set_reservation_sync(void *arg1, void *arg2, dmu_tx_t *tx);
 
 /* ARGSUSED */
 static void
-dsl_dir_evict(dmu_buf_t *db, void *arg)
+dsl_dir_evict(dmu_buf_user_t *dbu)
 {
-	dsl_dir_t *dd = arg;
+	dsl_dir_t *dd = (dsl_dir_t *)dbu;
 	dsl_pool_t *dp = dd->dd_pool;
 	int t;
+
+	dd->dd_dbuf = NULL;
 
 	for (t = 0; t < TXG_SIZE; t++) {
 		ASSERT(!txg_list_member(&dp->dp_dirty_dirs, dd, t));
@@ -90,7 +92,7 @@ dsl_dir_open_obj(dsl_pool_t *dp, uint64_t ddobj,
 	err = dmu_bonus_hold(dp->dp_meta_objset, ddobj, tag, &dbuf);
 	if (err)
 		return (err);
-	dd = dmu_buf_get_user(dbuf);
+	dd = (dsl_dir_t *)dmu_buf_get_user(dbuf);
 #ifdef ZFS_DEBUG
 	{
 		dmu_object_info_t doi;
@@ -106,7 +108,6 @@ dsl_dir_open_obj(dsl_pool_t *dp, uint64_t ddobj,
 		dd->dd_object = ddobj;
 		dd->dd_dbuf = dbuf;
 		dd->dd_pool = dp;
-		dd->dd_phys = dbuf->db_data;
 		mutex_init(&dd->dd_lock, NULL, MUTEX_DEFAULT, NULL);
 
 		list_create(&dd->dd_prop_cbs, sizeof (dsl_prop_cb_record_t),
@@ -159,8 +160,8 @@ dsl_dir_open_obj(dsl_pool_t *dp, uint64_t ddobj,
 			dmu_buf_rele(origin_bonus, FTAG);
 		}
 
-		winner = dmu_buf_set_user_ie(dbuf, dd, &dd->dd_phys,
-		    dsl_dir_evict);
+		dmu_buf_init_user(&dd->db_evict, dsl_dir_evict);
+		winner = (dsl_dir_t *)dmu_buf_set_user_ie(dbuf, &dd->db_evict);
 		if (winner) {
 			if (dd->dd_parent)
 				dsl_dir_close(dd->dd_parent, dd);
@@ -205,7 +206,7 @@ dsl_dir_close(dsl_dir_t *dd, void *tag)
 	dmu_buf_rele(dd->dd_dbuf, tag);
 }
 
-/* buf must be long enough (MAXNAMELEN + strlen(MOS_DIR_NAME) + 1 should do) */
+/** buf must be long enough (MAXNAMELEN + strlen(MOS_DIR_NAME) + 1 should do) */
 void
 dsl_dir_name(dsl_dir_t *dd, char *buf)
 {
@@ -300,7 +301,7 @@ getcomponent(const char *path, char *component, const char **nextp)
 	return (0);
 }
 
-/*
+/**
  * same as dsl_open_dir, ignore the first component of name and use the
  * spa instead
  */
@@ -399,7 +400,7 @@ dsl_dir_open_spa(spa_t *spa, const char *name, void *tag,
 	return (err);
 }
 
-/*
+/**
  * Return the dsl_dir_t, and possibly the last component which couldn't
  * be found in *tail.  Return NULL if the path is bogus, or if
  * tail==NULL and we couldn't parse the whole name.  (*tail)[0] == '@'
@@ -620,7 +621,7 @@ dsl_dir_space_towrite(dsl_dir_t *dd)
 	return (space);
 }
 
-/*
+/**
  * How much space would dd have available if ancestor had delta applied
  * to it?  If ondiskonly is set, we're only interested in what's
  * on-disk, not estimated pending changes.
@@ -809,7 +810,7 @@ dsl_dir_tempreserve_impl(dsl_dir_t *dd, uint64_t asize, boolean_t netfree,
 	}
 }
 
-/*
+/**
  * Reserve space in this dsl_dir, to be used in this tx's txg.
  * After the space has been dirtied (and dsl_dir_willuse_space()
  * has been called), the reservation should be canceled, using
@@ -870,7 +871,7 @@ dsl_dir_tempreserve_space(dsl_dir_t *dd, uint64_t lsize, uint64_t asize,
 	return (err);
 }
 
-/*
+/**
  * Clear a temporary reservation that we previously made with
  * dsl_dir_tempreserve_space().
  */
@@ -927,7 +928,7 @@ dsl_dir_willuse_space_impl(dsl_dir_t *dd, int64_t space, dmu_tx_t *tx)
 		dsl_dir_willuse_space_impl(dd->dd_parent, parent_space, tx);
 }
 
-/*
+/**
  * Call in open context when we think we're going to write/free space,
  * eg. when dirtying data.  Be conservative (ie. OK to write less than
  * this or free more than this, but don't write more or free less).
@@ -939,7 +940,7 @@ dsl_dir_willuse_space(dsl_dir_t *dd, int64_t space, dmu_tx_t *tx)
 	dsl_dir_willuse_space_impl(dd, space, tx);
 }
 
-/* call from syncing context when we actually write/free space for this dd */
+/** call from syncing context when we actually write/free space for this dd */
 void
 dsl_dir_diduse_space(dsl_dir_t *dd, dd_used_t type,
     int64_t used, int64_t compressed, int64_t uncompressed, dmu_tx_t *tx)
@@ -1221,7 +1222,7 @@ closest_common_ancestor(dsl_dir_t *ds1, dsl_dir_t *ds2)
 	return (NULL);
 }
 
-/*
+/**
  * If delta is applied to dd, how much of that delta would be applied to
  * ancestor?  Syncing context only.
  */
@@ -1294,7 +1295,6 @@ dsl_dir_rename_check(void *arg1, void *arg2, dmu_tx_t *tx)
 static void
 dsl_dir_rename_sync(void *arg1, void *arg2, dmu_tx_t *tx)
 {
-	char oldname[MAXPATHLEN], newname[MAXPATHLEN];
 	dsl_dir_t *dd = arg1;
 	struct renamearg *ra = arg2;
 	dsl_pool_t *dp = dd->dd_pool;
@@ -1327,7 +1327,6 @@ dsl_dir_rename_sync(void *arg1, void *arg2, dmu_tx_t *tx)
 	dmu_buf_will_dirty(dd->dd_dbuf, tx);
 
 	/* remove from old parent zapobj */
-	dsl_dir_name(dd, oldname);
 	err = zap_remove(mos, dd->dd_parent->dd_phys->dd_child_dir_zapobj,
 	    dd->dd_myname, tx);
 	ASSERT0(err);
@@ -1342,11 +1341,6 @@ dsl_dir_rename_sync(void *arg1, void *arg2, dmu_tx_t *tx)
 	err = zap_add(mos, ra->newparent->dd_phys->dd_child_dir_zapobj,
 	    dd->dd_myname, 8, 1, &dd->dd_object, tx);
 	ASSERT0(err);
-	dsl_dir_name(dd, newname);
-#ifdef _KERNEL
-	zfsvfs_update_fromname(oldname, newname);
-	zvol_rename_minors(oldname, newname);
-#endif
 
 	spa_history_log_internal(LOG_DS_RENAME, dd->dd_pool->dp_spa,
 	    tx, "dataset = %llu", dd->dd_phys->dd_head_dataset_obj);
@@ -1355,6 +1349,7 @@ dsl_dir_rename_sync(void *arg1, void *arg2, dmu_tx_t *tx)
 int
 dsl_dir_rename(dsl_dir_t *dd, const char *newname, int flags)
 {
+	char oldname[MAXNAMELEN];
 	struct renamearg ra;
 	int err;
 
@@ -1376,9 +1371,17 @@ dsl_dir_rename(dsl_dir_t *dd, const char *newname, int flags)
 	}
 
 	ra.allowmounted = !!(flags & ZFS_RENAME_ALLOW_MOUNTED);
+	dsl_dir_name(dd, oldname);
 
 	err = dsl_sync_task_do(dd->dd_pool,
 	    dsl_dir_rename_check, dsl_dir_rename_sync, dd, &ra, 3);
+
+#ifdef _KERNEL
+	if (err == 0) {
+		zfsvfs_update_fromname(oldname, newname);
+		zvol_rename_devices(oldname, newname);
+	}
+#endif
 
 out:
 	dsl_dir_close(ra.newparent, FTAG);

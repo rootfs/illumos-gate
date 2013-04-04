@@ -43,40 +43,44 @@ typedef enum {
 } rl_type_t;
 
 typedef struct rl {
-	znode_t *r_zp;		/* znode this lock applies to */
-	avl_node_t r_node;	/* avl node link */
-	uint64_t r_off;		/* file range offset */
-	uint64_t r_len;		/* file range length */
-	uint_t r_cnt;		/* range reference count in tree */
-	rl_type_t r_type;	/* range type */
-	kcondvar_t r_wr_cv;	/* cv for waiting writers */
-	kcondvar_t r_rd_cv;	/* cv for waiting readers */
-	uint8_t r_proxy;	/* acting for original range */
-	uint8_t r_write_wanted;	/* writer wants to lock this range */
-	uint8_t r_read_wanted;	/* reader wants to lock this range */
+	znode_t *r_zp;		/**< znode this lock applies to */
+	avl_node_t r_node;	/**< avl node link */
+	uint64_t r_off;		/**< file range offset */
+	uint64_t r_len;		/**< file range length */
+	uint_t r_cnt;		/**< range reference count in tree */
+	rl_type_t r_type;	/**< range type */
+	kcondvar_t r_wr_cv;	/**< cv for waiting writers */
+	kcondvar_t r_rd_cv;	/**< cv for waiting readers */
+	uint8_t r_proxy;	/**< acting for original range */
+	uint8_t r_write_wanted;	/**< writer wants to lock this range */
+	uint8_t r_read_wanted;	/**< reader wants to lock this range */
 } rl_t;
 
-/*
- * Lock a range (offset, length) as either shared (READER)
- * or exclusive (WRITER or APPEND). APPEND is a special type that
- * is converted to WRITER that specified to lock from the start of the
- * end of file.  zfs_range_lock() returns the range lock structure.
+/**
+ * Lock an object range
+ *
+ * \param	off	Offset into the file that begins the range
+ * \param	len	Length of the range to lock
+ * \param	type	Either shared (RL_READER) or exclusive (RL_WRITER or
+ * 			RL_APPEND).  APPEND is a special type that is converted
+ * 			to WRITER that specified to lock from the start of the
+ * 			end of file.
+ *
+ * \return  The range lock structure for later unlocking or reduce range
+ *	    (if entire file previously locked as RL_WRITER).
  */
 rl_t *zfs_range_lock(znode_t *zp, uint64_t off, uint64_t len, rl_type_t type);
 
-/*
- * Unlock range and destroy range lock structure.
- */
 void zfs_range_unlock(rl_t *rl);
 
-/*
- * Reduce range locked as RW_WRITER from whole file to specified range.
- * Asserts the whole file was previously locked.
+/**
+ * Unlock range and destroy range lock structure.
  */
 void zfs_range_reduce(rl_t *rl, uint64_t off, uint64_t len);
 
-/*
- * AVL comparison function used to compare range locks
+/**
+ * AVL comparison function used to order range locks
+ * Locks are ordered on the start offset of the range.
  */
 int zfs_range_compare(const void *arg1, const void *arg2);
 

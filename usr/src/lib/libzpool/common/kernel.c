@@ -589,6 +589,17 @@ dprintf_setup(int *argc, char **argv)
 
 /*
  * =========================================================================
+ * sysctl support
+ * =========================================================================
+ */
+int
+sysctl_handle_int(SYSCTL_HANDLER_ARGS)
+{
+	return (0);
+}
+
+/*
+ * =========================================================================
  * debug printfs
  * =========================================================================
  */
@@ -616,7 +627,7 @@ __dprintf(const char *file, const char *func, int line, const char *fmt, ...)
 		if (dprintf_find_string("pid"))
 			(void) printf("%d ", getpid());
 		if (dprintf_find_string("tid"))
-			(void) printf("%u ", thr_self());
+			(void) printf("%lu ", thr_self());
 #if 0
 		if (dprintf_find_string("cpu"))
 			(void) printf("%u ", getcpuid());

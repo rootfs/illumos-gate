@@ -498,6 +498,7 @@ fasttrap_fork(proc_t *p, proc_t *cp)
 	mtx_unlock_spin(&cp->p_slock);
 #else
 	_PHOLD(cp);
+	PROC_UNLOCK(cp);
 #endif
 
 	/*
@@ -532,6 +533,7 @@ fasttrap_fork(proc_t *p, proc_t *cp)
 	mutex_enter(&cp->p_lock);
 	sprunlock(cp);
 #else
+	PROC_LOCK(cp);
 	_PRELE(cp);
 #endif
 }
@@ -1124,14 +1126,12 @@ fasttrap_pid_disable(void *arg, dtrace_id_t id, void *parg)
 	 * provider lock as a point of mutual exclusion to prevent other
 	 * DTrace consumers from disabling this probe.
 	 */
-	if ((p = pfind(probe->ftp_pid)) == NULL) {
-		mutex_exit(&provider->ftp_mtx);
-		return;
-	}
+	if ((p = pfind(probe->ftp_pid)) != NULL) {
 #ifdef __FreeBSD__
-	_PHOLD(p);
-	PROC_UNLOCK(p);
+		_PHOLD(p);
+		PROC_UNLOCK(p);
 #endif
+	}
 
 	/*
 	 * Disable all the associated tracepoints (for fully enabled probes).
@@ -1168,7 +1168,8 @@ fasttrap_pid_disable(void *arg, dtrace_id_t id, void *parg)
 		fasttrap_pid_cleanup();
 
 #ifdef __FreeBSD__
-	PRELE(p);
+	if (p != NULL)
+		PRELE(p);
 #endif
 	if (!probe->ftp_enabled)
 		return;
@@ -2274,13 +2275,6 @@ fasttrap_load(void)
 	mutex_init(&fasttrap_count_mtx, "fasttrap count mtx", MUTEX_DEFAULT,
 	    NULL);
 
-	/*
-	 * Install our hooks into fork(2), exec(2), and exit(2).
-	 */
-	dtrace_fasttrap_fork = &fasttrap_fork;
-	dtrace_fasttrap_exit = &fasttrap_exec_exit;
-	dtrace_fasttrap_exec = &fasttrap_exec_exit;
-
 #if defined(sun)
 	fasttrap_max = ddi_getprop(DDI_DEV_T_ANY, devi, DDI_PROP_DONTPASS,
 	    "fasttrap-max-probes", FASTTRAP_MAX_DEFAULT);
@@ -2359,6 +2353,14 @@ fasttrap_load(void)
 
 	(void) dtrace_meta_register("fasttrap", &fasttrap_mops, NULL,
 	    &fasttrap_meta_id);
+
+	/*
+	 * Install our hooks into fork(2), exec(2), and exit(2).
+	 */
+	atomic_store_rel_int(&dtrace_fasttrap_hook_counter, 0);
+	dtrace_fasttrap_fork = &fasttrap_fork;
+	dtrace_fasttrap_exit = &fasttrap_exec_exit;
+	dtrace_fasttrap_exec = &fasttrap_exec_exit;
 
 	return (0);
 }
@@ -2442,6 +2444,22 @@ fasttrap_unload(void)
 		return (-1);
 	}
 
+	/*
+	 * Prevent any new processes from entering these hooks.
+	 * Then wait for the hook counter to drain to 0 so we know that it's
+	 * safe to free fasttrap_provs and unload the module
+	 */
+	ASSERT(dtrace_fasttrap_fork == &fasttrap_fork);
+	dtrace_fasttrap_fork = NULL;
+
+	ASSERT(dtrace_fasttrap_exec == &fasttrap_exec_exit);
+	dtrace_fasttrap_exec = NULL;
+
+	ASSERT(dtrace_fasttrap_exit == &fasttrap_exec_exit);
+	dtrace_fasttrap_exit = NULL;
+
+	while (atomic_load_acq_int(&dtrace_fasttrap_hook_counter) > 0) ;
+
 #ifdef DEBUG
 	mutex_enter(&fasttrap_count_mtx);
 	ASSERT(fasttrap_pid_count == 0);
@@ -2459,22 +2477,6 @@ fasttrap_unload(void)
 	kmem_free(fasttrap_procs.fth_table,
 	    fasttrap_procs.fth_nent * sizeof (fasttrap_bucket_t));
 	fasttrap_procs.fth_nent = 0;
-
-	/*
-	 * We know there are no tracepoints in any process anywhere in
-	 * the system so there is no process which has its p_dtrace_count
-	 * greater than zero, therefore we know that no thread can actively
-	 * be executing code in fasttrap_fork(). Similarly for p_dtrace_probes
-	 * and fasttrap_exec() and fasttrap_exit().
-	 */
-	ASSERT(dtrace_fasttrap_fork == &fasttrap_fork);
-	dtrace_fasttrap_fork = NULL;
-
-	ASSERT(dtrace_fasttrap_exec == &fasttrap_exec_exit);
-	dtrace_fasttrap_exec = NULL;
-
-	ASSERT(dtrace_fasttrap_exit == &fasttrap_exec_exit);
-	dtrace_fasttrap_exit = NULL;
 
 #if !defined(sun)
 	destroy_dev(fasttrap_cdev);

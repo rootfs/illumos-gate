@@ -121,7 +121,8 @@ ZFS_OBJS +=			\
 	rrwlock.o		\
 	zfs_vfsops.o		\
 	zfs_vnops.o		\
-	zvol.o
+	zvol.o			\
+	zvol_freebsd.o
 
 ZUT_OBJS +=			\
 	zut.o

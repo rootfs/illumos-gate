@@ -44,7 +44,7 @@
 #include <sys/sa.h>
 #include <sys/zfs_onexit.h>
 
-/*
+/**
  * Needed to close a window in dnode_move() that allows the objset to be freed
  * before it can be safely accessed.
  */
@@ -533,9 +533,9 @@ dmu_objset_evict(objset_t *os)
 		ASSERT(!dmu_objset_is_dirty(os, t));
 
 	if (ds) {
-		if (!dsl_dataset_is_snapshot(ds)) {
-			VERIFY(0 == dsl_prop_unregister(ds, "checksum",
-			    checksum_changed_cb, os));
+		/* Snapshots do not have these properties. */
+		if (0 == dsl_prop_unregister(ds, "checksum",
+		    checksum_changed_cb, os)) {
 			VERIFY(0 == dsl_prop_unregister(ds, "compression",
 			    compression_changed_cb, os));
 			VERIFY(0 == dsl_prop_unregister(ds, "copies",
@@ -655,6 +655,7 @@ dmu_objset_create_impl(spa_t *spa, dsl_dataset_t *ds, blkptr_t *bp,
 }
 
 struct oscarg {
+	const char *name;
 	void (*userfunc)(objset_t *os, void *arg, cred_t *cr, dmu_tx_t *tx);
 	void *userarg;
 	dsl_dataset_t *clone_origin;
@@ -678,6 +679,14 @@ dmu_objset_create_check(void *arg1, void *arg2, dmu_tx_t *tx)
 	    oa->lastname, sizeof (uint64_t), 1, &ddobj);
 	if (err != ENOENT)
 		return (err ? err : EEXIST);
+
+#ifdef _KERNEL
+	if (oa->type == DMU_OST_ZVOL) {
+		err = zvol_namecheck(oa->name);
+		if (err)
+			return (err);
+	}
+#endif
 
 	if (oa->clone_origin != NULL) {
 		/* You can't clone across pools. */
@@ -725,72 +734,77 @@ dmu_objset_create_sync(void *arg1, void *arg2, dmu_tx_t *tx)
 	spa_history_log_internal(LOG_DS_CREATE, spa, tx, "dataset = %llu", obj);
 }
 
-int
-dmu_objset_create(const char *name, dmu_objset_type_t type, uint64_t flags,
-    void (*func)(objset_t *os, void *arg, cred_t *cr, dmu_tx_t *tx), void *arg)
+static int
+dmu_objset_do_create(struct oscarg *oap)
 {
-	dsl_dir_t *pdd;
+	int err;
 	const char *tail;
-	int err = 0;
-	struct oscarg oa = { 0 };
+	dsl_dir_t *pdd;
 
-	ASSERT(strchr(name, '@') == NULL);
-	err = dsl_dir_open(name, FTAG, &pdd, &tail);
+	ASSERT(strchr(oap->name, '@') == NULL);
+	err = dsl_dir_open(oap->name, FTAG, &pdd, &tail);
 	if (err)
 		return (err);
-	if (tail == NULL) {
-		dsl_dir_close(pdd, FTAG);
-		return (EEXIST);
+	err = (tail == NULL) ? EEXIST : 0;
+	if (err == 0) {
+		oap->lastname = tail;
+		err = dsl_sync_task_do(pdd->dd_pool, dmu_objset_create_check,
+		    dmu_objset_create_sync, pdd, oap, 5);
 	}
+#ifdef _KERNEL
+	if (oap->type == DMU_OST_ZVOL &&
+	    (oap->userfunc != NULL || (oap->flags & DS_FLAG_INCONSISTENT) == 0))
+		(void) zvol_create_devices(oap->name, /*ignore_errors*/B_TRUE, 0);
+#endif
 
-	oa.userfunc = func;
-	oa.userarg = arg;
-	oa.lastname = tail;
-	oa.type = type;
-	oa.flags = flags;
-	oa.cr = CRED();
-
-	err = dsl_sync_task_do(pdd->dd_pool, dmu_objset_create_check,
-	    dmu_objset_create_sync, pdd, &oa, 5);
 	dsl_dir_close(pdd, FTAG);
 	return (err);
 }
 
 int
-dmu_objset_clone(const char *name, dsl_dataset_t *clone_origin, uint64_t flags)
+dmu_objset_create(const char *name, dmu_objset_type_t type, uint64_t flags,
+    void (*func)(objset_t *os, void *arg, cred_t *cr, dmu_tx_t *tx), void *arg)
 {
-	dsl_dir_t *pdd;
-	const char *tail;
-	int err = 0;
 	struct oscarg oa = { 0 };
 
-	ASSERT(strchr(name, '@') == NULL);
-	err = dsl_dir_open(name, FTAG, &pdd, &tail);
-	if (err)
-		return (err);
-	if (tail == NULL) {
-		dsl_dir_close(pdd, FTAG);
-		return (EEXIST);
-	}
-
-	oa.lastname = tail;
-	oa.clone_origin = clone_origin;
+	oa.name = name;
+	oa.userfunc = func;
+	oa.userarg = arg;
+	oa.type = type;
 	oa.flags = flags;
 	oa.cr = CRED();
+	return (dmu_objset_do_create(&oa));
+}
 
-	err = dsl_sync_task_do(pdd->dd_pool, dmu_objset_create_check,
-	    dmu_objset_create_sync, pdd, &oa, 5);
-	dsl_dir_close(pdd, FTAG);
-	return (err);
+int
+dmu_objset_clone(const char *name, objset_t *clone_origin, uint64_t flags)
+{
+	struct oscarg oa = { 0 };
+	int error;
+
+	oa.name = name;
+	oa.clone_origin = dmu_objset_ds(clone_origin);
+	oa.type = dmu_objset_type(clone_origin);
+	oa.flags = flags;
+	oa.cr = CRED();
+	return (dmu_objset_do_create(&oa));
 }
 
 int
 dmu_objset_destroy(const char *name, boolean_t defer)
 {
 	dsl_dataset_t *ds;
+	objset_t *os;
 	int error;
 
 	error = dsl_dataset_own(name, B_TRUE, FTAG, &ds);
+#ifdef _KERNEL
+	if (error == 0)
+		error = dmu_objset_from_ds(ds, &os);
+	if (error == 0 && dmu_objset_type(os) == DMU_OST_ZVOL)
+		error = zvol_destroy_devices(name, /*ignore_errors*/B_FALSE,
+		    DS_FIND_SELF);
+#endif
 	if (error == 0) {
 		error = dsl_dataset_destroy(ds, FTAG, defer);
 		/* dsl_dataset_destroy() closes the ds. */
@@ -998,17 +1012,9 @@ dmu_objset_snapshot(char *fsname, char *snapname, char *tag,
 		}
 		if (sn.needsuspend)
 			zil_resume(dmu_objset_zil(os));
-#ifdef __FreeBSD__
 #ifdef _KERNEL
-		if (dst->dst_err == 0 && dmu_objset_type(os) == DMU_OST_ZVOL) {
-			char name[MAXNAMELEN];
-
-			dmu_objset_name(os, name);
-			strlcat(name, "@", sizeof(name));
-			strlcat(name, snapname, sizeof(name));
-			zvol_create_minors(name);
-		}
-#endif
+		if (dst->dst_err == 0 && dmu_objset_type(os) == DMU_OST_ZVOL)
+			err = zvol_create_from_objset(os, snapname);
 #endif
 		dmu_objset_rele(os, &sn);
 	}
@@ -1283,7 +1289,7 @@ dmu_objset_do_userquota_updates(objset_t *os, dmu_tx_t *tx)
 	}
 }
 
-/*
+/**
  * Returns a pointer to data to find uid/gid from
  *
  * If a dirty record for transaction group that is syncing can't
@@ -1293,16 +1299,13 @@ dmu_objset_do_userquota_updates(objset_t *os, dmu_tx_t *tx)
 static void *
 dmu_objset_userquota_find_data(dmu_buf_impl_t *db, dmu_tx_t *tx)
 {
-	dbuf_dirty_record_t *dr, **drp;
+	dbuf_dirty_record_t *dr;
 	void *data;
 
 	if (db->db_dirtycnt == 0)
 		return (db->db.db_data);  /* Nothing is changing */
 
-	for (drp = &db->db_last_dirty; (dr = *drp) != NULL; drp = &dr->dr_next)
-		if (dr->dr_txg == tx->tx_txg)
-			break;
-
+	dr = dbuf_get_dirty_record_for_txg(db, tx->tx_txg);
 	if (dr == NULL) {
 		data = NULL;
 	} else {
@@ -1628,9 +1631,10 @@ findfunc(spa_t *spa, uint64_t dsobj, const char *dsname, void *arg)
 	return (fa->func(dsname, fa->arg));
 }
 
-/*
+/**
  * Find all objsets under name, and for each, call 'func(child_name, arg)'.
- * Perhaps change all callers to use dmu_objset_find_spa()?
+ * 
+ * \todo  Perhaps change all callers to use dmu_objset_find_spa()?
  */
 int
 dmu_objset_find(const char *name, int func(const char *, void *), void *arg,
@@ -1642,7 +1646,7 @@ dmu_objset_find(const char *name, int func(const char *, void *), void *arg,
 	return (dmu_objset_find_spa(NULL, name, findfunc, &fa, flags));
 }
 
-/*
+/**
  * Find all objsets under name, call func on each
  */
 int
@@ -1736,7 +1740,7 @@ dmu_objset_find_spa(spa_t *spa, const char *name,
 	dsl_dir_close(dd, FTAG);
 	kmem_free(attr, sizeof (zap_attribute_t));
 
-	if (err)
+	if (err || (flags & DS_FIND_IGNORE_SELF))
 		return (err);
 
 	/*

@@ -34,7 +34,8 @@
 #include <sys/efi_partition.h>
 #include <sys/fm/fs/zfs.h>
 
-/*
+/**
+ * \file
  * Virtual device vector for disks.
  */
 
@@ -405,10 +406,10 @@ vdev_disk_io_intr(buf_t *bp)
 	 * Rather than teach the rest of the stack about other error
 	 * possibilities (EFAULT, etc), we normalize the error value here.
 	 */
-	zio->io_error = (geterror(bp) != 0 ? EIO : 0);
+	ZIO_SET_ERROR(zio, geterror(bp) != 0 ? EIO : 0);
 
 	if (zio->io_error == 0 && bp->b_resid != 0)
-		zio->io_error = EIO;
+		ZIO_SET_ERROR(zio, EIO);
 
 	kmem_free(vdb, sizeof (vdev_disk_buf_t));
 
@@ -431,7 +432,7 @@ vdev_disk_ioctl_done(void *zio_arg, int error)
 {
 	zio_t *zio = zio_arg;
 
-	zio->io_error = error;
+	ZIO_SET_ERROR(zio, error);
 
 	zio_interrupt(zio);
 }
@@ -449,7 +450,7 @@ vdev_disk_io_start(zio_t *zio)
 	if (zio->io_type == ZIO_TYPE_IOCTL) {
 		/* XXPOLICY */
 		if (!vdev_readable(vd)) {
-			zio->io_error = ENXIO;
+			ZIO_SET_ERROR(zio, ENXIO);
 			return (ZIO_PIPELINE_CONTINUE);
 		}
 
@@ -461,7 +462,7 @@ vdev_disk_io_start(zio_t *zio)
 				break;
 
 			if (vd->vdev_nowritecache) {
-				zio->io_error = ENOTSUP;
+				ZIO_SET_ERROR(zio, ENOTSUP);
 				break;
 			}
 
@@ -494,12 +495,12 @@ vdev_disk_io_start(zio_t *zio)
 				 */
 				vd->vdev_nowritecache = B_TRUE;
 			}
-			zio->io_error = error;
+			ZIO_SET_ERROR(zio, error);
 
 			break;
 
 		default:
-			zio->io_error = ENOTSUP;
+			ZIO_SET_ERROR(zio, ENOTSUP);
 		}
 
 		return (ZIO_PIPELINE_CONTINUE);
@@ -572,7 +573,7 @@ vdev_ops_t vdev_disk_ops = {
 	B_TRUE			/* leaf vdev */
 };
 
-/*
+/**
  * Given the root disk device devid or pathname, read the label from
  * the device, and construct a configuration nvlist.
  */

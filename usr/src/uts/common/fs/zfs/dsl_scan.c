@@ -58,6 +58,10 @@ static scan_cb_t dsl_scan_remove_cb;
 static dsl_syncfunc_t dsl_scan_cancel_sync;
 static void dsl_scan_sync_state(dsl_scan_t *, dmu_tx_t *tx);
 
+/**
+ * \addtogroup tunables 
+ * \{
+ */
 unsigned int zfs_top_maxinflight = 32;	/* maximum I/Os per top-level */
 unsigned int zfs_resilver_delay = 2;	/* number of ticks to delay resilver */
 unsigned int zfs_scrub_delay = 4;	/* number of ticks to delay scrub */
@@ -69,6 +73,7 @@ unsigned int zfs_resilver_min_time_ms = 3000; /* min millisecs to resilver
 						 per txg */
 boolean_t zfs_no_scrub_io = B_FALSE; /* set to disable scrub i/o */
 boolean_t zfs_no_scrub_prefetch = B_FALSE; /* set to disable srub prefetching */
+/** \} */
 
 SYSCTL_DECL(_vfs_zfs);
 TUNABLE_INT("vfs.zfs.top_maxinflight", &zfs_top_maxinflight);
@@ -110,8 +115,8 @@ extern int zfs_txg_timeout;
 /* the order has to match pool_scan_type */
 static scan_cb_t *scan_funcs[POOL_SCAN_FUNCS] = {
 	NULL,
-	dsl_scan_scrub_cb,	/* POOL_SCAN_SCRUB */
-	dsl_scan_scrub_cb,	/* POOL_SCAN_RESILVER */
+	dsl_scan_scrub_cb,	/**< POOL_SCAN_SCRUB */
+	dsl_scan_scrub_cb,	/**< POOL_SCAN_RESILVER */
 };
 
 int
@@ -629,8 +634,9 @@ dsl_scan_check_resume(dsl_scan_t *scn, const dnode_phys_t *dnp,
 }
 
 /*
- * Return nonzero on i/o error.
- * Return new buf to write out in *bufp.
+ * \param	bufp	return location for new buf to write out
+ *
+ * \return  nonzero on i/o error.
  */
 static int
 dsl_scan_recurse(dsl_scan_t *scn, dsl_dataset_t *ds, dmu_objset_type_t ostype,
@@ -1180,7 +1186,7 @@ enqueue_cb(spa_t *spa, uint64_t dsobj, const char *dsname, void *arg)
 	return (0);
 }
 
-/*
+/**
  * Scrub/dedup interaction.
  *
  * If there are N references to a deduped block, we don't want to scrub it
@@ -1561,7 +1567,7 @@ dsl_scan_sync(dsl_pool_t *dp, dmu_tx_t *tx)
 	dsl_scan_sync_state(scn, tx);
 }
 
-/*
+/**
  * This will start a new scan, or restart an existing one.
  */
 void

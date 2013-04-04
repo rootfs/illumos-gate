@@ -23,7 +23,10 @@
  * Copyright (c) 2005, 2010, Oracle and/or its affiliates. All rights reserved.
  */
 
-/*
+/**
+ * \file lzjb.c
+ * LZJB compression of on-disk data
+ *
  * We keep our own copy of this algorithm for 3 main reasons:
  *	1. If we didn't, anyone modifying common/os/compress.c would
  *         directly break our on disk format

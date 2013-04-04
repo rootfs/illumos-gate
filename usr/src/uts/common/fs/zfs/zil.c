@@ -39,7 +39,10 @@
 #include <sys/dmu_tx.h>
 #include <sys/dsl_pool.h>
 
-/*
+/**
+ * \file zil.c
+ * ZFS Intent Log
+ *
  * The zfs intent log (ZIL) saves transaction records of system calls
  * that change the file system in memory with enough information
  * to be able to replay them. These are stored in memory until
@@ -65,19 +68,25 @@
  * needed from the blocks available. Figure X shows the ZIL structure:
  */
 
-/*
- * This global ZIL switch affects all pools
+/**
+ * Disable intent logging replay
+ *
+ * This global ZIL switch affects all pools.
+ *
+ * \ingroup tunables
  */
-int zil_replay_disable = 0;    /* disable intent logging replay */
+int zil_replay_disable = 0;
 SYSCTL_DECL(_vfs_zfs);
 TUNABLE_INT("vfs.zfs.zil_replay_disable", &zil_replay_disable);
 SYSCTL_INT(_vfs_zfs, OID_AUTO, zil_replay_disable, CTLFLAG_RW,
     &zil_replay_disable, 0, "Disable intent logging replay");
 
-/*
+/**
  * Tunable parameter for debugging or performance analysis.  Setting
  * zfs_nocacheflush will cause corruption on power loss if a volatile
  * out-of-order write cache is enabled.
+ *
+ * \ingroup tunables
  */
 boolean_t zfs_nocacheflush = B_FALSE;
 TUNABLE_INT("vfs.zfs.cache_flush_disable", &zfs_nocacheflush);
@@ -92,7 +101,7 @@ static void zil_async_to_sync(zilog_t *zilog, uint64_t foid);
     sizeof (zil_chain_t)) == (lwb->lwb_sz - lwb->lwb_nused))
 
 
-/*
+/**
  * ziltest is by and large an ugly hack, but very useful in
  * checking replay without tedious work.
  * When running ziltest we want to keep all itx's and so maintain
@@ -175,7 +184,7 @@ zil_init_log_chain(zilog_t *zilog, blkptr_t *bp)
 	zc->zc_word[ZIL_ZC_SEQ] = 1ULL;
 }
 
-/*
+/**
  * Read a log block and make sure it's valid.
  */
 static int
@@ -248,7 +257,7 @@ zil_read_log_block(zilog_t *zilog, const blkptr_t *bp, blkptr_t *nbp, void *dst,
 	return (error);
 }
 
-/*
+/**
  * Read a TX_WRITE log data block.
  */
 static int
@@ -285,7 +294,7 @@ zil_read_log_data(zilog_t *zilog, const lr_write_t *lr, void *wbuf)
 	return (error);
 }
 
-/*
+/**
  * Parse the intent log, and call parse_func for each valid record within.
  */
 int
@@ -559,7 +568,7 @@ zil_create(zilog_t *zilog)
 	return (lwb);
 }
 
-/*
+/**
  * In one tx, free all log blocks and clear the log header.
  * If keep_first is set, then we're replaying a log with no content.
  * We want to keep the first block, however, so that the first
@@ -676,7 +685,7 @@ zil_claim(const char *osname, void *txarg)
 	return (0);
 }
 
-/*
+/**
  * Check the log by walking the log chain.
  * Checksum errors are ok as they indicate the end of the chain.
  * Any other error (no device or read failure) returns an error.
@@ -820,7 +829,7 @@ zil_flush_vdevs(zilog_t *zilog)
 	spa_config_exit(spa, SCL_STATE, FTAG);
 }
 
-/*
+/**
  * Function called when a log block write completes
  */
 static void
@@ -860,7 +869,7 @@ zil_lwb_write_done(zio_t *zio)
 	dmu_tx_commit(tx);
 }
 
-/*
+/**
  * Initialize the io for a log block.
  */
 static void
@@ -884,8 +893,9 @@ zil_lwb_write_init(zilog_t *zilog, lwb_t *lwb)
 	}
 }
 
-/*
+/**
  * Define a limited set of intent log block sizes.
+ *
  * These must be a multiple of 4KB. Note only the amount used (again
  * aligned to 4KB) actually gets written. However, we can't always just
  * allocate SPA_MAXBLOCKSIZE as the slog space could be exhausted.
@@ -897,7 +907,7 @@ uint64_t zil_block_buckets[] = {
     UINT64_MAX
 };
 
-/*
+/**
  * Use the slog as long as the logbias is 'latency' and the current commit size
  * is less than the limit or the total list size is less than 2X the limit.
  * Limit checking is disabled by setting zil_slog_limit to UINT64_MAX.
@@ -907,7 +917,7 @@ uint64_t zil_slog_limit = 1024 * 1024;
 	(((zilog)->zl_cur_used < zil_slog_limit) || \
 	((zilog)->zl_itx_list_sz < (zil_slog_limit << 1))))
 
-/*
+/**
  * Start a log block write and advance to the next log block.
  * Calls are serialized.
  */
@@ -1137,7 +1147,7 @@ zil_itx_destroy(itx_t *itx)
 	kmem_free(itx, offsetof(itx_t, itx_lr) + itx->itx_lr.lrc_reclen);
 }
 
-/*
+/**
  * Free up the sync and async itxs. The itxs_t has already been detached
  * so no locks are needed.
  */
@@ -1188,7 +1198,7 @@ zil_aitx_compare(const void *x1, const void *x2)
 	return (0);
 }
 
-/*
+/**
  * Remove all async itx with the given oid.
  */
 static void
@@ -1317,7 +1327,7 @@ zil_itx_assign(zilog_t *zilog, itx_t *itx, dmu_tx_t *tx)
 		zil_itxg_clean(clean);
 }
 
-/*
+/**
  * If there are any in-memory intent log transactions which have now been
  * synced then start up a taskq to free them. We should only do this after we
  * have written out the uberblocks (i.e. txg has been comitted) so that
@@ -1355,7 +1365,7 @@ zil_clean(zilog_t *zilog, uint64_t synced_txg)
 		zil_itxg_clean(clean_me);
 }
 
-/*
+/**
  * Get the list of itxs to commit into zl_itx_commit_list.
  */
 static void
@@ -1388,7 +1398,7 @@ zil_get_commit_list(zilog_t *zilog)
 	atomic_add_64(&zilog->zl_itx_list_sz, -push_sod);
 }
 
-/*
+/**
  * Move the async itxs for a specified object to commit into sync lists.
  */
 static void
@@ -1514,10 +1524,8 @@ zil_commit_writer(zilog_t *zilog)
 		zilog->zl_commit_lr_seq = zilog->zl_lr_seq;
 }
 
-/*
+/**
  * Commit zfs transactions to stable storage.
- * If foid is 0 push out all transactions, otherwise push only those
- * for that object or might reference that object.
  *
  * itxs are committed in batches. In a heavily stressed zil there will be
  * a commit writer thread who is writing out a bunch of itxs to the log
@@ -1536,6 +1544,10 @@ zil_commit_writer(zilog_t *zilog)
  *
  * Using this scheme we can efficiently wakeup up only those threads
  * that have been committed.
+ *
+ * \param[in]	foid	if 0, push out all transactions.  Otherwise
+ *			push only those for that object or might reference
+ *			that object
  */
 void
 zil_commit(zilog_t *zilog, uint64_t foid)
@@ -1572,7 +1584,7 @@ zil_commit(zilog_t *zilog, uint64_t foid)
 	cv_broadcast(&zilog->zl_cv_batch[mybatch & 1]);
 }
 
-/*
+/**
  * Called in syncing context to free committed log blocks and update log header.
  */
 void
@@ -1747,7 +1759,7 @@ zil_free(zilog_t *zilog)
 	kmem_free(zilog, sizeof (zilog_t));
 }
 
-/*
+/**
  * Open an intent log.
  */
 zilog_t *
@@ -1766,7 +1778,7 @@ zil_open(objset_t *os, zil_get_data_t *get_data)
 	return (zilog);
 }
 
-/*
+/**
  * Close an intent log.
  */
 void
@@ -1790,7 +1802,8 @@ zil_close(zilog_t *zilog)
 	mutex_exit(&zilog->zl_lock);
 	if (txg)
 		txg_wait_synced(zilog->zl_dmu_pool, txg);
-	ASSERT(!zilog_is_dirty(zilog));
+	ASSERT(!zilog_is_dirty(zilog) ||
+	    spa_freeze_txg(zilog->zl_spa) != UINT64_MAX);
 
 	taskq_destroy(zilog->zl_clean_taskq);
 	zilog->zl_clean_taskq = NULL;
@@ -1810,7 +1823,7 @@ zil_close(zilog_t *zilog)
 	mutex_exit(&zilog->zl_lock);
 }
 
-/*
+/**
  * Suspend an intent log.  While in suspended mode, we still honor
  * synchronous semantics, but we rely on txg_wait_synced() to do it.
  * We suspend the log briefly when taking a snapshot so that the snapshot
@@ -1976,7 +1989,7 @@ zil_incr_blks(zilog_t *zilog, blkptr_t *bp, void *arg, uint64_t claim_txg)
 	return (0);
 }
 
-/*
+/**
  * If this dataset has a non-empty intent log, replay it and destroy it.
  */
 void

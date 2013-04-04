@@ -78,6 +78,7 @@
 #include "libzfs_impl.h"
 
 #include <libshare.h>
+#include <fsshare.h>
 #define	MAXISALEN	257	/* based on sysinfo(2) man page */
 
 static int zfs_share_proto(zfs_handle_t *, zfs_share_proto_t *);
@@ -731,7 +732,7 @@ zfs_share_proto(zfs_handle_t *zhp, zfs_share_proto_t *proto)
 	libzfs_handle_t *hdl = zhp->zfs_hdl;
 	zfs_share_proto_t *curr_proto;
 	zprop_source_t sourcetype;
-	int error, ret;
+	int ret;
 
 	if (!zfs_is_mountable(zhp, mountpoint, sizeof (mountpoint), NULL))
 		return (0);
@@ -811,10 +812,8 @@ zfs_share_proto(zfs_handle_t *zhp, zfs_share_proto_t *proto)
 		}
 
 		if (strcmp(shareopts, "on") == 0)
-			error = fsshare(ZFS_EXPORTS_PATH, mountpoint, "");
-		else
-			error = fsshare(ZFS_EXPORTS_PATH, mountpoint, shareopts);
-		if (error != 0)
+			shareopts[0] = '\0';
+		if (fsshare(hdl, ZFS_EXPORTS_PATH, mountpoint, shareopts) < 0)
 #endif
 		{
 			(void) zfs_error_fmt(hdl,
@@ -889,22 +888,14 @@ unshare_one(libzfs_handle_t *hdl, const char *name, const char *mountpoint,
 		    name));
 	}
 #else
-	char buf[MAXPATHLEN];
-	FILE *fp;
-	int err;
-
 	if (proto != PROTO_NFS) {
 		fprintf(stderr, "No SMB support in FreeBSD yet.\n");
 		return (EOPNOTSUPP);
 	}
 
-	err = fsunshare(ZFS_EXPORTS_PATH, mountpoint);
-	if (err != 0) {
-		zfs_error_aux(hdl, "%s", strerror(err));
+	if (fsunshare(hdl, ZFS_EXPORTS_PATH, mountpoint) < 0)
 		return (zfs_error_fmt(hdl, EZFS_UNSHARENFSFAILED,
-		    dgettext(TEXT_DOMAIN,
-		    "cannot unshare '%s'"), name));
-	}
+		    dgettext(TEXT_DOMAIN, "cannot unshare '%s'"), name));
 #endif
 	return (0);
 }

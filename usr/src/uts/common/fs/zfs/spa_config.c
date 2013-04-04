@@ -26,6 +26,7 @@
  */
 
 #include <sys/zfs_context.h>
+#include <sys/fm/fs/zfs.h>
 #include <sys/spa.h>
 #include <sys/spa_impl.h>
 #include <sys/nvpair.h>
@@ -41,7 +42,8 @@
 #include <sys/zone.h>
 #endif
 
-/*
+/**
+ * \file spa_config.c
  * Pool configuration repository.
  *
  * Pool configuration is stored as a packed nvlist on the filesystem.  By
@@ -60,13 +62,13 @@
 
 static uint64_t spa_config_generation = 1;
 
-/*
+/**
  * This can be overridden in userland to preserve an alternate namespace for
  * userland pools when doing testing.
  */
 const char *spa_config_path = ZPOOL_CACHE;
 
-/*
+/**
  * Called when the module is first loaded, this routine loads the configuration
  * file into the SPA namespace.  It does not actually open or load the pools; it
  * only populates the namespace.
@@ -139,7 +141,7 @@ out:
 	kobj_close_file(file);
 }
 
-static void
+static int
 spa_config_write(spa_config_dirent_t *dp, nvlist_t *nvl)
 {
 	size_t buflen;
@@ -147,13 +149,14 @@ spa_config_write(spa_config_dirent_t *dp, nvlist_t *nvl)
 	vnode_t *vp;
 	int oflags = FWRITE | FTRUNC | FCREAT | FOFFMAX;
 	char *temp;
+	int err;
 
 	/*
 	 * If the nvlist is empty (NULL), then remove the old cachefile.
 	 */
 	if (nvl == NULL) {
-		(void) vn_remove(dp->scd_path, UIO_SYSSPACE, RMFILE);
-		return;
+		err = vn_remove(dp->scd_path, UIO_SYSSPACE, RMFILE);
+		return (err);
 	}
 
 	/*
@@ -174,11 +177,12 @@ spa_config_write(spa_config_dirent_t *dp, nvlist_t *nvl)
 	 */
 	(void) snprintf(temp, MAXPATHLEN, "%s.tmp", dp->scd_path);
 
-	if (vn_open(temp, UIO_SYSSPACE, oflags, 0644, &vp, CRCREAT, 0) == 0) {
-		if (vn_rdwr(UIO_WRITE, vp, buf, buflen, 0, UIO_SYSSPACE,
-		    0, RLIM64_INFINITY, kcred, NULL) == 0 &&
-		    VOP_FSYNC(vp, FSYNC, kcred, NULL) == 0) {
-			(void) vn_rename(temp, dp->scd_path, UIO_SYSSPACE);
+	err = vn_open(temp, UIO_SYSSPACE, oflags, 0644, &vp, CRCREAT, 0);
+	if (err == 0) {
+		if ((err = vn_rdwr(UIO_WRITE, vp, buf, buflen, 0, UIO_SYSSPACE,
+		    0, RLIM64_INFINITY, kcred, NULL)) == 0 &&
+		    (err = VOP_FSYNC(vp, FSYNC, kcred, NULL)) == 0) {
+			err = vn_rename(temp, dp->scd_path, UIO_SYSSPACE);
 		}
 		(void) VOP_CLOSE(vp, oflags, 1, 0, kcred, NULL);
 	}
@@ -187,9 +191,10 @@ spa_config_write(spa_config_dirent_t *dp, nvlist_t *nvl)
 
 	kmem_free(buf, buflen);
 	kmem_free(temp, MAXPATHLEN);
+	return (err);
 }
 
-/*
+/**
  * Synchronize pool configuration to disk.  This must be called with the
  * namespace lock held.
  */
@@ -198,6 +203,8 @@ spa_config_sync(spa_t *target, boolean_t removing, boolean_t postsysevent)
 {
 	spa_config_dirent_t *dp, *tdp;
 	nvlist_t *nvl;
+	boolean_t ccw_failure;
+	int error;
 
 	ASSERT(MUTEX_HELD(&spa_namespace_lock));
 
@@ -209,6 +216,7 @@ spa_config_sync(spa_t *target, boolean_t removing, boolean_t postsysevent)
 	 * cachefile is changed, the new one is pushed onto this list, allowing
 	 * us to update previous cachefiles that no longer contain this pool.
 	 */
+	ccw_failure = B_FALSE;
 	for (dp = list_head(&target->spa_config_list); dp != NULL;
 	    dp = list_next(&target->spa_config_list, dp)) {
 		spa_t *spa = NULL;
@@ -241,8 +249,35 @@ spa_config_sync(spa_t *target, boolean_t removing, boolean_t postsysevent)
 			mutex_exit(&spa->spa_props_lock);
 		}
 
-		spa_config_write(dp, nvl);
+		error = spa_config_write(dp, nvl);
+		if (error != 0) {
+	
+#ifdef NOTYET /* Strata doesn't need these errors */
+			printf("ZFS ERROR: Update of cache file %s failed: "
+			    "Errno %d\n", dp->scd_path, error);
+#endif
+			ccw_failure = B_TRUE;
+		}
+
 		nvlist_free(nvl);
+	}
+
+	if (ccw_failure) {
+		/*
+		 * Keep trying so that configuration data is 
+		 * written if/when any temporary filesystem
+		 * resource issues are resolved.
+		 */
+		target->spa_ccw_fail_time = ddi_get_lbolt64();
+		spa_async_request(target, SPA_ASYNC_CONFIG_UPDATE);
+		zfs_ereport_post(FM_EREPORT_ZFS_CONFIG_CACHE_WRITE,
+		    target, NULL, NULL, 0, 0);
+	} else {
+		/*
+		 * Do not rate limit future attempts to update
+		 * the config cache.
+		 */
+		target->spa_ccw_fail_time = 0;
 	}
 
 	/*
@@ -262,7 +297,7 @@ spa_config_sync(spa_t *target, boolean_t removing, boolean_t postsysevent)
 		spa_event_notify(target, NULL, ESC_ZFS_CONFIG_SYNC);
 }
 
-/*
+/**
  * Sigh.  Inside a local zone, we don't have access to /etc/zfs/zpool.cache,
  * and we don't want to allow the local zone to see all the pools anyway.
  * So we have to invent the ZFS_IOC_CONFIG ioctl to grab the configuration
@@ -305,8 +340,9 @@ spa_config_set(spa_t *spa, nvlist_t *config)
 	mutex_exit(&spa->spa_props_lock);
 }
 
-/*
+/**
  * Generate the pool's configuration based on the current in-core state.
+ *
  * We infer whether to generate a complete config or just one top-level config
  * based on whether vd is the root vdev.
  */
@@ -447,7 +483,7 @@ spa_config_generate(spa_t *spa, vdev_t *vd, uint64_t txg, int getstats)
 	return (config);
 }
 
-/*
+/**
  * Update all disk labels, generate a fresh config based on the current
  * in-core state, and sync the global config cache (do not sync the config
  * cache if this is a booting rootpool).

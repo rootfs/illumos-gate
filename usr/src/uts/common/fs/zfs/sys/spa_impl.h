@@ -50,21 +50,21 @@ typedef struct spa_error_entry {
 } spa_error_entry_t;
 
 typedef struct spa_history_phys {
-	uint64_t sh_pool_create_len;	/* ending offset of zpool create */
-	uint64_t sh_phys_max_off;	/* physical EOF */
-	uint64_t sh_bof;		/* logical BOF */
-	uint64_t sh_eof;		/* logical EOF */
-	uint64_t sh_records_lost;	/* num of records overwritten */
+	uint64_t sh_pool_create_len;	/**< ending offset of zpool create */
+	uint64_t sh_phys_max_off;	/**< physical EOF */
+	uint64_t sh_bof;		/**< logical BOF */
+	uint64_t sh_eof;		/**< logical EOF */
+	uint64_t sh_records_lost;	/**< num of records overwritten */
 } spa_history_phys_t;
 
 struct spa_aux_vdev {
-	uint64_t	sav_object;		/* MOS object for device list */
-	nvlist_t	*sav_config;		/* cached device config */
-	vdev_t		**sav_vdevs;		/* devices */
-	int		sav_count;		/* number devices */
-	boolean_t	sav_sync;		/* sync the device list */
-	nvlist_t	**sav_pending;		/* pending device additions */
-	uint_t		sav_npending;		/* # pending devices */
+	uint64_t	sav_object;		/**< MOS object for device list */
+	nvlist_t	*sav_config;		/**< cached device config */
+	vdev_t		**sav_vdevs;		/**< devices */
+	int		sav_count;		/**< number devices */
+	boolean_t	sav_sync;		/**< sync the device list */
+	nvlist_t	**sav_pending;		/**< pending device additions */
+	uint_t		sav_npending;		/**< # pending devices */
 };
 
 typedef struct spa_config_lock {
@@ -88,43 +88,47 @@ enum zio_taskq_type {
 	ZIO_TASKQ_TYPES
 };
 
-/*
- * State machine for the zpool-pooname process.  The states transitions
- * are done as follows:
+/**
+ * State machine for the zpool-pooname process.
  *
- *	From		   To			Routine
- *	PROC_NONE	-> PROC_CREATED		spa_activate()
- *	PROC_CREATED	-> PROC_ACTIVE		spa_thread()
- *	PROC_ACTIVE	-> PROC_DEACTIVATE	spa_deactivate()
- *	PROC_DEACTIVATE	-> PROC_GONE		spa_thread()
- *	PROC_GONE	-> PROC_NONE		spa_deactivate()
+ * The states transitions are done as follows:
+ * \verbatim
+	From		To			Routine
+	PROC_NONE	-> PROC_CREATED		spa_activate()
+	PROC_CREATED	-> PROC_ACTIVE		spa_thread()
+	PROC_ACTIVE	-> PROC_DEACTIVATE	spa_deactivate()
+	PROC_DEACTIVATE	-> PROC_GONE		spa_thread()
+	PROC_GONE	-> PROC_NONE		spa_deactivate()
+   \endverbatim
  */
 typedef enum spa_proc_state {
-	SPA_PROC_NONE,		/* spa_proc = &p0, no process created */
-	SPA_PROC_CREATED,	/* spa_activate() has proc, is waiting */
-	SPA_PROC_ACTIVE,	/* taskqs created, spa_proc set */
-	SPA_PROC_DEACTIVATE,	/* spa_deactivate() requests process exit */
-	SPA_PROC_GONE		/* spa_thread() is exiting, spa_proc = &p0 */
+	SPA_PROC_NONE,		/**< spa_proc = &p0, no process created */
+	SPA_PROC_CREATED,	/**< spa_activate() has proc, is waiting */
+	SPA_PROC_ACTIVE,	/**< taskqs created, spa_proc set */
+	SPA_PROC_DEACTIVATE,	/**< spa_deactivate() requests process exit */
+	SPA_PROC_GONE		/**< spa_thread() is exiting, spa_proc = &p0 */
 } spa_proc_state_t;
 
 struct spa {
-	/*
-	 * Fields protected by spa_namespace_lock.
+	/**
+	 * \name Protected by spa_namespace_lock
+	 * \{
 	 */
-	char		spa_name[MAXNAMELEN];	/* pool name */
-	char		*spa_comment;		/* comment */
-	avl_node_t	spa_avl;		/* node in spa_namespace_avl */
-	nvlist_t	*spa_config;		/* last synced config */
-	nvlist_t	*spa_config_syncing;	/* currently syncing config */
-	nvlist_t	*spa_config_splitting;	/* config for splitting */
-	nvlist_t	*spa_load_info;		/* info and errors from load */
-	uint64_t	spa_config_txg;		/* txg of last config change */
-	int		spa_sync_pass;		/* iterate-to-convergence */
-	pool_state_t	spa_state;		/* pool state */
-	int		spa_inject_ref;		/* injection references */
-	uint8_t		spa_sync_on;		/* sync threads are running */
-	spa_load_state_t spa_load_state;	/* current load operation */
-	uint64_t	spa_import_flags;	/* import specific flags */
+	char		spa_name[MAXNAMELEN];	/**< pool name */
+	char		*spa_comment;		/**< comment */
+	avl_node_t	spa_avl;		/**< node in spa_namespace_avl */
+	nvlist_t	*spa_config;		/**< last synced config */
+	nvlist_t	*spa_config_syncing;	/**< currently syncing config */
+	nvlist_t	*spa_config_splitting;	/**< config for splitting */
+	nvlist_t	*spa_load_info;		/**< info and errors from load*/
+	uint64_t	spa_config_txg;		/**< txg of last config change*/
+	uint64_t	spa_config_update_txg;	/**< txg of config update */
+	int		spa_sync_pass;		/**< iterate-to-convergence */
+	pool_state_t	spa_state;		/**< pool state */
+	int		spa_inject_ref;		/**< injection references */
+	uint8_t		spa_sync_on;		/**< sync threads are running */
+	spa_load_state_t spa_load_state;	/**< current load operation */
+	uint64_t	spa_import_flags;	/**< import specific flags */
 	taskq_t		*spa_zio_taskq[ZIO_TYPES][ZIO_TASKQ_TYPES];
 	dsl_pool_t	*spa_dsl_pool;
 	boolean_t	spa_is_initializing;	/* true while opening pool */
@@ -171,6 +175,10 @@ struct spa {
 	int		spa_async_suspended;	/* async tasks suspended */
 	kcondvar_t	spa_async_cv;		/* wait for thread_exit() */
 	uint16_t	spa_async_tasks;	/* async task mask */
+	int		spa_async_suspend_done;	/* async tasks suspended */
+	int		spa_async_shutdown;	/* shutdown async task */
+	kcondvar_t	spa_async_sd_cv;	/* wait for thread_exit() */
+	kcondvar_t	spa_async_wu_cv;	/* wakeup async thread  */
 	char		*spa_root;		/* alternate root directory */
 	uint64_t	spa_ena;		/* spa-wide ereport ENA */
 	int		spa_last_open_failed;	/* error if last open failed */
@@ -227,18 +235,42 @@ struct spa {
 	uint64_t	spa_feat_for_write_obj;	/* required to write to pool */
 	uint64_t	spa_feat_for_read_obj;	/* required to read from pool */
 	uint64_t	spa_feat_desc_obj;	/* Feature descriptions */
+	int64_t		spa_ccw_fail_time;	/* Conf cache write fail time */
 	/*
-	 * spa_refcnt & spa_config_lock must be the last elements
+	 * spa_refcount & spa_config_lock must be the last elements
 	 * because refcount_t changes size based on compilation options.
 	 * In order for the MDB module to function correctly, the other
 	 * fields must remain in the same location.
 	 */
-	spa_config_lock_t spa_config_lock[SCL_LOCKS]; /* config changes */
-	refcount_t	spa_refcount;		/* number of opens */
+	spa_config_lock_t spa_config_lock[SCL_LOCKS]; /**< config changes */
+	refcount_t	spa_refcount;		/**< number of opens */
 #ifndef sun
-	boolean_t	spa_splitting_newspa;	/* creating new spa in split */
+	boolean_t	spa_splitting_newspa;/**< creating new spa in split */
 #endif
+#ifdef ZFS_DEBUG
+	struct {
+		int		error;
+		int		lineno;
+		const char	*filename;
+		zio_t		*zio;
+	} spa_last_error;
+#endif
+	/** \} */
 };
+
+#ifdef ZFS_DEBUG
+#define	SPA_SET_ZIO_ERROR(spa, zio, err) do {			\
+	if (err) {						\
+		(spa)->spa_last_error.error = err;		\
+		(spa)->spa_last_error.lineno = __LINE__;	\
+		(spa)->spa_last_error.filename = __FILE__;	\
+		(spa)->spa_last_error.zio = zio;		\
+	}							\
+} while (0)
+#else
+#define	SPA_SET_ZIO_ERROR(spa, zio, err) do { } while (0)
+#endif
+#define	SPA_SET_ERROR(spa, err) SPA_SET_ZIO_ERROR(spa, NULL, err)
 
 extern const char *spa_config_path;
 

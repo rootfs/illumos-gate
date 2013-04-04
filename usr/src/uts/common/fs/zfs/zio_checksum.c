@@ -29,7 +29,8 @@
 #include <sys/zil.h>
 #include <zfs_fletcher.h>
 
-/*
+/**
+ * \file zio_checksum.c
  * Checksum vectors.
  *
  * In the SPA, everything is checksummed.  We support checksum vectors
@@ -118,7 +119,7 @@ zio_checksum_dedup_select(spa_t *spa, enum zio_checksum child,
 	return (child);
 }
 
-/*
+/**
  * Set the external verifier for a gang block based on <vdev, offset, txg>,
  * a tuple which is guaranteed to be unique for the life of the pool.
  */
@@ -133,7 +134,7 @@ zio_checksum_gang_verifier(zio_cksum_t *zcp, blkptr_t *bp)
 	ZIO_SET_CHECKSUM(zcp, DVA_GET_VDEV(dva), DVA_GET_OFFSET(dva), txg, 0);
 }
 
-/*
+/**
  * Set the external verifier for a label block based on its offset.
  * The vdev is implicit, and the txg is unknowable at pool open time --
  * hence the logic in vdev_uberblock_load() to find the most recent copy.
@@ -144,7 +145,7 @@ zio_checksum_label_verifier(zio_cksum_t *zcp, uint64_t offset)
 	ZIO_SET_CHECKSUM(zcp, offset, 0, 0, 0);
 }
 
-/*
+/**
  * Generate the checksum.
  */
 void

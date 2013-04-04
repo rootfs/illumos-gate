@@ -29,7 +29,7 @@
 #include <sys/zfs_acl.h>
 #include <sys/zfs_sa.h>
 
-/*
+/**
  * ZPL attribute registration table.
  * Order of attributes doesn't matter
  * a unique value will be assigned for each
@@ -184,10 +184,10 @@ zfs_sa_set_scanstamp(znode_t *zp, xvattr_t *xvap, dmu_tx_t *tx)
 	}
 }
 
-/*
+/**
  * I'm not convinced we should do any of this upgrade.
  * since the SA code can read both old/new znode formats
- * with probably little to know performance difference.
+ * with probably little to no performance difference.
  *
  * All new files will be created with the new format.
  */

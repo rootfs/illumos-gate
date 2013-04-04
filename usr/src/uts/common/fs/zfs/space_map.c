@@ -33,6 +33,12 @@
 #include <sys/space_map.h>
 
 static kmem_cache_t *space_seg_cache;
+SYSCTL_DECL(_vfs_zfs);
+static int space_map_last_hope;
+TUNABLE_INT("vfs.zfs.space_map_last_hope", &space_map_last_hope);
+SYSCTL_INT(_vfs_zfs, OID_AUTO, space_map_last_hope, CTLFLAG_RDTUN,
+    &space_map_last_hope, 0,
+    "If kernel panic in space_map code on pool import, import the pool in readonly mode and backup all your data before trying this option.");
 
 void
 space_map_init(void)
@@ -51,7 +57,8 @@ space_map_fini(void)
 
 /*
  * Space map routines.
- * NOTE: caller is responsible for all locking.
+ *
+ * \note  Caller is responsible for all locking.
  */
 static int
 space_map_seg_compare(const void *x1, const void *x2)
@@ -113,7 +120,7 @@ space_map_add(space_map_t *sm, uint64_t start, uint64_t size)
 	VERIFY(sm->sm_space + size <= sm->sm_size);
 	VERIFY(P2PHASE(start, 1ULL << sm->sm_shift) == 0);
 	VERIFY(P2PHASE(size, 1ULL << sm->sm_shift) == 0);
-
+again:
 	ssearch.ss_start = start;
 	ssearch.ss_end = end;
 	ss = avl_find(&sm->sm_root, &ssearch, &where);
@@ -123,6 +130,23 @@ space_map_add(space_map_t *sm, uint64_t start, uint64_t size)
 		    "(offset=%llu size=%llu)\n",
 		    (longlong_t)start, (longlong_t)size);
 		return;
+	}
+	if (ss != NULL && space_map_last_hope) {
+		uint64_t sstart, ssize;
+
+		if (ss->ss_start > start)
+			sstart = ss->ss_start;
+		else
+			sstart = start;
+		if (ss->ss_end > end)
+			ssize = end - sstart;
+		else
+			ssize = ss->ss_end - sstart;
+		ZFS_LOG(0,
+		    "Removing colliding space_map range (start=%ju end=%ju). Good luck!",
+		    (uintmax_t)sstart, (uintmax_t)(sstart + ssize));
+		space_map_remove(sm, sstart, ssize);
+		goto again;
 	}
 
 	/* Make sure we don't overlap with either of our neighbors */
@@ -269,7 +293,7 @@ space_map_walk(space_map_t *sm, space_map_func_t *func, space_map_t *mdest)
 		func(mdest, ss->ss_start, ss->ss_end - ss->ss_start);
 }
 
-/*
+/**
  * Wait for any in-progress space_map_load() to complete.
  */
 void
@@ -283,7 +307,7 @@ space_map_load_wait(space_map_t *sm)
 	}
 }
 
-/*
+/**
  * Note: space_map_load() will drop sm_lock across dmu_read() calls.
  * The caller must be OK with this.
  */
@@ -330,7 +354,7 @@ space_map_load(space_map_t *sm, space_map_ops_t *ops, uint8_t maptype,
 
 		mutex_exit(sm->sm_lock);
 		error = dmu_read(os, smo->smo_object, offset, size, entry_map,
-		    DMU_READ_PREFETCH);
+		    DMU_CTX_FLAG_PREFETCH);
 		mutex_enter(sm->sm_lock);
 		if (error != 0)
 			break;
@@ -415,7 +439,7 @@ space_map_free(space_map_t *sm, uint64_t start, uint64_t size)
 	sm->sm_ops->smop_free(sm, start, size);
 }
 
-/*
+/**
  * Note: space_map_sync() will drop sm_lock across dmu_write() calls.
  */
 void
@@ -515,7 +539,7 @@ space_map_truncate(space_map_obj_t *smo, objset_t *os, dmu_tx_t *tx)
 	smo->smo_alloc = 0;
 }
 
-/*
+/**
  * Space map reference trees.
  *
  * A space map is a collection of integers.  Every integer is either
@@ -594,7 +618,7 @@ space_map_ref_add_seg(avl_tree_t *t, uint64_t start, uint64_t end,
 	space_map_ref_add_node(t, end, -refcnt);
 }
 
-/*
+/**
  * Convert (or add) a space map into a reference tree.
  */
 void
@@ -608,7 +632,7 @@ space_map_ref_add_map(avl_tree_t *t, space_map_t *sm, int64_t refcnt)
 		space_map_ref_add_seg(t, ss->ss_start, ss->ss_end, refcnt);
 }
 
-/*
+/**
  * Convert a reference tree into a space map.  The space map will contain
  * all members of the reference tree for which refcnt >= minref.
  */

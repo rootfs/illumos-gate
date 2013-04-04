@@ -26,7 +26,8 @@
 #ifndef	_SYS_ZAP_H
 #define	_SYS_ZAP_H
 
-/*
+/**
+ * \file zap.h
  * ZAP - ZFS Attribute Processor
  *
  * The ZAP is a module which sits on top of the DMU (Data Management
@@ -55,7 +56,7 @@
  * or ECHECKSUM).
  *
  *
- * Implementation / Performance Notes:
+ * <H2>Implementation / Performance Notes</H2>
  *
  * The ZAP is intended to operate most efficiently on attributes with
  * short (49 bytes or less) names and single 8-byte values, for which
@@ -85,35 +86,41 @@
 extern "C" {
 #endif
 
-/*
- * The matchtype specifies which entry will be accessed.
- * MT_EXACT: only find an exact match (non-normalized)
- * MT_FIRST: find the "first" normalized (case and Unicode
- *     form) match; the designated "first" match will not change as long
- *     as the set of entries with this normalization doesn't change
- * MT_BEST: if there is an exact match, find that, otherwise find the
- *     first normalized match
+/**
+ * Specifies matching criteria for ZAP lookups.
  */
 typedef enum matchtype
 {
+	/** Only find an exact match (non-normalized) */
 	MT_EXACT,
+	/**
+	 * If there is an exact match, find that, otherwise find the
+	 * first normalized match.
+	 */
 	MT_BEST,
+	/**
+	 * Find the "first" normalized (case and Unicode form) match;
+	 * the designated "first" match will not change as long as the
+	 * set of entries with this normalization doesn't change.
+	 */
 	MT_FIRST
 } matchtype_t;
 
 typedef enum zap_flags {
-	/* Use 64-bit hash value (serialized cursors will always use 64-bits) */
+	/**
+	 * Use 64-bit hash value (serialized cursors will always use 64-bits)
+	 */
 	ZAP_FLAG_HASH64 = 1 << 0,
-	/* Key is binary, not string (zap_add_uint64() can be used) */
+	/** Key is binary, not string (zap_add_uint64() can be used) */
 	ZAP_FLAG_UINT64_KEY = 1 << 1,
-	/*
+	/**
 	 * First word of key (which must be an array of uint64) is
 	 * already randomly distributed.
 	 */
 	ZAP_FLAG_PRE_HASHED_KEY = 1 << 2,
 } zap_flags_t;
 
-/*
+/**
  * Create a new zapobj with no attributes and return its object number.
  * MT_EXACT will cause the zap object to only support MT_EXACT lookups,
  * otherwise any matchtype can be used for lookups.
@@ -136,7 +143,7 @@ uint64_t zap_create_flags(objset_t *os, int normflags, zap_flags_t flags,
 uint64_t zap_create_link(objset_t *os, dmu_object_type_t ot,
     uint64_t parent_obj, const char *name, dmu_tx_t *tx);
 
-/*
+/**
  * Create a new zapobj with no attributes from the given (unallocated)
  * object number.
  */
@@ -151,7 +158,7 @@ int zap_create_claim_norm(objset_t *ds, uint64_t obj,
  * following routines.
  */
 
-/*
+/**
  * Destroy this zapobj and all its attributes.
  *
  * Frees the object number using dmu_object_free.
@@ -164,39 +171,37 @@ int zap_destroy(objset_t *ds, uint64_t zapobj, dmu_tx_t *tx);
  * 'integer_size' is in bytes, and must be 1, 2, 4, or 8.
  */
 
-/*
+/**
  * Retrieve the contents of the attribute with the given name.
  *
- * If the requested attribute does not exist, the call will fail and
- * return ENOENT.
- *
- * If 'integer_size' is smaller than the attribute's integer size, the
- * call will fail and return EINVAL.
- *
- * If 'integer_size' is equal to or larger than the attribute's integer
- * size, the call will succeed and return 0.  * When converting to a
- * larger integer size, the integers will be treated as unsigned (ie. no
- * sign-extension will be performed).
- *
- * 'num_integers' is the length (in integers) of 'buf'.
+ * When converting to a larger integer size, the integers will be treated as
+ * unsigned (ie. no sign-extension will be performed).
  *
  * If the attribute is longer than the buffer, as many integers as will
- * fit will be transferred to 'buf'.  If the entire attribute was not
- * transferred, the call will return EOVERFLOW.
+ * fit will be transferred to 'buf'.
  *
- * If rn_len is nonzero, realname will be set to the name of the found
- * entry (which may be different from the requested name if matchtype is
- * not MT_EXACT).
+ * \param[in] num_integers   The length (in integers) of 'buf'
  *
- * If normalization_conflictp is not NULL, it will be set if there is
- * another name with the same case/unicode normalized form.
+ * \retval 0 		Success
+ * \retval ENOENT	The requested attribute does not exist
+ * \retval EINVAL	integer_size is smaller than the attribute's integer 
+ * 			size
+ * \retval EOVERFLOW	The entire attribute was not transferred
  */
 int zap_lookup(objset_t *ds, uint64_t zapobj, const char *name,
     uint64_t integer_size, uint64_t num_integers, void *buf);
+
+/**
+ * \param[in]     rn_len  If nonzero, realname will be set to the name of the 
+ * 			  found entry (which may be different from the requested
+ * 			  name if matchtype is not MT_EXACT).
+ * \param[in,out] ncp	  If not NULL, it will be set if there is another name 
+ * 			  with the same case/unicode normalized form.
+ */
 int zap_lookup_norm(objset_t *ds, uint64_t zapobj, const char *name,
     uint64_t integer_size, uint64_t num_integers, void *buf,
     matchtype_t mt, char *realname, int rn_len,
-    boolean_t *normalization_conflictp);
+    boolean_t *ncp);
 int zap_lookup_uint64(objset_t *os, uint64_t zapobj, const uint64_t *key,
     int key_numints, uint64_t integer_size, uint64_t num_integers, void *buf);
 int zap_contains(objset_t *ds, uint64_t zapobj, const char *name);
@@ -206,11 +211,10 @@ int zap_prefetch_uint64(objset_t *os, uint64_t zapobj, const uint64_t *key,
 int zap_count_write(objset_t *os, uint64_t zapobj, const char *name,
     int add, uint64_t *towrite, uint64_t *tooverwrite);
 
-/*
+/**
  * Create an attribute with the given name and value.
  *
- * If an attribute with the given name already exists, the call will
- * fail and return EEXIST.
+ * \retval EEXIST  An attribute with the given name already exists
  */
 int zap_add(objset_t *ds, uint64_t zapobj, const char *key,
     int integer_size, uint64_t num_integers,
@@ -219,7 +223,7 @@ int zap_add_uint64(objset_t *ds, uint64_t zapobj, const uint64_t *key,
     int key_numints, int integer_size, uint64_t num_integers,
     const void *val, dmu_tx_t *tx);
 
-/*
+/**
  * Set the attribute with the given name to the given value.  If an
  * attribute with the given name does not exist, it will be created.  If
  * an attribute with the given name already exists, the previous value
@@ -233,23 +237,21 @@ int zap_update_uint64(objset_t *os, uint64_t zapobj, const uint64_t *key,
     int key_numints,
     int integer_size, uint64_t num_integers, const void *val, dmu_tx_t *tx);
 
-/*
+/**
  * Get the length (in integers) and the integer size of the specified
  * attribute.
  *
- * If the requested attribute does not exist, the call will fail and
- * return ENOENT.
+ * \retval ENOENT	The requested attribute does not exist
  */
 int zap_length(objset_t *ds, uint64_t zapobj, const char *name,
     uint64_t *integer_size, uint64_t *num_integers);
 int zap_length_uint64(objset_t *os, uint64_t zapobj, const uint64_t *key,
     int key_numints, uint64_t *integer_size, uint64_t *num_integers);
 
-/*
+/**
  * Remove the specified attribute.
  *
- * If the specified attribute does not exist, the call will fail and
- * return ENOENT.
+ * \retval ENOENT	The specified attribute does not exist
  */
 int zap_remove(objset_t *ds, uint64_t zapobj, const char *name, dmu_tx_t *tx);
 int zap_remove_norm(objset_t *ds, uint64_t zapobj, const char *name,
@@ -257,37 +259,47 @@ int zap_remove_norm(objset_t *ds, uint64_t zapobj, const char *name,
 int zap_remove_uint64(objset_t *os, uint64_t zapobj, const uint64_t *key,
     int key_numints, dmu_tx_t *tx);
 
-/*
- * Returns (in *count) the number of attributes in the specified zap
- * object.
+/**
+ * Get the number of attributes in the specified zap object.
+ *
+ * \param[out]	count	The number of attributes
  */
 int zap_count(objset_t *ds, uint64_t zapobj, uint64_t *count);
 
-/*
- * Returns (in name) the name of the entry whose (value & mask)
- * (za_first_integer) is value, or ENOENT if not found.  The string
- * pointed to by name must be at least 256 bytes long.  If mask==0, the
- * match must be exact (ie, same as mask=-1ULL).
+/**
+ * Search for an entry by za_first_integer
+ *
+ * \param[in]	mask	If mask==0, the match must be exact (ie, same as 
+ * 			mask=-1ULL)
+ * \param[out]	name	The name of the entry whose (za_first_integer & mask) ==
+ * 			(value & mask).  The string pointed to by name must be
+ * 			at least 256 bytes long. 
+ *
+ * \retval ENOENT	No entry was found for the given value and mask
  */
 int zap_value_search(objset_t *os, uint64_t zapobj,
     uint64_t value, uint64_t mask, char *name);
 
-/*
+/**
  * Transfer all the entries from fromobj into intoobj.  Only works on
  * int_size=8 num_integers=1 values.  Fails if there are any duplicated
  * entries.
  */
 int zap_join(objset_t *os, uint64_t fromobj, uint64_t intoobj, dmu_tx_t *tx);
 
-/* Same as zap_join, but set the values to 'value'. */
+/**
+ * Same as zap_join, but add together any duplicated entries.
+ */
 int zap_join_key(objset_t *os, uint64_t fromobj, uint64_t intoobj,
     uint64_t value, dmu_tx_t *tx);
 
-/* Same as zap_join, but add together any duplicated entries. */
+/**
+ * Same as zap_join, but set the values to 'value'.
+ */
 int zap_join_increment(objset_t *os, uint64_t fromobj, uint64_t intoobj,
     dmu_tx_t *tx);
 
-/*
+/**
  * Manipulate entries where the name + value are the "same" (the name is
  * a stringified version of the value).
  */
@@ -297,7 +309,9 @@ int zap_lookup_int(objset_t *os, uint64_t obj, uint64_t value);
 int zap_increment_int(objset_t *os, uint64_t obj, uint64_t key, int64_t delta,
     dmu_tx_t *tx);
 
-/* Here the key is an int and the value is a different int. */
+/**
+ * Here the key is an int and the value is a different int.
+ */
 int zap_add_int_key(objset_t *os, uint64_t obj,
     uint64_t key, uint64_t value, dmu_tx_t *tx);
 int zap_update_int_key(objset_t *os, uint64_t obj,
@@ -323,13 +337,13 @@ typedef struct zap_cursor {
 
 typedef struct {
 	int za_integer_length;
-	/*
+	/**
 	 * za_normalization_conflict will be set if there are additional
 	 * entries with this normalized form (eg, "foo" and "Foo").
 	 */
 	boolean_t za_normalization_conflict;
 	uint64_t za_num_integers;
-	uint64_t za_first_integer;	/* no sign extension for <8byte ints */
+	uint64_t za_first_integer;/**< no sign extension for <8byte ints */
 	char za_name[MAXNAMELEN];
 } zap_attribute_t;
 
@@ -340,25 +354,26 @@ typedef struct {
  * persistent across system calls (and across reboot, even).
  */
 
-/*
+/**
  * Initialize a zap cursor, pointing to the "first" attribute of the
  * zapobj.  You must _fini the cursor when you are done with it.
  */
 void zap_cursor_init(zap_cursor_t *zc, objset_t *ds, uint64_t zapobj);
 void zap_cursor_fini(zap_cursor_t *zc);
 
-/*
- * Get the attribute currently pointed to by the cursor.  Returns
- * ENOENT if at the end of the attributes.
+/**
+ * Get the attribute currently pointed to by the cursor.  
+ *
+ * \retval ENOENT At the end of the attributes.
  */
 int zap_cursor_retrieve(zap_cursor_t *zc, zap_attribute_t *za);
 
-/*
+/**
  * Advance the cursor to the next attribute.
  */
 void zap_cursor_advance(zap_cursor_t *zc);
 
-/*
+/**
  * Get a persistent cookie pointing to the current position of the zap
  * cursor.  The low 4 bits in the cookie are always zero, and thus can
  * be used as to differentiate a serialized cookie from a different type
@@ -386,16 +401,16 @@ void zap_cursor_init_serialized(zap_cursor_t *zc, objset_t *ds,
 #define	ZAP_HISTOGRAM_SIZE 10
 
 typedef struct zap_stats {
-	/*
+	/**
 	 * Size of the pointer table (in number of entries).
 	 * This is always a power of 2, or zero if it's a microzap.
 	 * In general, it should be considerably greater than zs_num_leafs.
 	 */
 	uint64_t zs_ptrtbl_len;
 
-	uint64_t zs_blocksize;		/* size of zap blocks */
+	uint64_t zs_blocksize;		/**< size of zap blocks */
 
-	/*
+	/**
 	 * The number of blocks used.  Note that some blocks may be
 	 * wasted because old ptrtbl's and large name/value blocks are
 	 * not reused.  (Although their space is reclaimed, we don't
@@ -403,39 +418,45 @@ typedef struct zap_stats {
 	 */
 	uint64_t zs_num_blocks;
 
-	/*
-	 * Pointer table values from zap_ptrtbl in the zap_phys_t
+	/**
+	 * \name Pointer table values from zap_ptrtbl in the zap_phys_t
+	 * \{
 	 */
-	uint64_t zs_ptrtbl_nextblk;	  /* next (larger) copy start block */
-	uint64_t zs_ptrtbl_blks_copied;   /* number source blocks copied */
-	uint64_t zs_ptrtbl_zt_blk;	  /* starting block number */
-	uint64_t zs_ptrtbl_zt_numblks;    /* number of blocks */
-	uint64_t zs_ptrtbl_zt_shift;	  /* bits to index it */
+	uint64_t zs_ptrtbl_nextblk;	  /**< next (larger) copy start block */
+	uint64_t zs_ptrtbl_blks_copied;   /**< number source blocks copied */
+	uint64_t zs_ptrtbl_zt_blk;	  /**< starting block number */
+	uint64_t zs_ptrtbl_zt_numblks;    /**< number of blocks */
+	uint64_t zs_ptrtbl_zt_shift;	  /**< bits to index it */
+	/** \} */
 
-	/*
-	 * Values of the other members of the zap_phys_t
+	/**
+	 * \name Values of the other members of the zap_phys_t
+	 * \{
 	 */
-	uint64_t zs_block_type;		/* ZBT_HEADER */
-	uint64_t zs_magic;		/* ZAP_MAGIC */
-	uint64_t zs_num_leafs;		/* The number of leaf blocks */
-	uint64_t zs_num_entries;	/* The number of zap entries */
-	uint64_t zs_salt;		/* salt to stir into hash function */
+	uint64_t zs_block_type;		/**< ZBT_HEADER */
+	uint64_t zs_magic;		/**< ZAP_MAGIC */
+	uint64_t zs_num_leafs;		/**< The number of leaf blocks */
+	uint64_t zs_num_entries;	/**< The number of zap entries */
+	uint64_t zs_salt;		/**< salt to stir into hash function */
+	/** \} */
 
-	/*
-	 * Histograms.  For all histograms, the last index
-	 * (ZAP_HISTOGRAM_SIZE-1) includes any values which are greater
-	 * than what can be represented.  For example
-	 * zs_leafs_with_n5_entries[ZAP_HISTOGRAM_SIZE-1] is the number
+	/**
+	 * \name Histograms
+	 *
+	 * For all histograms, the last index (ZAP_HISTOGRAM_SIZE-1) includes
+	 * any values which are greater than what can be represented.  For
+	 * example zs_leafs_with_n5_entries[ZAP_HISTOGRAM_SIZE-1] is the number
 	 * of leafs with more than 45 entries.
+	 * \{
 	 */
 
-	/*
+	/**
 	 * zs_leafs_with_n_pointers[n] is the number of leafs with
 	 * 2^n pointers to it.
 	 */
 	uint64_t zs_leafs_with_2n_pointers[ZAP_HISTOGRAM_SIZE];
 
-	/*
+	/**
 	 * zs_leafs_with_n_entries[n] is the number of leafs with
 	 * [n*5, (n+1)*5) entries.  In the current implementation, there
 	 * can be at most 55 entries in any block, but there may be
@@ -444,33 +465,35 @@ typedef struct zap_stats {
 	 */
 	uint64_t zs_blocks_with_n5_entries[ZAP_HISTOGRAM_SIZE];
 
-	/*
+	/**
 	 * zs_leafs_n_tenths_full[n] is the number of leafs whose
 	 * fullness is in the range [n/10, (n+1)/10).
 	 */
 	uint64_t zs_blocks_n_tenths_full[ZAP_HISTOGRAM_SIZE];
 
-	/*
+	/**
 	 * zs_entries_using_n_chunks[n] is the number of entries which
 	 * consume n 24-byte chunks.  (Note, large names/values only use
 	 * one chunk, but contribute to zs_num_blocks_large.)
 	 */
 	uint64_t zs_entries_using_n_chunks[ZAP_HISTOGRAM_SIZE];
 
-	/*
+	/**
 	 * zs_buckets_with_n_entries[n] is the number of buckets (each
 	 * leaf has 64 buckets) with n entries.
 	 * zs_buckets_with_n_entries[1] should be very close to
 	 * zs_num_entries.
 	 */
 	uint64_t zs_buckets_with_n_entries[ZAP_HISTOGRAM_SIZE];
+	/** \} */
 } zap_stats_t;
 
-/*
- * Get statistics about a ZAP object.  Note: you need to be aware of the
- * internal implementation of the ZAP to correctly interpret some of the
- * statistics.  This interface shouldn't be relied on unless you really
- * know what you're doing.
+/**
+ * Get statistics about a ZAP object.  
+ *
+ * \note  You need to be aware of the internal implementation of the ZAP to
+ *        correctly interpret some of the statistics.  This interface
+ *        shouldn't be relied on unless you really know what you're doing.
  */
 int zap_get_stats(objset_t *ds, uint64_t zapobj, zap_stats_t *zs);
 

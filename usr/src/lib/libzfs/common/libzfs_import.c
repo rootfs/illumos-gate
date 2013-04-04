@@ -1286,6 +1286,14 @@ skipdir:
 					    &this_guid) == 0 &&
 					    iarg->guid == this_guid;
 				}
+				if (! iarg->can_be_destroyed) {
+					uint64_t pool_state;
+					nvlist_lookup_uint64(config,
+					    ZPOOL_CONFIG_POOL_STATE,
+					    &pool_state);
+					if (pool_state == POOL_STATE_DESTROYED)
+						matched = B_FALSE;
+				}
 				if (!matched) {
 					nvlist_free(config);
 					config = NULL;

@@ -27,7 +27,10 @@
  * Copyright (c) 2012 by Delphix. All rights reserved.
  */
 
-/*
+/**
+ * \file vdev_missing.c
+ * Routines for handling the special "missing" vdev
+ *
  * The 'missing' vdev is a special vdev type used only during import.  It
  * signifies a placeholder in the root vdev for some vdev that we know is
  * missing.  We pass it down to the kernel to allow the rest of the
@@ -45,7 +48,7 @@
 /* ARGSUSED */
 static int
 vdev_missing_open(vdev_t *vd, uint64_t *psize, uint64_t *max_psize,
-    uint64_t *ashift)
+    uint64_t *logical_ashift, uint64_t *physical_ashift)
 {
 	/*
 	 * Really this should just fail.  But then the root vdev will be in the
@@ -55,7 +58,8 @@ vdev_missing_open(vdev_t *vd, uint64_t *psize, uint64_t *max_psize,
 	 */
 	*psize = 0;
 	*max_psize = 0;
-	*ashift = 0;
+	*logical_ashift = 0;
+	*physical_ashift = 0;
 	return (0);
 }
 
@@ -69,7 +73,7 @@ vdev_missing_close(vdev_t *vd)
 static int
 vdev_missing_io_start(zio_t *zio)
 {
-	zio->io_error = ENOTSUP;
+	ZIO_SET_ERROR(zio, ENOTSUP);
 	return (ZIO_PIPELINE_CONTINUE);
 }
 

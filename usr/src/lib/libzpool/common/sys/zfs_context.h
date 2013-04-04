@@ -59,7 +59,6 @@ extern "C" {
 #include <math.h>
 #include <umem.h>
 #include <inttypes.h>
-#include <fsshare.h>
 #include <sys/note.h>
 #include <sys/types.h>
 #include <sys/cred.h>
@@ -100,6 +99,17 @@ extern "C" {
 #define	CE_WARN		2	/* warning		*/
 #define	CE_PANIC	3	/* panic		*/
 #define	CE_IGNORE	4	/* print nothing	*/
+
+/*
+ * ACL Support
+ */
+typedef uint32_t	acl_tag_t;
+typedef uint32_t	acl_perm_t;
+typedef uint16_t	acl_entry_type_t;
+typedef uint16_t	acl_flag_t;
+typedef int		acl_type_t;
+typedef int		*acl_permset_t;
+typedef uint16_t	*acl_flagset_t;
 
 /*
  * ZFS debugging
@@ -159,6 +169,9 @@ extern int aok;
  */
 #define	curthread	((void *)(uintptr_t)thr_self())
 
+#define	tsd_get(key)		NULL
+#define	tsd_set(key, value)	0
+
 typedef struct kthread kthread_t;
 
 #define	thread_create(stk, stksize, func, arg, len, pp, state, pri)	\
@@ -208,6 +221,7 @@ typedef struct kmutex {
 //extern int _mutex_owned(mutex_t *mp);
 
 #define	mutex_init(mp, b, c, d)		zmutex_init((kmutex_t *)(mp))
+#define	stack_mutex_init		mutex_init
 #define	mutex_destroy(mp)		zmutex_destroy((kmutex_t *)(mp))
 #define	mutex_owned(mp)			zmutex_owned((kmutex_t *)(mp))
 
@@ -288,6 +302,8 @@ extern void cv_broadcast(kcondvar_t *cv);
 #define	kmem_cache_destroy(_c)	umem_cache_destroy(_c)
 #define	kmem_cache_alloc(_c, _f) umem_cache_alloc(_c, _f)
 #define	kmem_cache_free(_c, _b)	umem_cache_free(_c, _b)
+#define	kmem_alloc_with_stack	kmem_alloc
+#define	kmem_free_with_stack	kmem_free
 #define	kmem_debugging()	0
 #define	kmem_cache_reap_now(_c)		/* nothing */
 #define	kmem_cache_set_move(_c, _cb)	/* nothing */
@@ -310,6 +326,7 @@ typedef enum kmem_cbrc {
 typedef struct taskq taskq_t;
 typedef uintptr_t taskqid_t;
 typedef void (task_func_t)(void *);
+typedef void (*taskq_callback_fn)(void *);
 
 #define	TASKQ_PREPOPULATE	0x0001
 #define	TASKQ_CPR_SAFE		0x0002	/* Use CPR safe protocol */
@@ -325,8 +342,11 @@ typedef void (task_func_t)(void *);
 extern taskq_t *system_taskq;
 
 extern taskq_t	*taskq_create(const char *, int, pri_t, int, int, uint_t);
-#define	taskq_create_proc(a, b, c, d, e, p, f) \
-	    (taskq_create(a, b, c, d, e, f))
+extern taskq_t	*taskq_create_with_callbacks(const char *, int, pri_t, int, int,
+    uint_t, taskq_callback_fn, taskq_callback_fn);
+
+#define	taskq_create_proc(a, b, c, d, e, p, f, g, h) \
+	    (taskq_create_with_callbacks(a, b, c, d, e, f, g, h))
 #define	taskq_create_sysdc(a, b, d, e, p, dc, f) \
 	    (taskq_create(a, b, maxclsyspri, d, e, f))
 extern taskqid_t taskq_dispatch(taskq_t *, task_func_t, void *, uint_t);
@@ -610,11 +630,55 @@ typedef	uint32_t	idmap_rid_t;
 
 #define	SX_SYSINIT(name, lock, desc)
 
+#define SYSCTL_HANDLER_ARGS struct sysctl_oid *oidp, void *arg1,	\
+	intptr_t arg2, struct sysctl_req *req
+
+/*
+ * This describes the access space for a sysctl request.  This is needed
+ * so that we can use the interface from the kernel or from user-space.
+ */
+struct sysctl_req {
+	struct thread	*td;		/* used for access checking */
+	int		lock;		/* wiring state */
+	void		*oldptr;
+	size_t		oldlen;
+	size_t		oldidx;
+	int		(*oldfunc)(struct sysctl_req *, const void *, size_t);
+	void		*newptr;
+	size_t		newlen;
+	size_t		newidx;
+	int		(*newfunc)(struct sysctl_req *, void *, size_t);
+	size_t		validlen;
+	int		flags;
+};
+
+SLIST_HEAD(sysctl_oid_list, sysctl_oid);
+
+/*
+ * This describes one "oid" in the MIB tree.  Potentially more nodes can
+ * be hidden behind it, expanded by the handler.
+ */
+struct sysctl_oid {
+	struct sysctl_oid_list *oid_parent;
+	SLIST_ENTRY(sysctl_oid) oid_link;
+	int		oid_number;
+	u_int		oid_kind;
+	void		*oid_arg1;
+	intptr_t	oid_arg2;
+	const char	*oid_name;
+	int 		(*oid_handler)(SYSCTL_HANDLER_ARGS);
+	const char	*oid_fmt;
+	int		oid_refcnt;
+	u_int		oid_running;
+	const char	*oid_descr;
+};
+
 #define	SYSCTL_DECL(...)
 #define	SYSCTL_NODE(...)
 #define	SYSCTL_INT(...)
 #define	SYSCTL_UINT(...)
 #define	SYSCTL_ULONG(...)
+#define	SYSCTL_PROC(...)
 #define	SYSCTL_QUAD(...)
 #define	SYSCTL_UQUAD(...)
 #ifdef TUNABLE_INT
@@ -625,6 +689,8 @@ typedef	uint32_t	idmap_rid_t;
 #define	TUNABLE_INT(...)
 #define	TUNABLE_ULONG(...)
 #define	TUNABLE_QUAD(...)
+
+int sysctl_handle_int(SYSCTL_HANDLER_ARGS);
 
 /* Errors */
 

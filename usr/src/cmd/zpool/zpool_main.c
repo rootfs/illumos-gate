@@ -749,8 +749,8 @@ errout:
  *	-f	Force creation, even if devices appear in use
  *	-n	Do not create the pool, but display the resulting layout if it
  *		were to be created.
- *      -R	Create a pool under an alternate root
- *      -m	Set default mountpoint for the root dataset.  By default it's
+ *	-R	Create a pool under an alternate root
+ *	-m	Set default mountpoint for the root dataset.  By default it's
  *		'/<pool>'
  *	-o	Set property=value.
  *	-d	Don't automatically enable all supported pool features
@@ -804,6 +804,7 @@ zpool_do_create(int argc, char **argv)
 				goto errout;
 			break;
 		case 'm':
+			/* Equivalent to -O mountpoint=optarg */
 			mountpoint = optarg;
 			break;
 		case 'o':
@@ -842,7 +843,16 @@ zpool_do_create(int argc, char **argv)
 			*propval = '\0';
 			propval++;
 
-			if (add_prop_list(optarg, propval, &fsprops, B_FALSE))
+			/*
+			 * Mountpoints are checked and then added later.
+			 * Uniquely among properties, they can be specified
+			 * more than once, to avoid conflict with -m.
+			 */
+			if (!strcmp(optarg,
+			    zfs_prop_to_name(ZFS_PROP_MOUNTPOINT)))
+				mountpoint = propval;
+			else if (add_prop_list(optarg, propval, &fsprops,
+			    B_FALSE))
 				goto errout;
 			break;
 		case ':':
@@ -959,6 +969,14 @@ zpool_do_create(int argc, char **argv)
 			}
 		}
 	}
+	/*
+	 * Now that the mountpoint's validity has been checked, ensure that
+	 * the property is set appropriately prior to creating the pool.
+	 */
+	if (mountpoint != NULL)
+		if (add_prop_list(zfs_prop_to_name(ZFS_PROP_MOUNTPOINT),
+		    mountpoint, &fsprops, B_FALSE))
+			goto errout;
 
 	if (dryrun) {
 		/*
@@ -1004,11 +1022,6 @@ zpool_do_create(int argc, char **argv)
 			zfs_handle_t *pool = zfs_open(g_zfs, poolname,
 			    ZFS_TYPE_FILESYSTEM);
 			if (pool != NULL) {
-				if (mountpoint != NULL)
-					verify(zfs_prop_set(pool,
-					    zfs_prop_to_name(
-					    ZFS_PROP_MOUNTPOINT),
-					    mountpoint) == 0);
 				if (zfs_mount(pool, NULL, 0) == 0)
 					ret = zfs_shareall(pool);
 				zfs_close(pool);
@@ -1307,20 +1320,28 @@ print_status_config(zpool_handle_t *zhp, const char *name, nvlist_t *nv,
 
 	if (nvlist_lookup_uint64(nv, ZPOOL_CONFIG_NOT_PRESENT,
 	    &notpresent) == 0 ||
-	    vs->vs_state <= VDEV_STATE_CANT_OPEN) {
+	    vs->vs_state <= VDEV_STATE_REMOVED) {
 		char *path;
 		if (nvlist_lookup_string(nv, ZPOOL_CONFIG_PATH, &path) == 0)
 			(void) printf("  was %s", path);
 	} else if (vs->vs_aux != 0) {
+		int  has_path;
+		char *path;
+
+		has_path = !nvlist_lookup_string(nv, ZPOOL_CONFIG_PATH, &path);
 		(void) printf("  ");
 
 		switch (vs->vs_aux) {
 		case VDEV_AUX_OPEN_FAILED:
 			(void) printf(gettext("cannot open"));
+			if (has_path)
+				(void) printf("  was %s", path);
 			break;
 
 		case VDEV_AUX_BAD_GUID_SUM:
 			(void) printf(gettext("missing device"));
+			if (has_path)
+				(void) printf("  was %s", path);
 			break;
 
 		case VDEV_AUX_NO_REPLICAS:
@@ -1329,6 +1350,8 @@ print_status_config(zpool_handle_t *zhp, const char *name, nvlist_t *nv,
 
 		case VDEV_AUX_VERSION_NEWER:
 			(void) printf(gettext("newer version"));
+			if (has_path)
+				(void) printf("  was %s", path);
 			break;
 
 		case VDEV_AUX_UNSUP_FEAT:
@@ -1347,6 +1370,8 @@ print_status_config(zpool_handle_t *zhp, const char *name, nvlist_t *nv,
 					(void) printf(gettext("in use by "
 					    "pool '%s'"),
 					    zpool_get_name(cb.cb_zhp));
+				if (has_path)
+					(void) printf("  was %s", path);
 				zpool_close(cb.cb_zhp);
 			} else {
 				(void) printf(gettext("currently in use"));
@@ -1355,14 +1380,20 @@ print_status_config(zpool_handle_t *zhp, const char *name, nvlist_t *nv,
 
 		case VDEV_AUX_ERR_EXCEEDED:
 			(void) printf(gettext("too many errors"));
+			if (has_path)
+				(void) printf("  was %s", path);
 			break;
 
 		case VDEV_AUX_IO_FAILURE:
 			(void) printf(gettext("experienced I/O failures"));
+			if (has_path)
+				(void) printf("  was %s", path);
 			break;
 
 		case VDEV_AUX_BAD_LOG:
 			(void) printf(gettext("bad intent log"));
+			if (has_path)
+				(void) printf("  was %s", path);
 			break;
 
 		case VDEV_AUX_EXTERNAL:
@@ -1373,8 +1404,14 @@ print_status_config(zpool_handle_t *zhp, const char *name, nvlist_t *nv,
 			(void) printf(gettext("split into new pool"));
 			break;
 
+		case VDEV_AUX_BAD_LABEL:
+			(void) printf(gettext("corrupted label"));
+			if (has_path)
+				(void) printf("  was %s", path);
 		default:
 			(void) printf(gettext("corrupted data"));
+			if (has_path)
+				(void) printf("  was %s", path);
 			break;
 		}
 	}
@@ -2105,6 +2142,7 @@ zpool_do_import(int argc, char **argv)
 	idata.poolname = searchname;
 	idata.guid = searchguid;
 	idata.cachefile = cachefile;
+	idata.can_be_destroyed = do_destroyed;
 
 	pools = zpool_search_import(g_zfs, &idata);
 
@@ -2253,15 +2291,15 @@ print_iostat_separator(iostat_cbdata_t *cb)
 
 	for (i = 0; i < cb->cb_namewidth; i++)
 		(void) printf("-");
-	(void) printf("  -----  -----  -----  -----  -----  -----\n");
+	(void) printf("  -----  -----  -----  -----  -----  -----  -----  -----\n");
 }
 
 static void
 print_iostat_header(iostat_cbdata_t *cb)
 {
-	(void) printf("%*s     capacity     operations    bandwidth\n",
+	(void) printf("%*s     capacity     operations    bandwidth      latency\n",
 	    cb->cb_namewidth, "");
-	(void) printf("%-*s  alloc   free   read  write   read  write\n",
+	(void) printf("%-*s  alloc   free   read  write   read  write   read  write\n",
 	    cb->cb_namewidth, "pool");
 	print_iostat_separator(cb);
 }
@@ -2279,6 +2317,18 @@ print_one_stat(uint64_t value)
 }
 
 /*
+ * Display a single time value.
+ */
+static void
+print_one_time(uint64_t value)
+{
+	char buf[64];
+
+	zfs_nicetime(value, buf, sizeof (buf));
+	(void) printf("  %5s", buf);
+}
+
+/*
  * Print out all the statistics for the given vdev.  This can either be the
  * toplevel configuration, or called recursively.  If 'name' is NULL, then this
  * is a verbose output, and we don't want to display the toplevel pool stats.
@@ -2292,6 +2342,12 @@ print_vdev_stats(zpool_handle_t *zhp, const char *name, nvlist_t *oldnv,
 	vdev_stat_t *oldvs, *newvs;
 	vdev_stat_t zerovs = { 0 };
 	uint64_t tdelta;
+	uint64_t latency;
+	uint64_t zio_time;
+	uint64_t zio_write_count;
+	uint64_t zio_read_count;
+	hrtime_t zio_write_time;
+	hrtime_t zio_read_time;
 	double scale;
 	char *vname;
 
@@ -2326,17 +2382,39 @@ print_vdev_stats(zpool_handle_t *zhp, const char *name, nvlist_t *oldnv,
 		print_one_stat(newvs->vs_space - newvs->vs_alloc);
 	}
 
-	print_one_stat((uint64_t)(scale * (newvs->vs_ops[ZIO_TYPE_READ] -
-	    oldvs->vs_ops[ZIO_TYPE_READ])));
+	zio_read_count = newvs->vs_ops[ZIO_TYPE_READ] -
+	    oldvs->vs_ops[ZIO_TYPE_READ];
+	
+	zio_write_count = newvs->vs_ops[ZIO_TYPE_WRITE] - 
+	    oldvs->vs_ops[ZIO_TYPE_WRITE]; 	
+	
+	zio_read_time = newvs->vs_zio_time[ZIO_TYPE_READ] -
+	    oldvs->vs_zio_time[ZIO_TYPE_READ];
 
-	print_one_stat((uint64_t)(scale * (newvs->vs_ops[ZIO_TYPE_WRITE] -
-	    oldvs->vs_ops[ZIO_TYPE_WRITE])));
+	zio_write_time = newvs->vs_zio_time[ZIO_TYPE_WRITE] -
+	    oldvs->vs_zio_time[ZIO_TYPE_WRITE];
+
+	print_one_stat((uint64_t)(scale * zio_read_count));
+
+	print_one_stat((uint64_t)(scale * zio_write_count));
 
 	print_one_stat((uint64_t)(scale * (newvs->vs_bytes[ZIO_TYPE_READ] -
 	    oldvs->vs_bytes[ZIO_TYPE_READ])));
 
 	print_one_stat((uint64_t)(scale * (newvs->vs_bytes[ZIO_TYPE_WRITE] -
 	    oldvs->vs_bytes[ZIO_TYPE_WRITE])));
+
+	if (zio_read_count)
+		latency = (zio_read_time / zio_read_count);
+	else
+		latency = 0;
+	print_one_time(latency);
+
+	if (zio_write_count)
+		latency = (zio_write_time / zio_write_count);
+	else
+		latency = 0;
+	print_one_time(latency);
 
 	(void) printf("\n");
 
@@ -2763,9 +2841,9 @@ print_header(list_cbdata_t *cb)
 		if (pl->pl_next == NULL && !right_justify)
 			(void) printf("%s", header);
 		else if (right_justify)
-			(void) printf("%*s", width, header);
+			(void) printf("%*s", (int)width, header);
 		else
-			(void) printf("%-*s", width, header);
+			(void) printf("%-*s", (int)width, header);
 
 	}
 
@@ -2836,9 +2914,9 @@ print_pool(zpool_handle_t *zhp, list_cbdata_t *cb)
 		if (cb->cb_scripted || (pl->pl_next == NULL && !right_justify))
 			(void) printf("%s", propstr);
 		else if (right_justify)
-			(void) printf("%*s", width, propstr);
+			(void) printf("%*s", (int)width, propstr);
 		else
-			(void) printf("%-*s", width, propstr);
+			(void) printf("%-*s", (int)width, propstr);
 	}
 
 	(void) printf("\n");
@@ -2859,7 +2937,7 @@ print_one_column(zpool_prop_t prop, uint64_t value, boolean_t scripted)
 	if (scripted)
 		(void) printf("\t%s", propval);
 	else
-		(void) printf("  %*s", width, propval);
+		(void) printf("  %*s", (int)width, propval);
 }
 
 void
@@ -4672,14 +4750,14 @@ upgrade_one(zpool_handle_t *zhp, void *data)
 	cur_version = zpool_get_prop_int(zhp, ZPOOL_PROP_VERSION, NULL);
 	if (cur_version > cbp->cb_version) {
 		(void) printf(gettext("Pool '%s' is already formatted "
-		    "using more current version '%llu'.\n\n"),
+		    "using more current version '%"PRIu64"'.\n\n"),
 		    zpool_get_name(zhp), cur_version);
 		return (0);
 	}
 
 	if (cbp->cb_version != SPA_VERSION && cur_version == cbp->cb_version) {
 		(void) printf(gettext("Pool '%s' is already formatted "
-		    "using version %llu.\n\n"), zpool_get_name(zhp),
+		    "using version %"PRIu64".\n\n"), zpool_get_name(zhp),
 		    cbp->cb_version);
 		return (0);
 	}
@@ -4980,7 +5058,7 @@ get_history_one(zpool_handle_t *zhp, void *data)
 				continue;
 			(void) snprintf(internalstr,
 			    sizeof (internalstr),
-			    "[internal %s txg:%lld] %s",
+			    "[internal %s txg:%"PRIu64"] %s",
 			    zfs_history_event_names[ievent], txg,
 			    pathstr);
 			cmdstr = internalstr;

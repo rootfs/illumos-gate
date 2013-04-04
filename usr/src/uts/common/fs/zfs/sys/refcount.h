@@ -35,12 +35,12 @@
 extern "C" {
 #endif
 
-/*
+/**
  * If the reference is held only by the calling function and not any
  * particular object, use FTAG (which is a string) for the holder_tag.
  * Otherwise, use the object that holds the reference.
  */
-#define	FTAG ((char *)__func__)
+#define	FTAG ((char *)(uintptr_t)__func__)
 
 #ifdef	ZFS_DEBUG
 typedef struct reference {
@@ -57,8 +57,6 @@ typedef struct refcount {
 	int64_t rc_count;
 	int64_t rc_removed_count;
 } refcount_t;
-
-/* Note: refcount_t must be initialized with refcount_create() */
 
 void refcount_create(refcount_t *rc);
 void refcount_destroy(refcount_t *rc);

@@ -22,7 +22,8 @@
  * Copyright (c) 2005, 2010, Oracle and/or its affiliates. All rights reserved.
  */
 
-/*
+/**
+ * \file zap_leaf.c
  * The 512-byte leaf is broken into 32 16-byte chunks.
  * chunk number n means l_chunk[n], even though the header precedes it.
  * the names are stored null-terminated.
@@ -105,7 +106,6 @@ zap_leaf_byteswap(zap_leaf_phys_t *buf, int size)
 	int i;
 	zap_leaf_t l;
 	l.l_bs = highbit(size)-1;
-	l.l_phys = buf;
 
 	buf->l_hdr.lh_block_type = 	BSWAP_64(buf->l_hdr.lh_block_type);
 	buf->l_hdr.lh_prefix = 		BSWAP_64(buf->l_hdr.lh_prefix);
@@ -269,7 +269,10 @@ zap_leaf_array_free(zap_leaf_t *l, uint16_t *chunkp)
 	}
 }
 
-/* array_len and buf_len are in integers, not bytes */
+/**
+ * \param	array_len	In units of integers, not bytes	
+ * \param	buf_len		In units of integers, not bytes
+ */
 static void
 zap_leaf_array_read(zap_leaf_t *l, uint16_t chunk,
     int array_int_len, int array_len, int buf_int_len, uint64_t buf_len,
@@ -658,8 +661,9 @@ zap_entry_create(zap_leaf_t *l, zap_name_t *zn, uint32_t cd,
 	return (0);
 }
 
-/*
+/**
  * Determine if there is another entry with the same normalized form.
+ *
  * For performance purposes, either zn or name must be provided (the
  * other can be NULL).  Note, there usually won't be any hash
  * conflicts, in which case we don't need the concatenated/normalized
@@ -784,7 +788,7 @@ zap_leaf_transfer_entry(zap_leaf_t *l, int entry, zap_leaf_t *nl)
 	nl->l_phys->l_hdr.lh_nentries++;
 }
 
-/*
+/**
  * Transfer the entries whose hash prefix ends in 1 to the new leaf.
  */
 void
@@ -831,7 +835,7 @@ zap_leaf_stats(zap_t *zap, zap_leaf_t *l, zap_stats_t *zs)
 {
 	int i, n;
 
-	n = zap->zap_f.zap_phys->zap_ptrtbl.zt_shift -
+	n = zap->zap_f_phys->zap_ptrtbl.zt_shift -
 	    l->l_phys->l_hdr.lh_prefix_len;
 	n = MIN(n, ZAP_HISTOGRAM_SIZE-1);
 	zs->zs_leafs_with_2n_pointers[n]++;

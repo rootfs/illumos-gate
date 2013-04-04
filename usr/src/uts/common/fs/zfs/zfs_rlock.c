@@ -26,9 +26,12 @@
  * Copyright (c) 2012 by Delphix. All rights reserved.
  */
 
-/*
+/**
+ * \file zfs_rlock.c
+ * File Range Locking for ZFS
+ *
  * This file contains the code to implement file range locking in
- * ZFS, although there isn't much specific to ZFS (all that comes to mind
+ * ZFS, although there isn't much specific to ZFS (all that comes to mind is
  * support for growing the blocksize).
  *
  * Interface
@@ -97,7 +100,7 @@
 
 #include <sys/zfs_rlock.h>
 
-/*
+/**
  * Check if a write lock can be grabbed, or wait and recheck until available.
  */
 static void
@@ -183,7 +186,7 @@ wait:
 	}
 }
 
-/*
+/**
  * If this is an original (non-proxy) lock then replace it by
  * a proxy and return the proxy.
  */
@@ -215,7 +218,7 @@ zfs_range_proxify(avl_tree_t *tree, rl_t *rl)
 	return (proxy);
 }
 
-/*
+/**
  * Split the range lock at the supplied offset
  * returning the *front* proxy.
  */
@@ -247,7 +250,7 @@ zfs_range_split(avl_tree_t *tree, rl_t *rl, uint64_t off)
 	return (front);
 }
 
-/*
+/**
  * Create and add a new proxy range lock for the supplied range.
  */
 static void
@@ -349,7 +352,7 @@ zfs_range_add_reader(avl_tree_t *tree, rl_t *new, rl_t *prev, avl_index_t where)
 	    (off + len) - (prev->r_off + prev->r_len));
 }
 
-/*
+/**
  * Check if a reader lock can be grabbed, or wait and recheck until available.
  */
 static void
@@ -416,12 +419,6 @@ got_lock:
 	zfs_range_add_reader(tree, new, prev, where);
 }
 
-/*
- * Lock a range (offset, length) as either shared (RL_READER)
- * or exclusive (RL_WRITER). Returns the range lock structure
- * for later unlocking or reduce range (if entire file
- * previously locked as RL_WRITER).
- */
 rl_t *
 zfs_range_lock(znode_t *zp, uint64_t off, uint64_t len, rl_type_t type)
 {
@@ -456,7 +453,7 @@ zfs_range_lock(znode_t *zp, uint64_t off, uint64_t len, rl_type_t type)
 	return (new);
 }
 
-/*
+/**
  * Unlock a reader lock
  */
 static void
@@ -523,9 +520,6 @@ zfs_range_unlock_reader(znode_t *zp, rl_t *remove)
 	kmem_free(remove, sizeof (rl_t));
 }
 
-/*
- * Unlock range and destroy range lock structure.
- */
 void
 zfs_range_unlock(rl_t *rl)
 {
@@ -559,7 +553,7 @@ zfs_range_unlock(rl_t *rl)
 	}
 }
 
-/*
+/**
  * Reduce range locked as RL_WRITER from whole file to specified range.
  * Asserts the whole file is exclusivly locked and so there's only one
  * entry in the tree.
@@ -587,10 +581,6 @@ zfs_range_reduce(rl_t *rl, uint64_t off, uint64_t len)
 		cv_broadcast(&rl->r_rd_cv);
 }
 
-/*
- * AVL comparison function used to order range locks
- * Locks are ordered on the start offset of the range.
- */
 int
 zfs_range_compare(const void *arg1, const void *arg2)
 {

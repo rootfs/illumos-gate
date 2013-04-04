@@ -24,15 +24,22 @@
 
 #include <sys/zfs_context.h>
 #include <sys/refcount.h>
+#include <sys/sysctl.h>
 
 #ifdef	ZFS_DEBUG
 
 #ifdef _KERNEL
 int reference_tracking_enable = FALSE; /* runs out of memory too easily */
+TUNABLE_INT("vfs.zfs.reference_tracking_enable", &reference_tracking_enable );
+SYSCTL_DECL(_vfs_zfs);
+SYSCTL_INT(_vfs_zfs, OID_AUTO, reference_tracking_enable, CTLFLAG_RDTUN,
+    &reference_tracking_enable, 0,
+    "Track reference holders to refcount_t objects, used mostly by ZFS");
 #else
 int reference_tracking_enable = TRUE;
 #endif
 int reference_history = 4; /* tunable */
+
 
 static kmem_cache_t *reference_cache;
 static kmem_cache_t *reference_history_cache;
@@ -54,6 +61,7 @@ refcount_fini(void)
 	kmem_cache_destroy(reference_history_cache);
 }
 
+/** refcount_t objects must be initialized with refcount_create() */
 void
 refcount_create(refcount_t *rc)
 {
@@ -74,14 +82,14 @@ refcount_destroy_many(refcount_t *rc, uint64_t number)
 	ASSERT(rc->rc_count == number);
 	while (ref = list_head(&rc->rc_list)) {
 		list_remove(&rc->rc_list, ref);
-		kmem_cache_free(reference_cache, ref);
+		kmem_free_with_stack(ref, sizeof(reference_t));
 	}
 	list_destroy(&rc->rc_list);
 
 	while (ref = list_head(&rc->rc_removed)) {
 		list_remove(&rc->rc_removed, ref);
-		kmem_cache_free(reference_history_cache, ref->ref_removed);
-		kmem_cache_free(reference_cache, ref);
+		kmem_free_with_stack(ref->ref_removed, sizeof(reference_t));
+		kmem_free_with_stack(ref, sizeof(reference_t));
 	}
 	list_destroy(&rc->rc_removed);
 	mutex_destroy(&rc->rc_mtx);
@@ -114,7 +122,7 @@ refcount_add_many(refcount_t *rc, uint64_t number, void *holder)
 	int64_t count;
 
 	if (reference_tracking_enable) {
-		ref = kmem_cache_alloc(reference_cache, KM_SLEEP);
+		ref = kmem_alloc_with_stack(sizeof(reference_t), KM_SLEEP);
 		ref->ref_holder = holder;
 		ref->ref_number = number;
 	}
@@ -156,21 +164,21 @@ refcount_remove_many(refcount_t *rc, uint64_t number, void *holder)
 		if (ref->ref_holder == holder && ref->ref_number == number) {
 			list_remove(&rc->rc_list, ref);
 			if (reference_history > 0) {
-				ref->ref_removed =
-				    kmem_cache_alloc(reference_history_cache,
-				    KM_SLEEP);
+				ref->ref_removed = kmem_alloc_with_stack(
+				    sizeof(reference_t), KM_SLEEP);
 				list_insert_head(&rc->rc_removed, ref);
 				rc->rc_removed_count++;
 				if (rc->rc_removed_count >= reference_history) {
 					ref = list_tail(&rc->rc_removed);
 					list_remove(&rc->rc_removed, ref);
-					kmem_cache_free(reference_history_cache,
-					    ref->ref_removed);
-					kmem_cache_free(reference_cache, ref);
+					kmem_free_with_stack(ref->ref_removed,
+					    sizeof(reference_t));
+					kmem_free_with_stack(ref,
+					    sizeof(reference_t));
 					rc->rc_removed_count--;
 				}
 			} else {
-				kmem_cache_free(reference_cache, ref);
+				kmem_free_with_stack(ref, sizeof(reference_t));
 			}
 			rc->rc_count -= number;
 			count = rc->rc_count;

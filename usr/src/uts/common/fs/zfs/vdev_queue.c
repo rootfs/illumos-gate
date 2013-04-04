@@ -28,25 +28,29 @@
 #include <sys/zio.h>
 #include <sys/avl.h>
 
-/*
- * These tunables are for performance analysis.
+/* These tunables are for performance analysis. */
+/**
+ * \addtogroup tunables
+ * \{
  */
-/*
- * zfs_vdev_max_pending is the maximum number of i/os concurrently
- * pending to each device.  zfs_vdev_min_pending is the initial number
- * of i/os pending to each device (before it starts ramping up to
- * max_pending).
+/**
+ * The maximum number of i/os concurrently pending to each device.
  */
 int zfs_vdev_max_pending = 10;
+
+/**
+ * The initial number of i/os pending to each device (before it starts ramping
+ * up to max_pending).
+ */
 int zfs_vdev_min_pending = 4;
 
-/* deadline = pri + ddi_get_lbolt64() >> time_shift) */
+/** deadline = pri + ddi_get_lbolt64() >> time_shift) */
 int zfs_vdev_time_shift = 6;
 
-/* exponential I/O issue ramp-up rate */
+/** exponential I/O issue ramp-up rate */
 int zfs_vdev_ramp_rate = 2;
 
-/*
+/**
  * To reduce IOPs, we aggregate small adjacent I/Os into one large I/O.
  * For read I/Os, we also aggregate across small adjacency gaps; for writes
  * we include spans of optional I/Os to aid aggregation at the disk even when
@@ -55,6 +59,7 @@ int zfs_vdev_ramp_rate = 2;
 int zfs_vdev_aggregation_limit = SPA_MAXBLOCKSIZE;
 int zfs_vdev_read_gap_limit = 32 << 10;
 int zfs_vdev_write_gap_limit = 4 << 10;
+/** \} */
 
 SYSCTL_DECL(_vfs_zfs_vdev);
 TUNABLE_INT("vfs.zfs.vdev.max_pending", &zfs_vdev_max_pending);
@@ -83,7 +88,7 @@ SYSCTL_INT(_vfs_zfs_vdev, OID_AUTO, write_gap_limit, CTLFLAG_RW,
     &zfs_vdev_write_gap_limit, 0,
     "Acceptable gap between two writes being aggregated");
 
-/*
+/**
  * Virtual device vector for disk I/O scheduling.
  */
 int
@@ -189,7 +194,7 @@ vdev_queue_agg_io_done(zio_t *aio)
 	zio_buf_free(aio->io_data, aio->io_size);
 }
 
-/*
+/**
  * Compute the range spanned by two i/os, which is the endpoint of the last
  * (lio->io_offset + lio->io_size) minus start of the first (fio->io_offset).
  * Conveniently, the gap between fio and lio is given by -IO_SPAN(lio, fio);

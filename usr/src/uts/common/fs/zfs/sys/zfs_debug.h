@@ -21,6 +21,7 @@
 /*
  * Copyright (c) 2005, 2010, Oracle and/or its affiliates. All rights reserved.
  * Copyright (c) 2012 by Delphix. All rights reserved.
+ * Copyright (c) 2011-2012, Spectra Logic Corporation. All rights reserved.
  */
 
 #ifndef _SYS_ZFS_DEBUG_H
@@ -55,6 +56,7 @@ extern int zfs_flags;
 #define	ZFS_DEBUG_DNODE_VERIFY	0x0004
 #define	ZFS_DEBUG_SNAPNAMES	0x0008
 #define	ZFS_DEBUG_MODIFY	0x0010
+#define	ZFS_DEBUG_DBUF_STATE	0x0020
 
 #ifdef ZFS_DEBUG
 extern void __dprintf(const char *file, const char *func,
@@ -71,7 +73,7 @@ extern void zfs_panic_recover(const char *fmt, ...);
 typedef struct zfs_dbgmsg {
 	list_node_t zdm_node;
 	time_t zdm_timestamp;
-	char zdm_msg[1]; /* variable length allocation */
+	char zdm_msg[1]; /**< variable length allocation */
 } zfs_dbgmsg_t;
 
 extern void zfs_dbgmsg_init(void);
@@ -83,6 +85,32 @@ extern void zfs_dbgmsg(const char *fmt, ...);
 extern int dprintf_find_string(const char *string);
 #endif
 #endif /* illumos */
+
+#ifdef __FreeBSD__
+#define	DEBUG_COUNTER_U(parent, name, desc)			\
+	uint64_t name;						\
+	SYSCTL_QUAD(parent, OID_AUTO, name, CTLFLAG_RD,		\
+	    &name, 0, desc)
+#define	DEBUG_REFCOUNT(parent, name, desc)			\
+	uint_t name;						\
+	SYSCTL_INT(parent, OID_AUTO, name, CTLFLAG_RD,		\
+	    &name, 0, desc)
+#else
+#define	DEBUG_COUNTER_U(parent, name, desc)	uint64_t name
+#define	DEBUG_REFCOUNT(parent, name, desc)	uint_t name
+#endif
+#ifdef ZFS_DEBUG
+#define	DEBUG_REFCOUNT_INC(rc)	refcount_acquire(&(rc))
+#define	DEBUG_REFCOUNT_DEC(rc)	do {	\
+	refcount_release(&(rc));	\
+	ASSERT((rc) >= 0);		\
+} while (0)
+#define	DEBUG_COUNTER_INC(ctr)	atomic_add_64(&(ctr), 1)
+#else
+#define	DEBUG_REFCOUNT_INC(rc)	do { } while (0)
+#define	DEBUG_REFCOUNT_DEC(rc)	do { } while (0)
+#define	DEBUG_COUNTER_INC(ctr)	do { } while (0)
+#endif
 
 #ifdef	__cplusplus
 }

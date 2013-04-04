@@ -29,11 +29,15 @@
 
 #include <sys/zfs_context.h>
 #include <sys/spa.h>
+#include <sys/spa_impl.h>
+#include <sys/dsl_pool.h>
+#include <sys/dsl_scan.h>
 #include <sys/vdev_impl.h>
 #include <sys/zio.h>
 #include <sys/fs/zfs.h>
 
-/*
+/**
+ * \file vdev_mirror.c
  * Virtual device vector for mirroring.
  */
 
@@ -48,7 +52,7 @@ typedef struct mirror_child {
 
 typedef struct mirror_map {
 	int		mm_children;
-	int		mm_replacing;
+	int		mm_resilvering;
 	int		mm_preferred;
 	int		mm_root;
 	mirror_child_t	mm_child[1];
@@ -85,7 +89,7 @@ vdev_mirror_map_alloc(zio_t *zio)
 
 		mm = kmem_zalloc(offsetof(mirror_map_t, mm_child[c]), KM_SLEEP);
 		mm->mm_children = c;
-		mm->mm_replacing = B_FALSE;
+		mm->mm_resilvering = B_FALSE;
 		mm->mm_preferred = spa_get_random(c);
 		mm->mm_root = B_TRUE;
 
@@ -108,13 +112,52 @@ vdev_mirror_map_alloc(zio_t *zio)
 			mc->mc_offset = DVA_GET_OFFSET(&dva[c]);
 		}
 	} else {
+		int replacing;
+
 		c = vd->vdev_children;
 
 		mm = kmem_zalloc(offsetof(mirror_map_t, mm_child[c]), KM_SLEEP);
 		mm->mm_children = c;
-		mm->mm_replacing = (vd->vdev_ops == &vdev_replacing_ops ||
+		/*
+		 * If we are resilvering, then we should handle scrub reads
+		 * differently; we shouldn't issue them to the resilvering
+		 * device because it might not have those blocks.
+		 *
+		 * We are resilvering iff:
+		 * 1) We are a replacing vdev (ie our name is "replacing-1" or
+		 *    "spare-1" or something like that), and
+		 * 2) The pool is currently being resilvered.
+		 *
+		 * We cannot simply check vd->vdev_resilvering, because that
+		 * variable has never been correctly calculated.
+		 *
+		 * Nor can we just check our vdev_ops; there are cases (such as
+		 * when a user types "zpool replace pool odev spare_dev" and
+		 * spare_dev is in the spare list, or when a spare device is
+		 * automatically used to replace a DEGRADED device) when
+		 * resilvering is complete but both the original vdev and the
+		 * spare vdev remain in the pool.  That behavior is intentional.
+		 * It helps implement the policy that a spare should be
+		 * automatically removed from the pool after the user replaces
+		 * the device that originally failed.
+		 */
+		replacing = (vd->vdev_ops == &vdev_replacing_ops ||
 		    vd->vdev_ops == &vdev_spare_ops);
-		mm->mm_preferred = mm->mm_replacing ? 0 :
+
+		/* 
+		 * If a spa load is in progress, then spa_dsl_pool may be
+		 * uninitialized.  But we shouldn't be resilvering during a spa
+		 * load anyway.
+		 */
+		if (replacing &&
+		    (spa_load_state(vd->vdev_spa) == SPA_LOAD_NONE) &&
+		    dsl_scan_resilvering(vd->vdev_spa->spa_dsl_pool)) {
+			mm->mm_resilvering = B_TRUE;
+		} else {
+			mm->mm_resilvering = B_FALSE;
+		}
+
+		mm->mm_preferred = mm->mm_resilvering ? 0 :
 		    (zio->io_offset >> vdev_mirror_shift) % c;
 		mm->mm_root = B_FALSE;
 
@@ -132,7 +175,7 @@ vdev_mirror_map_alloc(zio_t *zio)
 
 static int
 vdev_mirror_open(vdev_t *vd, uint64_t *asize, uint64_t *max_asize,
-    uint64_t *ashift)
+    uint64_t *logical_ashift, uint64_t *physical_ashift)
 {
 	int numerrors = 0;
 	int lasterror = 0;
@@ -155,7 +198,9 @@ vdev_mirror_open(vdev_t *vd, uint64_t *asize, uint64_t *max_asize,
 
 		*asize = MIN(*asize - 1, cvd->vdev_asize - 1) + 1;
 		*max_asize = MIN(*max_asize - 1, cvd->vdev_max_asize - 1) + 1;
-		*ashift = MAX(*ashift, cvd->vdev_ashift);
+		*logical_ashift = MAX(*logical_ashift, cvd->vdev_ashift);
+		*physical_ashift = MAX(*physical_ashift,
+		    cvd->vdev_physical_ashift);
 	}
 
 	if (numerrors == vd->vdev_children) {
@@ -208,7 +253,7 @@ vdev_mirror_scrub_done(zio_t *zio)
 	mc->mc_skipped = 0;
 }
 
-/*
+/**
  * Try to find a child whose DTL doesn't contain the block we want to read.
  * If we can't, try the read on any vdev we haven't already tried.
  */
@@ -270,7 +315,7 @@ vdev_mirror_io_start(zio_t *zio)
 	mm = vdev_mirror_map_alloc(zio);
 
 	if (zio->io_type == ZIO_TYPE_READ) {
-		if ((zio->io_flags & ZIO_FLAG_SCRUB) && !mm->mm_replacing) {
+		if ((zio->io_flags & ZIO_FLAG_SCRUB) && !mm->mm_resilvering) {
 			/*
 			 * For scrubbing reads we need to allocate a read
 			 * buffer for each child and issue reads to all
@@ -374,7 +419,7 @@ vdev_mirror_io_done(zio_t *zio)
 			 * writes to the old device to have succeeded.
 			 */
 			if (good_copies == 0 || zio->io_vd == NULL)
-				zio->io_error = vdev_mirror_worst_error(mm);
+				ZIO_SET_ERROR(zio, vdev_mirror_worst_error(mm));
 		}
 		return;
 	}
@@ -398,14 +443,14 @@ vdev_mirror_io_done(zio_t *zio)
 
 	/* XXPOLICY */
 	if (good_copies == 0) {
-		zio->io_error = vdev_mirror_worst_error(mm);
+		ZIO_SET_ERROR(zio, vdev_mirror_worst_error(mm));
 		ASSERT(zio->io_error != 0);
 	}
 
 	if (good_copies && spa_writeable(zio->io_spa) &&
 	    (unexpected_errors ||
 	    (zio->io_flags & ZIO_FLAG_RESILVER) ||
-	    ((zio->io_flags & ZIO_FLAG_SCRUB) && mm->mm_replacing))) {
+	    ((zio->io_flags & ZIO_FLAG_SCRUB) && mm->mm_resilvering))) {
 		/*
 		 * Use the good data we have in hand to repair damaged children.
 		 */

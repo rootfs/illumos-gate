@@ -364,6 +364,7 @@ typedef struct importargs {
 	int can_be_active : 1;	/* can the pool be active?		*/
 	int unique : 1;		/* does 'poolname' already exist?	*/
 	int exists : 1;		/* set on return if pool already exists	*/
+	int can_be_destroyed : 1;	/* can the pool be destroyed?	*/
 } importargs_t;
 
 extern nvlist_t *zpool_search_import(libzfs_handle_t *, importargs_t *);

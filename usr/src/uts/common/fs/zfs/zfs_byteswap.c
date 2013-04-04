@@ -43,7 +43,7 @@ zfs_oldace_byteswap(ace_t *ace, int ace_cnt)
 	}
 }
 
-/*
+/**
  * swap ace_t and ace_oject_t
  */
 void

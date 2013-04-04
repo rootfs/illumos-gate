@@ -38,14 +38,14 @@
 extern "C" {
 #endif
 
-/*
+/**
  * Embedded checksum
  */
 #define	ZEC_MAGIC	0x210da7ab10c7a11ULL
 
 typedef struct zio_eck {
-	uint64_t	zec_magic;	/* for validation, endianness	*/
-	zio_cksum_t	zec_cksum;	/* 256-bit checksum		*/
+	uint64_t	zec_magic;	/**< for validation, endianness	*/
+	zio_cksum_t	zec_cksum;	/**< 256-bit checksum		*/
 } zio_eck_t;
 
 /*
@@ -232,7 +232,7 @@ typedef void zio_done_func_t(zio_t *zio);
 extern uint8_t zio_priority_table[ZIO_PRIORITY_TABLE_SIZE];
 extern char *zio_type_name[ZIO_TYPES];
 
-/*
+/**
  * A bookmark is a four-tuple <objset, object, level, blkid> that uniquely
  * identifies any block in the pool.  By convention, the meta-objset (MOS)
  * is objset 0, and the meta-dnode is object 0.  This covers all blocks
@@ -242,12 +242,12 @@ extern char *zio_type_name[ZIO_TYPES];
  * ZIL blocks are bookmarked <objset, 0, -2, blkid == ZIL sequence number>.
  * dmu_sync()ed ZIL data blocks are bookmarked <objset, object, -2, blkid>.
  *
- * Note: this structure is called a bookmark because its original purpose
- * was to remember where to resume a pool-wide traverse.
+ * \note  This structure is called a bookmark because its original purpose
+ *        was to remember where to resume a pool-wide traverse.
  *
- * Note: this structure is passed between userland and the kernel.
- * Therefore it must not change size or alignment between 32/64 bit
- * compilation options.
+ * \note  This structure is passed between userland and the kernel.
+ *        Therefore it must not change size or alignment between 32/64 bit
+ *        compilation options.
  */
 typedef struct zbookmark {
 	uint64_t	zb_objset;
@@ -306,14 +306,14 @@ struct zio_cksum_report {
 	nvlist_t		*zcr_ereport;
 	nvlist_t		*zcr_detector;
 	void			*zcr_cbdata;
-	size_t			zcr_cbinfo;	/* passed to zcr_free() */
+	size_t			zcr_cbinfo;	/**< passed to zcr_free() */
 	uint64_t		zcr_align;
 	uint64_t		zcr_length;
 	zio_cksum_finish_f	*zcr_finish;
 	zio_cksum_free_f	*zcr_free;
 
 	/* internal use only */
-	struct zio_bad_cksum	*zcr_ckinfo;	/* information from failure */
+	struct zio_bad_cksum	*zcr_ckinfo;	/**< information from failure */
 };
 
 typedef void zio_vsd_cksum_report_f(zio_t *zio, zio_cksum_report_t *zcr,
@@ -346,7 +346,7 @@ typedef struct zio_transform {
 
 typedef int zio_pipe_stage_t(zio_t *zio);
 
-/*
+/**
  * The io_reexecute flags are distinct from io_flags because the child must
  * be able to propagate them to the parent.  The normal io_flags are local
  * to the zio, not protected by any lock, and not modifiable by children;
@@ -364,7 +364,11 @@ typedef struct zio_link {
 } zio_link_t;
 
 struct zio {
-	/* Core information about this I/O */
+	/**
+	 * \name Core
+	 * Core information about this I/O
+	 * \{
+	 */
 	zbookmark_t	io_bookmark;
 	zio_prop_t	io_prop;
 	zio_type_t	io_type;
@@ -384,20 +388,32 @@ struct zio {
 	zio_t		*io_logical;
 	zio_transform_t *io_transform_stack;
 
-	/* Callback info */
+	/**
+	 * \}
+	 * \name Callback
+	 * Callback info
+	 * \{ */
 	zio_done_func_t	*io_ready;
 	zio_done_func_t	*io_done;
 	void		*io_private;
-	int64_t		io_prev_space_delta;	/* DMU private */
+	int64_t		io_prev_space_delta;	/**< DMU private */
 	blkptr_t	io_bp_orig;
 
-	/* Data represented by this I/O */
+	/**
+	 * \}
+	 * \name Data 
+	 * Data represented by this I/O 
+	 * \{ */
 	void		*io_data;
 	void		*io_orig_data;
 	uint64_t	io_size;
 	uint64_t	io_orig_size;
 
-	/* Stuff for the vdev stack */
+	/**
+	 * \}
+	 * \name Stack
+	 * Stuff for the vdev stack 
+	 * \{ */
 	vdev_t		*io_vd;
 	void		*io_vsd;
 	const zio_vsd_ops_t *io_vsd_ops;
@@ -407,15 +423,29 @@ struct zio {
 	avl_node_t	io_offset_node;
 	avl_node_t	io_deadline_node;
 	avl_tree_t	*io_vdev_tree;
+	hrtime_t	io_vdev_t_start;
 
-	/* Internal pipeline state */
+	/**
+	 * \}
+	 * \name Pipeline
+	 * Internal pipeline state 
+	 * \{ */
 	enum zio_flag	io_flags;
 	enum zio_stage	io_stage;
 	enum zio_stage	io_pipeline;
 	enum zio_flag	io_orig_flags;
 	enum zio_stage	io_orig_stage;
 	enum zio_stage	io_orig_pipeline;
+
 	int		io_error;
+#ifdef ZFS_DEBUG
+	struct {
+		int err;
+		int lineno;
+		const char *filename;
+	} io_last_errno;
+#endif
+
 	int		io_child_error[ZIO_CHILD_TYPES];
 	uint64_t	io_children[ZIO_CHILD_TYPES][ZIO_WAIT_TYPES];
 	uint64_t	io_child_count;
@@ -428,15 +458,45 @@ struct zio {
 	kmutex_t	io_lock;
 	kcondvar_t	io_cv;
 
-	/* FMA state */
+	/**
+	 * \}
+	 * \name FMA
+	 * FMA state 
+	 * \{*/
 	zio_cksum_report_t *io_cksum_report;
 	uint64_t	io_ena;
+	/** \} */
 
+	/** \} */
 #ifdef _KERNEL
-	/* FreeBSD only. */
+	/**
+	 * \name OS
+	 * FreeBSD only.
+	 * \{ */
 	struct ostask	io_task;
+	/** \} */
 #endif
 };
+
+/*
+ * NB: Mostly useful for tracing ZIO errors.  Perhaps it could be extended
+ * to include a full history for each zio.  Skip ECKSUM, because it can
+ * happen a lot.
+ */
+#ifdef ZFS_DEBUG
+#define	ZIO_SET_ERROR(zio, error) do {					\
+	(zio)->io_error = (error);					\
+	if (error != 0 && error != ECKSUM) {				\
+		dprintf("zio %p error %d at %s:%d\n",			\
+		    zio, (error), __FILE__, __LINE__);			\
+		(zio)->io_last_errno.err = error;			\
+		(zio)->io_last_errno.filename = __FILE__;		\
+		(zio)->io_last_errno.lineno = __LINE__;			\
+	}								\
+} while (0)
+#else
+#define	ZIO_SET_ERROR(zio, error) (zio)->io_error = error
+#endif	/* ZFS_DEBUG */
 
 extern zio_t *zio_null(zio_t *pio, spa_t *spa, vdev_t *vd,
     zio_done_func_t *done, void *priv, enum zio_flag flags);
@@ -565,12 +625,12 @@ extern void zfs_ereport_finish_checksum(zio_cksum_report_t *report,
 extern void zfs_ereport_send_interim_checksum(zio_cksum_report_t *report);
 extern void zfs_ereport_free_checksum(zio_cksum_report_t *report);
 
-/* If we have the good data in hand, this function can be used */
+/** If we have the good data in hand, this function can be used */
 extern void zfs_ereport_post_checksum(spa_t *spa, vdev_t *vd,
     struct zio *zio, uint64_t offset, uint64_t length,
     const void *good_data, const void *bad_data, struct zio_bad_cksum *info);
 
-/* Called from spa_sync(), but primarily an injection handler */
+/** Called from spa_sync(), but primarily an injection handler */
 extern void spa_handle_ignored_writes(spa_t *spa);
 
 /* zbookmark functions */

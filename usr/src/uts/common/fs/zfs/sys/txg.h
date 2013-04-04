@@ -36,13 +36,13 @@
 extern "C" {
 #endif
 
-#define	TXG_CONCURRENT_STATES	3	/* open, quiescing, syncing	*/
-#define	TXG_SIZE		4		/* next power of 2	*/
-#define	TXG_MASK		(TXG_SIZE - 1)	/* mask for size	*/
-#define	TXG_INITIAL		TXG_SIZE	/* initial txg 		*/
+#define	TXG_CONCURRENT_STATES	3	/**< open, quiescing, syncing	*/
+#define	TXG_SIZE		4		/**< next power of 2	*/
+#define	TXG_MASK		(TXG_SIZE - 1)	/**< mask for size	*/
+#define	TXG_INITIAL		TXG_SIZE	/**< initial txg	*/
 #define	TXG_IDX			(txg & TXG_MASK)
 
-/* Number of txgs worth of frees we defer adding to in-core spacemaps */
+/** Number of txgs worth of frees we defer adding to in-core spacemaps */
 #define	TXG_DEFER_SIZE		2
 
 #define	TXG_WAIT		1ULL
@@ -77,7 +77,7 @@ extern void txg_rele_to_quiesce(txg_handle_t *txghp);
 extern void txg_rele_to_sync(txg_handle_t *txghp);
 extern void txg_register_callbacks(txg_handle_t *txghp, list_t *tx_callbacks);
 
-/*
+/**
  * Delay the caller by the specified number of ticks or until
  * the txg closes (whichever comes first).  This is intended
  * to be used to throttle writers when the system nears its
@@ -85,7 +85,7 @@ extern void txg_register_callbacks(txg_handle_t *txghp, list_t *tx_callbacks);
  */
 extern void txg_delay(struct dsl_pool *dp, uint64_t txg, int ticks);
 
-/*
+/**
  * Wait until the given transaction group has finished syncing.
  * Try to make this happen as soon as possible (eg. kick off any
  * necessary syncs immediately).  If txg==0, wait for the currently open
@@ -93,7 +93,16 @@ extern void txg_delay(struct dsl_pool *dp, uint64_t txg, int ticks);
  */
 extern void txg_wait_synced(struct dsl_pool *dp, uint64_t txg);
 
-/*
+/**
+ * Wait until the given transaction group starts syncing.
+ *
+ * \note  This function is primarily for debugging/testing purposes.
+ * \note  May return after the txg given has already synced, or too late to
+ *        perform the necessary testing.
+ */
+extern void txg_wait_syncing(struct dsl_pool *dp, uint64_t txg);
+
+/**
  * Wait until the given transaction group, or one after it, is
  * the open transaction group.  Try to make this happen as soon
  * as possible (eg. kick off any necessary syncs immediately).
@@ -101,13 +110,18 @@ extern void txg_wait_synced(struct dsl_pool *dp, uint64_t txg);
  */
 extern void txg_wait_open(struct dsl_pool *dp, uint64_t txg);
 
-/*
- * Returns TRUE if we are "backed up" waiting for the syncing
- * transaction to complete; otherwise returns FALSE.
+/**
+ * Are we waiting for the syncing transaction to complete?
+ *
+ * \retval TRUE   We are "backed up" waiting for the syncing
+ *                transaction to complete
+ * \retval FALSE  Otherwise
  */
 extern boolean_t txg_stalled(struct dsl_pool *dp);
 
-/* returns TRUE if someone is waiting for the next txg to sync */
+/**
+ * \return  TRUE if someone is waiting for the next txg to sync
+ */
 extern boolean_t txg_sync_waiting(struct dsl_pool *dp);
 
 /*

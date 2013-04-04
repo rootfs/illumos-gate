@@ -31,7 +31,7 @@
 #include <sys/vdev_impl.h>
 #include <sys/zio.h>
 
-/*
+/**
  * Allow allocations to switch to gang blocks quickly. We do this to
  * avoid having to load lots of space_maps in a given txg. There are,
  * however, some cases where we want to avoid "fast" ganging and instead
@@ -46,10 +46,12 @@
 uint64_t metaslab_aliquot = 512ULL << 10;
 uint64_t metaslab_gang_bang = SPA_MAXBLOCKSIZE + 1;	/* force gang blocks */
 
-/*
+/**
  * This value defines the number of allowed allocation failures per vdev.
  * If a device reaches this threshold in a given txg then we consider skipping
  * allocations on that device.
+ *
+ * \ingroup tunables
  */
 int zfs_mg_alloc_failures = 0;
 
@@ -59,12 +61,12 @@ SYSCTL_INT(_vfs_zfs, OID_AUTO, mg_alloc_failures, CTLFLAG_RDTUN,
     "Number of allowed allocation failures per vdev");
 TUNABLE_INT("vfs.zfs.mg_alloc_failures", &zfs_mg_alloc_failures);
 
-/*
+/**
  * Metaslab debugging: when set, keeps all space maps in core to verify frees.
  */
 static int metaslab_debug = 0;
 
-/*
+/**
  * Minimum size which forces the dynamic allocator to change
  * it's allocation strategy.  Once the space map cannot satisfy
  * an allocation of this size then it switches to using more
@@ -72,7 +74,7 @@ static int metaslab_debug = 0;
  */
 uint64_t metaslab_df_alloc_threshold = SPA_MAXBLOCKSIZE;
 
-/*
+/**
  * The minimum free space, in percent, which must be available
  * in a space map to continue allocations in a first-fit fashion.
  * Once the space_map's free space drops below this level we dynamically
@@ -80,18 +82,18 @@ uint64_t metaslab_df_alloc_threshold = SPA_MAXBLOCKSIZE;
  */
 int metaslab_df_free_pct = 4;
 
-/*
+/**
  * A metaslab is considered "free" if it contains a contiguous
  * segment which is greater than metaslab_min_alloc_size.
  */
 uint64_t metaslab_min_alloc_size = DMU_MAX_ACCESS;
 
-/*
+/**
  * Max number of space_maps to prefetch.
  */
 int metaslab_prefetch_limit = SPA_DVAS_PER_BP;
 
-/*
+/**
  * Percentage bonus multiplier for metaslabs that are in the bonus area.
  */
 int metaslab_smo_bonus_pct = 150;
@@ -376,7 +378,7 @@ metaslab_segsize_compare(const void *x1, const void *x2)
 	return (0);
 }
 
-/*
+/**
  * This is a helper function that can be used by the allocator to find
  * a suitable block to allocate. This will search the specified AVL
  * tree looking for a block that matches the specified criteria.
@@ -463,7 +465,7 @@ metaslab_pp_free(space_map_t *sm, uint64_t start, uint64_t size)
 	/* No need to update cursor */
 }
 
-/*
+/**
  * Return the maximum contiguous segment within the metaslab.
  */
 uint64_t
@@ -512,7 +514,8 @@ static space_map_ops_t metaslab_ff_ops = {
 
 /*
  * ==========================================================================
- * Dynamic block allocator -
+ * Dynamic block allocator 
+ *
  * Uses the first fit allocation scheme until space get low and then
  * adjusts to a best fit allocation method. Uses metaslab_df_alloc_threshold
  * and metaslab_df_free_pct to determine when to switch the allocation scheme.
@@ -926,7 +929,7 @@ metaslab_passivate(metaslab_t *msp, uint64_t size)
 	ASSERT((msp->ms_weight & METASLAB_ACTIVE_MASK) == 0);
 }
 
-/*
+/**
  * Write a metaslab to disk in the context of the specified transaction group.
  */
 void
@@ -1024,7 +1027,7 @@ metaslab_sync(metaslab_t *msp, uint64_t txg)
 	dmu_tx_commit(tx);
 }
 
-/*
+/**
  * Called after a transaction group has completely synced to mark
  * all of the metaslab's free space as usable.
  */
@@ -1282,7 +1285,7 @@ metaslab_group_alloc(metaslab_group_t *mg, uint64_t psize, uint64_t asize,
 	return (offset);
 }
 
-/*
+/**
  * Allocate a block for the specified i/o.
  */
 static int
@@ -1470,7 +1473,7 @@ next:
 	return (ENOSPC);
 }
 
-/*
+/**
  * Free the block represented by DVA in the context of the specified
  * transaction group.
  */
@@ -1516,7 +1519,7 @@ metaslab_free_dva(spa_t *spa, const dva_t *dva, uint64_t txg, boolean_t now)
 	mutex_exit(&msp->ms_lock);
 }
 
-/*
+/**
  * Intent log support: upon opening the pool after a crash, notify the SPA
  * of blocks that the intent log has allocated for immediate write, but
  * which are still considered free by the SPA because the last transaction

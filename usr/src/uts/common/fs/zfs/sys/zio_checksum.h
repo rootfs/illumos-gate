@@ -31,20 +31,20 @@
 extern "C" {
 #endif
 
-/*
+/**
  * Signature for checksum functions.
  */
 typedef void zio_checksum_t(const void *data, uint64_t size, zio_cksum_t *zcp);
 
-/*
+/**
  * Information about each checksum function.
  */
 typedef struct zio_checksum_info {
-	zio_checksum_t	*ci_func[2]; /* checksum function for each byteorder */
-	int		ci_correctable;	/* number of correctable bits	*/
-	int		ci_eck;		/* uses zio embedded checksum? */
-	int		ci_dedup;	/* strong enough for dedup? */
-	char		*ci_name;	/* descriptive name */
+	zio_checksum_t	*ci_func[2]; /**< checksum function for each byteorder */
+	int		ci_correctable;	/**< number of correctable bits	*/
+	int		ci_eck;		/**< uses zio embedded checksum? */
+	int		ci_dedup;	/**< strong enough for dedup? */
+	char		*ci_name;	/**< descriptive name */
 } zio_checksum_info_t;
 
 typedef struct zio_bad_cksum {
@@ -53,7 +53,7 @@ typedef struct zio_bad_cksum {
 	const char		*zbc_checksum_name;
 	uint8_t			zbc_byteswapped;
 	uint8_t			zbc_injected;
-	uint8_t			zbc_has_cksum;	/* expected/actual valid */
+	uint8_t			zbc_has_cksum;	/**< expected/actual valid */
 } zio_bad_cksum_t;
 
 extern zio_checksum_info_t zio_checksum_table[ZIO_CHECKSUM_FUNCTIONS];

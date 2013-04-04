@@ -583,13 +583,13 @@ zfs_nicenum(uint64_t num, char *buf, size_t buflen)
 	u = " KMGTPE"[index];
 
 	if (index == 0) {
-		(void) snprintf(buf, buflen, "%llu", n);
+		(void) snprintf(buf, buflen, "%"PRIu64, n);
 	} else if ((num & ((1ULL << 10 * index) - 1)) == 0) {
 		/*
 		 * If this is an even multiple of the base, always display
 		 * without any decimal precision.
 		 */
-		(void) snprintf(buf, buflen, "%llu%c", n, u);
+		(void) snprintf(buf, buflen, "%"PRIu64"%c", n, u);
 	} else {
 		/*
 		 * We want to choose a precision that reflects the best choice
@@ -606,6 +606,76 @@ zfs_nicenum(uint64_t num, char *buf, size_t buflen)
 			    (double)num / (1ULL << 10 * index), u) <= 5)
 				break;
 		}
+	}
+}
+
+/*
+ * Convert a number of nano seconds to a human readable value
+ */
+void
+zfs_nicetime(uint64_t time_in_ns, char *buf, size_t buflen)
+{
+	uint64_t major,minor;
+	char *units_text;
+	int index;
+	
+	struct time_unit {
+		uint64_t time;
+		const char units;
+	};
+
+	const uint64_t	NSEC = 1ULL; 
+	const uint64_t	USEC = 1000 * NSEC;
+	const uint64_t	MSEC = 1000 * USEC;
+	const uint64_t	SECS = 1000 * MSEC;
+	const uint64_t	MINS = 60   * SECS;
+	const uint64_t	HOUR = 60   * MINS;
+	const uint64_t	DAYS = 24   * HOUR;
+
+	struct time_unit time_units [] = {
+		{DAYS, 'D'},
+		{HOUR, 'H'},
+		{MINS, 'M'},
+		{SECS, 's'},
+		{MSEC, 'm'},
+		{USEC, 'u'},
+		{NSEC, 'n'}
+	};
+
+	const int max_time_units = sizeof(time_units)/sizeof(time_units[0]);
+
+	if (0 == time_in_ns) {
+		(void) snprintf(buf, buflen, "%i%c", 0,
+				time_units[max_time_units - 1].units);
+		return;
+	}
+
+	for (index = 0; index < max_time_units; ++index) {
+		major = time_in_ns / time_units[index].time;
+		if (0 == major)
+			continue;
+		minor = time_in_ns % time_units[index].time;
+		while (999 < minor) {
+			minor /= 1000;
+		}
+		break;
+	}
+	
+	if (minor) {
+		if (100 <= major)
+			minor = 0;
+		else if (10 <= major)
+			minor = minor/100;
+		else 
+			minor = minor/10;
+	}
+
+	if (minor) {
+		(void) snprintf(buf, buflen, "%"PRIu64".%"PRIu64"%c", 
+				major, minor, time_units[index].units);
+	} else {
+		(void) snprintf(buf, buflen, "%"PRIu64"%c", 
+				major, time_units[index].units);
 	}
 }
 

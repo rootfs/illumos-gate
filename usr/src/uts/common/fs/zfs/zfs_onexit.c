@@ -30,9 +30,13 @@
 #include <sys/sunddi.h>
 #include <sys/zfs_ioctl.h>
 #include <sys/zfs_onexit.h>
+#include <sys/dsl_dataset.h>
 #include <sys/zvol.h>
 
-/*
+/**
+ * \file zfs_onexit.c
+ * ZFS callback routines on process exit
+ *
  * ZFS kernel routines may add/delete callback routines to be invoked
  * upon process exit (triggered via the close operation from the /dev/zfs
  * driver).
@@ -110,7 +114,7 @@ zfs_onexit_minor_to_state(minor_t minor, zfs_onexit_t **zo)
 	return (0);
 }
 
-/*
+/**
  * Consumers might need to operate by minor number instead of fd, since
  * they might be running in another thread (e.g. txg_sync_thread). Callers
  * of this function must call zfs_onexit_fd_rele() when they're finished
@@ -145,7 +149,7 @@ zfs_onexit_fd_rele(int fd)
 	releasef(fd);
 }
 
-/*
+/**
  * Add a callback to be invoked when the calling process exits.
  */
 int
@@ -192,8 +196,10 @@ zfs_onexit_find_cb(zfs_onexit_t *zo, uint64_t action_handle)
 	return (ap);
 }
 
-/*
- * Delete the callback, triggering it first if 'fire' is set.
+/**
+ * Delete the callback
+ *
+ * \param[in]	fire	trigger the callback if set
  */
 int
 zfs_onexit_del_cb(minor_t minor, uint64_t action_handle, boolean_t fire)
@@ -222,7 +228,7 @@ zfs_onexit_del_cb(minor_t minor, uint64_t action_handle, boolean_t fire)
 	return (error);
 }
 
-/*
+/**
  * Return the data associated with this callback.  This allows consumers
  * of the cleanup-on-exit interfaces to stash kernel data across system
  * calls, knowing that it will be cleaned up if the calling process exits.

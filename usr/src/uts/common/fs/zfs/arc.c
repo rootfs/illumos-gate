@@ -22,67 +22,72 @@
  * Copyright (c) 2005, 2010, Oracle and/or its affiliates. All rights reserved.
  * Copyright 2011 Nexenta Systems, Inc.  All rights reserved.
  * Copyright (c) 2011 by Delphix. All rights reserved.
+ * Copyright (c) 2011-2012 Spectra Logic Corporation.  All rights reserved.
  */
 
-/*
- * DVA-based Adjustable Replacement Cache
+/**
+ * \file arc.c
+ * DVA-based Adaptive Replacement Cache
+ *
+ * <H2>Megiddo and Modha's Adaptive Replacement Cache</H2>
  *
  * While much of the theory of operation used here is
  * based on the self-tuning, low overhead replacement cache
  * presented by Megiddo and Modha at FAST 2003, there are some
  * significant differences:
  *
- * 1. The Megiddo and Modha model assumes any page is evictable.
- * Pages in its cache cannot be "locked" into memory.  This makes
- * the eviction algorithm simple: evict the last page in the list.
- * This also make the performance characteristics easy to reason
- * about.  Our cache is not so simple.  At any given moment, some
- * subset of the blocks in the cache are un-evictable because we
- * have handed out a reference to them.  Blocks are only evictable
- * when there are no external references active.  This makes
- * eviction far more problematic:  we choose to evict the evictable
- * blocks that are the "lowest" in the list.
- *
- * There are times when it is not possible to evict the requested
- * space.  In these circumstances we are unable to adjust the cache
- * size.  To prevent the cache growing unbounded at these times we
- * implement a "cache throttle" that slows the flow of new data
- * into the cache until we can make space available.
- *
- * 2. The Megiddo and Modha model assumes a fixed cache size.
- * Pages are evicted when the cache is full and there is a cache
- * miss.  Our model has a variable sized cache.  It grows with
- * high use, but also tries to react to memory pressure from the
- * operating system: decreasing its size when system memory is
- * tight.
- *
- * 3. The Megiddo and Modha model assumes a fixed page size. All
- * elements of the cache are therefor exactly the same size.  So
- * when adjusting the cache size following a cache miss, its simply
- * a matter of choosing a single page to evict.  In our model, we
- * have variable sized cache blocks (rangeing from 512 bytes to
- * 128K bytes).  We therefor choose a set of blocks to evict to make
- * space for a cache miss that approximates as closely as possible
- * the space used by the new block.
+ * -# The Megiddo and Modha model assumes any page is evictable.
+ *    Pages in its cache cannot be "locked" into memory.  This makes
+ *    the eviction algorithm simple: evict the last page in the list.
+ *    This also make the performance characteristics easy to reason
+ *    about.  Our cache is not so simple.  At any given moment, some
+ *    subset of the blocks in the cache are un-evictable because we
+ *    have handed out a reference to them.  Blocks are only evictable
+ *    when there are no external references active.  This makes
+ *    eviction far more problematic:  we choose to evict the evictable
+ *    blocks that are the "lowest" in the list.
+ *    <br><br>
+ *    There are times when it is not possible to evict the requested
+ *    space.  In these circumstances we are unable to adjust the cache
+ *    size.  To prevent the cache growing unbounded at these times we
+ *    implement a "cache throttle" that slows the flow of new data
+ *    into the cache until we can make space available.
+ * -# The Megiddo and Modha model assumes a fixed cache size.
+ *    Pages are evicted when the cache is full and there is a cache
+ *    miss.  Our model has a variable sized cache.  It grows with
+ *    high use, but also tries to react to memory pressure from the
+ *    operating system: decreasing its size when system memory is
+ *    tight.
+ * -# The Megiddo and Modha model assumes a fixed page size. All
+ *    elements of the cache are therefore exactly the same size.  So
+ *    when adjusting the cache size following a cache miss, it's simply
+ *    a matter of choosing a single page to evict.  In our model, we
+ *    have variable sized cache blocks (ranging from 512 bytes to
+ *    128K bytes).  We therefore choose a set of blocks to evict to make
+ *    space for a cache miss that approximates as closely as possible
+ *    the space used by the new block.
  *
  * See also:  "ARC: A Self-Tuning, Low Overhead Replacement Cache"
  * by N. Megiddo & D. Modha, FAST 2003
- */
-
-/*
- * The locking model:
  *
- * A new reference to a cache buffer can be obtained in two
- * ways: 1) via a hash table lookup using the DVA as a key,
- * or 2) via one of the ARC lists.  The arc_read() interface
- * uses method 1, while the internal arc algorithms for
- * adjusting the cache use method 2.  We therefor provide two
- * types of locks: 1) the hash table lock array, and 2) the
- * arc list locks.
  *
- * Buffers do not have their own mutexs, rather they rely on the
- * hash table mutexs for the bulk of their protection (i.e. most
- * fields in the arc_buf_hdr_t are protected by these mutexs).
+ * <H2>Locking Model</H2>
+ *
+ * A new reference to a cache buffer can be obtained in two ways:
+ *
+ *	-# via a hash table lookup using the DVA as a key
+ *	-# via one of the ARC lists
+ *
+ * The arc_read() interface uses method 1, while the internal arc
+ * algorithms for adjusting the cache use method 2.  We therefore
+ * provide two types of locks:
+ *
+ *	-# the hash table lock array
+ *	-# the arc list locks
+ *
+ * Buffers do not have their own mutexes, rather they rely on the
+ * hash table mutexes for the bulk of their protection (i.e. most
+ * fields in the arc_buf_hdr_t are protected by these mutexes).
  *
  * buf_hash_find() returns the appropriate mutex (held) when it
  * locates the requested buffer in the hash table.  It returns
@@ -144,7 +149,7 @@ int arc_procfd;
 #endif /* illumos */
 
 static kmutex_t		arc_reclaim_thr_lock;
-static kcondvar_t	arc_reclaim_thr_cv;	/* used to signal reclaim thr */
+static kcondvar_t	arc_reclaim_thr_cv;   /**< used to signal reclaim thr */
 static uint8_t		arc_thread_exit;
 
 extern int zfs_write_limit_shift;
@@ -155,20 +160,20 @@ extern kmutex_t zfs_write_limit_lock;
 uint_t arc_reduce_dnlc_percent = ARC_REDUCE_DNLC_PERCENT;
 
 typedef enum arc_reclaim_strategy {
-	ARC_RECLAIM_AGGR,		/* Aggressive reclaim strategy */
-	ARC_RECLAIM_CONS		/* Conservative reclaim strategy */
+	ARC_RECLAIM_AGGR,		/**< Aggressive reclaim strategy */
+	ARC_RECLAIM_CONS		/**< Conservative reclaim strategy */
 } arc_reclaim_strategy_t;
 
-/* number of seconds before growing cache again */
+/** number of seconds before growing cache again */
 static int		arc_grow_retry = 60;
 
-/* shift of arc_c for calculating both min and max arc_p */
+/** shift of arc_c for calculating both min and max arc_p */
 static int		arc_p_min_shift = 4;
 
-/* log2(fraction of arc to reclaim) */
+/** log2(fraction of arc to reclaim) */
 static int		arc_shrink_shift = 5;
 
-/*
+/**
  * minimum lifespan of a prefetch block in clock ticks
  * (initialized in arc_init())
  */
@@ -177,7 +182,7 @@ static int		arc_min_prefetch_lifespan;
 static int arc_dead;
 extern int zfs_prefetch_disable;
 
-/*
+/**
  * The arc has filled available memory and has now warmed up.
  */
 static boolean_t arc_warm;
@@ -185,9 +190,14 @@ static boolean_t arc_warm;
 /*
  * These tunables are for performance analysis.
  */
+/**
+ * \addtogroup tunables
+ * \{
+ */
 uint64_t zfs_arc_max;
 uint64_t zfs_arc_min;
 uint64_t zfs_arc_meta_limit = 0;
+/** \} */
 int zfs_arc_grow_retry = 0;
 int zfs_arc_shrink_shift = 0;
 int zfs_arc_p_min_shift = 0;
@@ -201,14 +211,18 @@ SYSCTL_UQUAD(_vfs_zfs, OID_AUTO, arc_max, CTLFLAG_RDTUN, &zfs_arc_max, 0,
 SYSCTL_UQUAD(_vfs_zfs, OID_AUTO, arc_min, CTLFLAG_RDTUN, &zfs_arc_min, 0,
     "Minimum ARC size");
 
-/*
- * Note that buffers can be in one of 6 states:
- *	ARC_anon	- anonymous (discussed below)
- *	ARC_mru		- recently used, currently cached
- *	ARC_mru_ghost	- recentely used, no longer in cache
- *	ARC_mfu		- frequently used, currently cached
- *	ARC_mfu_ghost	- frequently used, no longer in cache
- *	ARC_l2c_only	- exists in L2ARC but not other states
+/**
+ * \file arc.c
+ *
+ * <H2>Arc Buffer States</H2>
+ *
+ * Buffers can be in one of 6 states:
+ *	- ARC_anon	- anonymous (discussed below)
+ *	- ARC_mru	- recently used, currently cached
+ *	- ARC_mru_ghost	- recentely used, no longer in cache
+ *	- ARC_mfu	- frequently used, currently cached
+ *	- ARC_mfu_ghost	- frequently used, no longer in cache
+ *	- ARC_l2c_only	- exists in L2ARC but not other states
  * When there are no active references to the buffer, they are
  * are linked onto a list in one of these arc states.  These are
  * the only buffers that can be evicted or deleted.  Within each
@@ -241,18 +255,17 @@ struct arcs_lock {
 #endif
 };
 
-/*
+/**
  * must be power of two for mask use to work
- *
  */
 #define ARC_BUFC_NUMDATALISTS		16
 #define ARC_BUFC_NUMMETADATALISTS	16
 #define ARC_BUFC_NUMLISTS	(ARC_BUFC_NUMMETADATALISTS + ARC_BUFC_NUMDATALISTS)
 
 typedef struct arc_state {
-	uint64_t arcs_lsize[ARC_BUFC_NUMTYPES];	/* amount of evictable data */
-	uint64_t arcs_size;	/* total amount of data in this state */
-	list_t	arcs_lists[ARC_BUFC_NUMLISTS]; /* list of evictable buffers */
+	uint64_t arcs_lsize[ARC_BUFC_NUMTYPES];	/**< amount of evictable data */
+	uint64_t arcs_size;	/**< total amount of data in this state */
+	list_t	arcs_lists[ARC_BUFC_NUMLISTS]; /**< list of evictable buffers */
 	struct arcs_lock arcs_locks[ARC_BUFC_NUMLISTS] __aligned(CACHE_LINE_SIZE);
 } arc_state_t;
 
@@ -409,7 +422,7 @@ static arc_stats_t arc_stats = {
 #define	ARCSTAT(stat)	(arc_stats.stat.value.ui64)
 
 #define	ARCSTAT_INCR(stat, val) \
-	atomic_add_64(&arc_stats.stat.value.ui64, (val));
+	atomic_add_64(&arc_stats.stat.value.ui64, (val))
 
 #define	ARCSTAT_BUMP(stat)	ARCSTAT_INCR(stat, 1)
 #define	ARCSTAT_BUMPDOWN(stat)	ARCSTAT_INCR(stat, -1)
@@ -424,7 +437,7 @@ static arc_stats_t arc_stats = {
 #define	ARCSTAT_MAXSTAT(stat) \
 	ARCSTAT_MAX(stat##_max, arc_stats.stat.value.ui64)
 
-/*
+/**
  * We define a macro to allow ARC hits/misses to be easily broken down by
  * two separate conditions, giving a total of four different subtypes for
  * each of hits and misses (so eight statistics total).
@@ -460,22 +473,22 @@ static arc_state_t	*arc_l2c_only;
  * the possibility of inconsistency by having shadow copies of the variables,
  * while still allowing the code to be readable.
  */
-#define	arc_size	ARCSTAT(arcstat_size)	/* actual total arc size */
-#define	arc_p		ARCSTAT(arcstat_p)	/* target size of MRU */
-#define	arc_c		ARCSTAT(arcstat_c)	/* target size of cache */
-#define	arc_c_min	ARCSTAT(arcstat_c_min)	/* min target cache size */
-#define	arc_c_max	ARCSTAT(arcstat_c_max)	/* max target cache size */
+#define	arc_size	ARCSTAT(arcstat_size)	/**< actual total arc size */
+#define	arc_p		ARCSTAT(arcstat_p)	/**< target size of MRU */
+#define	arc_c		ARCSTAT(arcstat_c)	/**< target size of cache */
+#define	arc_c_min	ARCSTAT(arcstat_c_min)	/**< min target cache size */
+#define	arc_c_max	ARCSTAT(arcstat_c_max)	/**< max target cache size */
 
-static int		arc_no_grow;	/* Don't try to grow cache size */
+static int		arc_no_grow;	/**< Don't try to grow cache size */
 static uint64_t		arc_tempreserve;
 static uint64_t		arc_loaned_bytes;
 static uint64_t		arc_meta_used;
 static uint64_t		arc_meta_limit;
 static uint64_t		arc_meta_max = 0;
-SYSCTL_UQUAD(_vfs_zfs, OID_AUTO, arc_meta_used, CTLFLAG_RDTUN,
-    &arc_meta_used, 0, "ARC metadata used");
-SYSCTL_UQUAD(_vfs_zfs, OID_AUTO, arc_meta_limit, CTLFLAG_RDTUN,
-    &arc_meta_limit, 0, "ARC metadata limit");
+SYSCTL_UQUAD(_vfs_zfs, OID_AUTO, arc_meta_used, CTLFLAG_RD, &arc_meta_used, 0,
+    "ARC metadata used");
+SYSCTL_UQUAD(_vfs_zfs, OID_AUTO, arc_meta_limit, CTLFLAG_RW, &arc_meta_limit, 0,
+    "ARC metadata limit");
 
 typedef struct l2arc_buf_hdr l2arc_buf_hdr_t;
 
@@ -560,16 +573,16 @@ static boolean_t l2arc_write_eligible(uint64_t spa_guid, arc_buf_hdr_t *ab);
  * public flags, make sure not to smash the private ones.
  */
 
-#define	ARC_IN_HASH_TABLE	(1 << 9)	/* this buffer is hashed */
-#define	ARC_IO_IN_PROGRESS	(1 << 10)	/* I/O in progress for buf */
-#define	ARC_IO_ERROR		(1 << 11)	/* I/O failed for buf */
-#define	ARC_FREED_IN_READ	(1 << 12)	/* buf freed while in read */
-#define	ARC_BUF_AVAILABLE	(1 << 13)	/* block not in active use */
-#define	ARC_INDIRECT		(1 << 14)	/* this is an indirect block */
-#define	ARC_FREE_IN_PROGRESS	(1 << 15)	/* hdr about to be freed */
-#define	ARC_L2_WRITING		(1 << 16)	/* L2ARC write in progress */
-#define	ARC_L2_EVICTED		(1 << 17)	/* evicted during I/O */
-#define	ARC_L2_WRITE_HEAD	(1 << 18)	/* head of write list */
+#define	ARC_IN_HASH_TABLE	(1 << 9)	/**< this buffer is hashed */
+#define	ARC_IO_IN_PROGRESS	(1 << 10)	/**< I/O in progress for buf */
+#define	ARC_IO_ERROR		(1 << 11)	/**< I/O failed for buf */
+#define	ARC_FREED_IN_READ	(1 << 12)	/**< buf freed while in read */
+#define	ARC_BUF_AVAILABLE	(1 << 13)	/**< block not in active use */
+#define	ARC_INDIRECT		(1 << 14)	/**< this is an indirect block */
+#define	ARC_FREE_IN_PROGRESS	(1 << 15)	/**< hdr about to be freed */
+#define	ARC_L2_WRITING		(1 << 16)	/**< L2ARC write in progress */
+#define	ARC_L2_EVICTED		(1 << 17)	/**< evicted during I/O */
+#define	ARC_L2_WRITE_HEAD	(1 << 18)	/**< head of write list */
 
 #define	HDR_IN_HASH_TABLE(hdr)	((hdr)->b_flags & ARC_IN_HASH_TABLE)
 #define	HDR_IO_IN_PROGRESS(hdr)	((hdr)->b_flags & ARC_IO_IN_PROGRESS)
@@ -627,25 +640,28 @@ uint64_t zfs_crc64_table[256];
  * Level 2 ARC
  */
 
-#define	L2ARC_WRITE_SIZE	(8 * 1024 * 1024)	/* initial write max */
-#define	L2ARC_HEADROOM		2		/* num of writes */
-#define	L2ARC_FEED_SECS		1		/* caching interval secs */
-#define	L2ARC_FEED_MIN_MS	200		/* min caching interval ms */
+#define	L2ARC_WRITE_SIZE	(8 * 1024 * 1024)	/**< initial write max */
+#define	L2ARC_HEADROOM		2		/**< num of writes */
+#define	L2ARC_FEED_SECS		1		/**< caching interval secs */
+#define	L2ARC_FEED_MIN_MS	200		/**< min caching interval ms */
 
 #define	l2arc_writes_sent	ARCSTAT(arcstat_l2_writes_sent)
 #define	l2arc_writes_done	ARCSTAT(arcstat_l2_writes_done)
 
-/*
- * L2ARC Performance Tunables
+/* L2ARC Performance Tunables */
+/**
+ * \addtogroup tunables
+ * \{ 
  */
-uint64_t l2arc_write_max = L2ARC_WRITE_SIZE;	/* default max write size */
-uint64_t l2arc_write_boost = L2ARC_WRITE_SIZE;	/* extra write during warmup */
-uint64_t l2arc_headroom = L2ARC_HEADROOM;	/* number of dev writes */
-uint64_t l2arc_feed_secs = L2ARC_FEED_SECS;	/* interval seconds */
-uint64_t l2arc_feed_min_ms = L2ARC_FEED_MIN_MS;	/* min interval milliseconds */
-boolean_t l2arc_noprefetch = B_TRUE;		/* don't cache prefetch bufs */
-boolean_t l2arc_feed_again = B_TRUE;		/* turbo warmup */
-boolean_t l2arc_norw = B_TRUE;			/* no reads during writes */
+uint64_t l2arc_write_max = L2ARC_WRITE_SIZE;	/**< default max write size */
+uint64_t l2arc_write_boost = L2ARC_WRITE_SIZE;	/**< extra write during warmup */
+uint64_t l2arc_headroom = L2ARC_HEADROOM;	/**< number of dev writes */
+uint64_t l2arc_feed_secs = L2ARC_FEED_SECS;	/**< interval seconds */
+uint64_t l2arc_feed_min_ms = L2ARC_FEED_MIN_MS;	/**< min interval milliseconds */
+boolean_t l2arc_noprefetch = B_TRUE;		/**< don't cache prefetch bufs */
+boolean_t l2arc_feed_again = B_TRUE;		/**< turbo warmup */
+boolean_t l2arc_norw = B_TRUE;			/**< no reads during writes */
+/** \} */
 
 SYSCTL_UQUAD(_vfs_zfs, OID_AUTO, l2arc_write_max, CTLFLAG_RW,
     &l2arc_write_max, 0, "max write size");
@@ -711,47 +727,47 @@ SYSCTL_UQUAD(_vfs_zfs, OID_AUTO, l2c_only_size, CTLFLAG_RD,
  * L2ARC Internals
  */
 typedef struct l2arc_dev {
-	vdev_t			*l2ad_vdev;	/* vdev */
-	spa_t			*l2ad_spa;	/* spa */
-	uint64_t		l2ad_hand;	/* next write location */
-	uint64_t		l2ad_write;	/* desired write size, bytes */
-	uint64_t		l2ad_boost;	/* warmup write boost, bytes */
-	uint64_t		l2ad_start;	/* first addr on device */
-	uint64_t		l2ad_end;	/* last addr on device */
-	uint64_t		l2ad_evict;	/* last addr eviction reached */
-	boolean_t		l2ad_first;	/* first sweep through */
-	boolean_t		l2ad_writing;	/* currently writing */
-	list_t			*l2ad_buflist;	/* buffer list */
-	list_node_t		l2ad_node;	/* device list node */
+	vdev_t			*l2ad_vdev;	/**< vdev */
+	spa_t			*l2ad_spa;	/**< spa */
+	uint64_t		l2ad_hand;	/**< next write location */
+	uint64_t		l2ad_write;	/**< desired write size, bytes */
+	uint64_t		l2ad_boost;	/**< warmup write boost, bytes */
+	uint64_t		l2ad_start;	/**< first addr on device */
+	uint64_t		l2ad_end;	/**< last addr on device */
+	uint64_t		l2ad_evict;	/**< last addr eviction reached */
+	boolean_t		l2ad_first;	/**< first sweep through */
+	boolean_t		l2ad_writing;	/**< currently writing */
+	list_t			*l2ad_buflist;	/**< buffer list */
+	list_node_t		l2ad_node;	/**< device list node */
 } l2arc_dev_t;
 
-static list_t L2ARC_dev_list;			/* device list */
-static list_t *l2arc_dev_list;			/* device list pointer */
-static kmutex_t l2arc_dev_mtx;			/* device list mutex */
-static l2arc_dev_t *l2arc_dev_last;		/* last device used */
-static kmutex_t l2arc_buflist_mtx;		/* mutex for all buflists */
-static list_t L2ARC_free_on_write;		/* free after write buf list */
-static list_t *l2arc_free_on_write;		/* free after write list ptr */
-static kmutex_t l2arc_free_on_write_mtx;	/* mutex for list */
-static uint64_t l2arc_ndev;			/* number of devices */
+static list_t L2ARC_dev_list;			/**< device list */
+static list_t *l2arc_dev_list;			/**< device list pointer */
+static kmutex_t l2arc_dev_mtx;			/**< device list mutex */
+static l2arc_dev_t *l2arc_dev_last;		/**< last device used */
+static kmutex_t l2arc_buflist_mtx;		/**< mutex for all buflists */
+static list_t L2ARC_free_on_write;		/**< free after write buf list */
+static list_t *l2arc_free_on_write;		/**< free after write list ptr */
+static kmutex_t l2arc_free_on_write_mtx;	/**< mutex for list */
+static uint64_t l2arc_ndev;			/**< number of devices */
 
 typedef struct l2arc_read_callback {
-	arc_buf_t	*l2rcb_buf;		/* read buffer */
-	spa_t		*l2rcb_spa;		/* spa */
-	blkptr_t	l2rcb_bp;		/* original blkptr */
-	zbookmark_t	l2rcb_zb;		/* original bookmark */
-	int		l2rcb_flags;		/* original flags */
+	arc_buf_t	*l2rcb_buf;		/**< read buffer */
+	spa_t		*l2rcb_spa;		/**< spa */
+	blkptr_t	l2rcb_bp;		/**< original blkptr */
+	zbookmark_t	l2rcb_zb;		/**< original bookmark */
+	int		l2rcb_flags;		/**< original flags */
 } l2arc_read_callback_t;
 
 typedef struct l2arc_write_callback {
-	l2arc_dev_t	*l2wcb_dev;		/* device info */
-	arc_buf_hdr_t	*l2wcb_head;		/* head of write buflist */
+	l2arc_dev_t	*l2wcb_dev;		/**< device info */
+	arc_buf_hdr_t	*l2wcb_head;		/**< head of write buflist */
 } l2arc_write_callback_t;
 
 struct l2arc_buf_hdr {
 	/* protected by arc_buf_hdr  mutex */
-	l2arc_dev_t	*b_dev;			/* L2ARC device */
-	uint64_t	b_daddr;		/* disk address, offset byte */
+	l2arc_dev_t	*b_dev;			/**< L2ARC device */
+	uint64_t	b_daddr;		/**< disk address, offset byte */
 };
 
 typedef struct l2arc_data_free {
@@ -826,7 +842,7 @@ buf_hash_find(uint64_t spa, const dva_t *dva, uint64_t birth, kmutex_t **lockp)
 	return (NULL);
 }
 
-/*
+/**
  * Insert an entry into the hash table.  If there is already an element
  * equal to elem in the hash table, then the already existing element
  * will be returned and the new element will not be inserted.
@@ -913,7 +929,7 @@ buf_fini(void)
 	kmem_cache_destroy(buf_cache);
 }
 
-/*
+/**
  * Constructor callback - called when the cache is empty
  * and a new buf is requested.
  */
@@ -946,7 +962,7 @@ buf_cons(void *vbuf, void *unused, int kmflag)
 	return (0);
 }
 
-/*
+/**
  * Destructor callback - called when a cached buf is
  * no longer required.
  */
@@ -974,7 +990,7 @@ buf_dest(void *vbuf, void *unused)
 	arc_space_return(sizeof (arc_buf_t), ARC_SPACE_HDRS);
 }
 
-/*
+/**
  * Reclaim callback -- invoked when memory is low.
  */
 /* ARGSUSED */
@@ -1047,7 +1063,7 @@ arc_cksum_verify(arc_buf_t *buf)
 	}
 	fletcher_2_native(buf->b_data, buf->b_hdr->b_size, &zc);
 	if (!ZIO_CHECKSUM_EQUAL(*buf->b_hdr->b_freeze_cksum, zc))
-		panic("buffer modified while frozen!");
+		panic("buffer %p modified while frozen!", buf);
 	mutex_exit(&buf->b_hdr->b_freeze_lock);
 }
 
@@ -1130,6 +1146,23 @@ arc_buf_watch(arc_buf_t *buf)
 }
 #endif /* illumos */
 
+boolean_t
+arc_buf_frozen(arc_buf_t *buf, boolean_t should_be_frozen)
+{
+	boolean_t frozen = B_TRUE;
+
+	if (!(zfs_flags & ZFS_DEBUG_MODIFY))
+		return (B_TRUE);
+
+	/*
+	 * NB: Does not grab or assert the mutex because the caller more
+	 * than likely cannot use the results in an atomic fashion.
+	 */
+	if (buf->b_hdr->b_freeze_cksum == NULL)
+		frozen = B_FALSE;
+	return (frozen == should_be_frozen);
+}
+
 void
 arc_buf_thaw(arc_buf_t *buf)
 {
@@ -1171,6 +1204,15 @@ arc_buf_freeze(arc_buf_t *buf)
 	hash_lock = HDR_LOCK(buf->b_hdr);
 	mutex_enter(hash_lock);
 
+#ifdef ZFS_DEBUG
+	if (buf->b_hdr->b_freeze_cksum == NULL && buf->b_hdr->b_state != arc_anon) {
+		printf("%s: invalid state: freeze_cksum=%p, b_state=%p\n",
+		    __func__, buf->b_hdr->b_freeze_cksum, buf->b_hdr->b_state);
+		printf("arc_anon=%p arc_mru=%p arc_mru_ghost=%p arc_mfu=%p "
+		    "arc_mfu_ghost=%p arc_l2c_only=%p\n", arc_anon, arc_mru,
+		    arc_mru_ghost, arc_mfu, arc_mfu_ghost, arc_l2c_only);
+	}
+#endif
 	ASSERT(buf->b_hdr->b_freeze_cksum != NULL ||
 	    buf->b_hdr->b_state == arc_anon);
 	arc_cksum_compute(buf, B_FALSE);
@@ -1254,7 +1296,7 @@ remove_reference(arc_buf_hdr_t *ab, kmutex_t *hash_lock, void *tag)
 	return (cnt);
 }
 
-/*
+/**
  * Move the supplied buffer to the indicated state.  The mutex
  * for the buffer must be held by the caller.
  */
@@ -1452,7 +1494,7 @@ arc_buf_alloc(spa_t *spa, int size, void *tag, arc_buf_contents_t type)
 
 static char *arc_onloan_tag = "onloan";
 
-/*
+/**
  * Loan out an anonymous arc buffer. Loaned buffers are not counted as in
  * flight data by arc_tempreserve_space() until they are "returned". Loaned
  * buffers must be returned to the arc before they can be used by the DMU or
@@ -1469,7 +1511,7 @@ arc_loan_buf(spa_t *spa, int size)
 	return (buf);
 }
 
-/*
+/**
  * Return a loaned arc buffer to the arc.
  */
 void
@@ -1484,7 +1526,9 @@ arc_return_buf(arc_buf_t *buf, void *tag)
 	atomic_add_64(&arc_loaned_bytes, -hdr->b_size);
 }
 
-/* Detach an arc_buf from a dbuf (tag) */
+/**
+ * Detach an arc_buf from a dbuf (tag) 
+ */
 void
 arc_loan_inuse_buf(arc_buf_t *buf, void *tag)
 {
@@ -1555,7 +1599,7 @@ arc_buf_add_ref(arc_buf_t *buf, void* tag)
 	    data, metadata, hits);
 }
 
-/*
+/**
  * Free the arc data buffer.  If it is an l2arc write in progress,
  * the buffer is placed on l2arc_free_on_write to be freed later.
  */
@@ -1801,7 +1845,7 @@ arc_buf_size(arc_buf_t *buf)
 	return (buf->b_hdr->b_size);
 }
 
-/*
+/**
  * Evict buffers from list until we've removed the specified number of
  * bytes.  Move the removed buffers to the appropriate evict state.
  * If the recycle flag is set, then attempt to "recycle" a buffer:
@@ -1967,9 +2011,17 @@ evict_start:
 	else
 		evict_data_offset = idx;
 
+	/*
+	 * Number of buffers skipped because they have I/O in progress or
+	 * are indrect prefetch buffers that have not lived long enough.
+	 */
 	if (skipped)
 		ARCSTAT_INCR(arcstat_evict_skip, skipped);
 
+	/*
+	 * Number of buffers that could not be evicted because something
+	 * else is using them.
+	 */
 	if (missed)
 		ARCSTAT_INCR(arcstat_mutex_miss, missed);
 
@@ -1999,7 +2051,7 @@ evict_start:
 	return (stolen);
 }
 
-/*
+/**
  * Remove buffers from list until we've removed the specified number of
  * bytes.  Destroy the buffers that are removed.
  */
@@ -2097,6 +2149,7 @@ evict_start:
 		goto evict_start;
 	}
 
+	/* Number of buffers we could not obtain the hash lock for */
 	if (bufs_skipped) {
 		ARCSTAT_INCR(arcstat_mutex_miss, bufs_skipped);
 		ASSERT(bytes >= 0);
@@ -2204,9 +2257,10 @@ restart:
 		goto restart;
 }
 
-/*
+/**
  * Flush all *evictable* data from the cache for the given spa.
- * NOTE: this will not touch "active" (i.e. referenced) data.
+ * 
+ * \note  This will not touch "active" (i.e. referenced) data.
  */
 void
 arc_flush(spa_t *spa)
@@ -2340,7 +2394,7 @@ arc_reclaim_needed(void)
 		return (1);
 #endif	/* sun */
 
-#else
+#else	/* !_KERNEL */
 	if (spa_get_random(100) == 0)
 		return (1);
 #endif
@@ -2463,7 +2517,7 @@ arc_reclaim_thread(void *dummy __unused)
 	thread_exit();
 }
 
-/*
+/**
  * Adapt arc info given the number of bytes we are trying to add and
  * the state that we are comming from.  This function is only called
  * when we are adding new content to the cache.
@@ -2531,7 +2585,7 @@ arc_adapt(int bytes, arc_state_t *state)
 	ASSERT((int64_t)arc_p >= 0);
 }
 
-/*
+/**
  * Check if the cache has reached its limits and eviction is required
  * prior to insert.
  */
@@ -2561,28 +2615,23 @@ arc_evict_needed(arc_buf_contents_t type)
 	return (arc_size > arc_c);
 }
 
-/*
+/**
  * The buffer, supplied as the first argument, needs a data block.
  * So, if we are at cache max, determine which cache should be victimized.
  * We have the following cases:
- *
- * 1. Insert for MRU, p > sizeof(arc_anon + arc_mru) ->
- * In this situation if we're out of space, but the resident size of the MFU is
- * under the limit, victimize the MFU cache to satisfy this insertion request.
- *
- * 2. Insert for MRU, p <= sizeof(arc_anon + arc_mru) ->
- * Here, we've used up all of the available space for the MRU, so we need to
- * evict from our own cache instead.  Evict from the set of resident MRU
- * entries.
- *
- * 3. Insert for MFU (c - p) > sizeof(arc_mfu) ->
- * c minus p represents the MFU space in the cache, since p is the size of the
- * cache that is dedicated to the MRU.  In this situation there's still space on
- * the MFU side, so the MRU side needs to be victimized.
- *
- * 4. Insert for MFU (c - p) < sizeof(arc_mfu) ->
- * MFU's resident set is consuming more space than it has been allotted.  In
- * this situation, we must victimize our own cache, the MFU, for this insertion.
+ * -# Insert for MRU, p > sizeof(arc_anon + arc_mru) -> In this situation if
+ *    we're out of space, but the resident size of the MFU is under the limit,
+ *    victimize the MFU cache to satisfy this insertion request.
+ * -# Insert for MRU, p <= sizeof(arc_anon + arc_mru) -> Here, we've used up all
+ *    of the available space for the MRU, so we need to evict from our own cache
+ *    instead.  Evict from the set of resident MRU entries.
+ * -# Insert for MFU (c - p) > sizeof(arc_mfu) -> c minus p represents the MFU
+ *    space in the cache, since p is the size of the cache that is dedicated to
+ *    the MRU.  In this situation there's still space on the MFU side, so the
+ *    MRU side needs to be victimized.
+ * -# Insert for MFU (c - p) < sizeof(arc_mfu) -> MFU's resident set is
+ *    consuming more space than it has been allotted.  In this situation, we
+ *    must victimize our own cache, the MFU, for this insertion.
  */
 static void
 arc_get_data_buf(arc_buf_t *buf)
@@ -2666,9 +2715,10 @@ out:
 	ARCSTAT_BUMP(arcstat_allocated);
 }
 
-/*
+/**
  * This routine is called whenever a buffer is accessed.
- * NOTE: the hash lock is dropped in this function.
+ * 
+ * \note  The hash lock is dropped in this function.
  */
 static void
 arc_access(arc_buf_hdr_t *buf, kmutex_t *hash_lock)
@@ -2800,7 +2850,9 @@ arc_access(arc_buf_hdr_t *buf, kmutex_t *hash_lock)
 	}
 }
 
-/* a generic arc_done_func_t which you can use */
+/**
+ * a generic arc_done_func_t which you can use
+ */
 /* ARGSUSED */
 void
 arc_bcopy_func(zio_t *zio, arc_buf_t *buf, void *arg)
@@ -2810,7 +2862,9 @@ arc_bcopy_func(zio_t *zio, arc_buf_t *buf, void *arg)
 	VERIFY(arc_buf_remove_ref(buf, arg) == 1);
 }
 
-/* a generic arc_done_func_t */
+/**
+ * a generic arc_done_func_t
+ */
 void
 arc_getbuf_func(zio_t *zio, arc_buf_t *buf, void *arg)
 {
@@ -2951,7 +3005,7 @@ arc_read_done(zio_t *zio)
 		arc_hdr_destroy(hdr);
 }
 
-/*
+/**
  * "Read" the block block at the specified DVA (in bp) via the
  * cache.  If the block is found in the cache, invoke the provided
  * callback immediately and return.  Note that the `zio' parameter
@@ -3010,6 +3064,8 @@ arc_read_nolock(zio_t *pio, spa_t *spa, const blkptr_t *bp,
 	kmutex_t *hash_lock;
 	zio_t *rzio;
 	uint64_t guid = spa_load_guid(spa);
+	boolean_t cached_only = (*arc_flags & ARC_CACHED_ONLY) != 0;
+	ASSERT(!cached_only || done != NULL);
 
 top:
 	hdr = buf_hash_find(guid, BP_IDENTITY(bp), BP_PHYSICAL_BIRTH(bp),
@@ -3020,6 +3076,20 @@ top:
 
 		if (HDR_IO_IN_PROGRESS(hdr)) {
 
+			/*
+			 * Cache-only lookups should only occur from consumers
+			 * that do not have any data yet.  However, prefetch
+			 * I/O of this block could be in progress.  Since
+			 * cache-only lookups must be synchronous, the done
+			 * callback chaining cannot occur here.  In that case, 
+			 * simply return as a cache miss.
+			 */
+			if (cached_only) {
+				*arc_flags &= ~ARC_CACHED;
+				mutex_exit(hash_lock);
+				done(NULL, NULL, private);
+				return (0);
+			}
 			if (*arc_flags & ARC_WAIT) {
 				cv_wait(&hdr->b_cv, hash_lock);
 				mutex_exit(hash_lock);
@@ -3090,6 +3160,13 @@ top:
 		vdev_t *vd = NULL;
 		uint64_t addr;
 		boolean_t devw = B_FALSE;
+
+		if (cached_only) {
+			if (hdr)
+				mutex_exit(hash_lock);
+			done(NULL, NULL, private);
+			return (0);
+		}
 
 		if (hdr == NULL) {
 			/* this block is not in the cache */
@@ -3169,6 +3246,10 @@ top:
 
 		mutex_exit(hash_lock);
 
+		/*
+		 * At this point, we have a level 1 cache miss.  Try again in
+		 * L2ARC if possible.
+		 */
 		ASSERT3U(hdr->b_size, ==, size);
 		DTRACE_PROBE4(arc__miss, arc_buf_hdr_t *, hdr, blkptr_t *, bp,
 		    uint64_t, size, zbookmark_t *, zb);
@@ -3273,7 +3354,7 @@ arc_set_callback(arc_buf_t *buf, arc_evict_func_t *func, void *private)
 	buf->b_private = private;
 }
 
-/*
+/**
  * This is used by the DMU to let the ARC know that a buffer is
  * being evicted, so the ARC should clean up.  If this arc buf
  * is not yet in the evicted state, it will be put there.
@@ -3361,11 +3442,12 @@ arc_buf_evict(arc_buf_t *buf)
 	return (1);
 }
 
-/*
- * Release this buffer from the cache.  This must be done
- * after a read and prior to modifying the buffer contents.
- * If the buffer has more than one reference, we must make
- * a new hdr for the buffer.
+/**
+ * Convert to an anonymous buffer.
+ *
+ * This must be done after a read and prior to modifying the buffer contents.
+ * If the buffer has more than one reference, we must make a new hdr for the
+ * buffer.
  */
 void
 arc_release(arc_buf_t *buf, void *tag)
@@ -3482,7 +3564,7 @@ arc_release(arc_buf_t *buf, void *tag)
 	}
 }
 
-/*
+/**
  * Release this buffer.  If it does not match the provided BP, fill it
  * with that block's contents.
  */
@@ -3757,7 +3839,7 @@ arc_tempreserve_space(uint64_t reserve, uint64_t txg)
 
 	/*
 	 * Writes will, almost always, require additional memory allocations
-	 * in order to compress/encrypt/etc the data.  We therefor need to
+	 * in order to compress/encrypt/etc the data.  We therefore need to
 	 * make sure that there is sufficient available memory for this.
 	 */
 	if (error = arc_memory_throttle(reserve, anon_size, txg))
@@ -4047,8 +4129,10 @@ arc_fini(void)
 #endif
 }
 
-/*
- * Level 2 ARC
+/**
+ * \file arc.c
+ *
+ * <H2>Level 2 ARC</H2>
  *
  * The level 2 ARC (L2ARC) is a cache layer in-between main memory and disk.
  * It uses dedicated storage devices to hold cached data, which are populated
@@ -4056,128 +4140,121 @@ arc_fini(void)
  * the performance of random read workloads.  The intended L2ARC devices
  * include short-stroked disks, solid state disks, and other media with
  * substantially faster read latency than disk.
- *
- *                 +-----------------------+
- *                 |         ARC           |
- *                 +-----------------------+
- *                    |         ^     ^
- *                    |         |     |
- *      l2arc_feed_thread()    arc_read()
- *                    |         |     |
- *                    |  l2arc read   |
- *                    V         |     |
- *               +---------------+    |
- *               |     L2ARC     |    |
- *               +---------------+    |
- *                   |    ^           |
- *          l2arc_write() |           |
- *                   |    |           |
- *                   V    |           |
- *                 +-------+      +-------+
- *                 | vdev  |      | vdev  |
- *                 | cache |      | cache |
- *                 +-------+      +-------+
- *                 +=========+     .-----.
- *                 :  L2ARC  :    |-_____-|
- *                 : devices :    | Disks |
- *                 +=========+    `-_____-'
- *
+ \verbatim
+                   +-----------------------+
+                   |         ARC           |
+                   +-----------------------+
+                      |         ^     ^
+                      |         |     |
+        l2arc_feed_thread()    arc_read()
+                      |         |     |
+                      |  l2arc read   |
+                      V         |     |
+                 +---------------+    |
+                 |     L2ARC     |    |
+                 +---------------+    |
+                     |    ^           |
+            l2arc_write() |           |
+                     |    |           |
+                     V    |           |
+                   +-------+      +-------+
+                   | vdev  |      | vdev  |
+                   | cache |      | cache |
+                   +-------+      +-------+
+                   +=========+     .-----.
+                   :  L2ARC  :    |-_____-|
+                   : devices :    | Disks |
+                   +=========+    `-_____-'
+ \endverbatim 
  * Read requests are satisfied from the following sources, in order:
- *
- *	1) ARC
- *	2) vdev cache of L2ARC devices
- *	3) L2ARC devices
- *	4) vdev cache of disks
- *	5) disks
+ *	-# ARC
+ *	-# vdev cache of L2ARC devices
+ *	-# L2ARC devices
+ *	-# vdev cache of disks
+ *	-# disks
  *
  * Some L2ARC device types exhibit extremely slow write performance.
  * To accommodate for this there are some significant differences between
  * the L2ARC and traditional cache design:
  *
- * 1. There is no eviction path from the ARC to the L2ARC.  Evictions from
- * the ARC behave as usual, freeing buffers and placing headers on ghost
- * lists.  The ARC does not send buffers to the L2ARC during eviction as
- * this would add inflated write latencies for all ARC memory pressure.
- *
- * 2. The L2ARC attempts to cache data from the ARC before it is evicted.
- * It does this by periodically scanning buffers from the eviction-end of
- * the MFU and MRU ARC lists, copying them to the L2ARC devices if they are
- * not already there.  It scans until a headroom of buffers is satisfied,
- * which itself is a buffer for ARC eviction.  The thread that does this is
- * l2arc_feed_thread(), illustrated below; example sizes are included to
- * provide a better sense of ratio than this diagram:
- *
- *	       head -->                        tail
- *	        +---------------------+----------+
- *	ARC_mfu |:::::#:::::::::::::::|o#o###o###|-->.   # already on L2ARC
- *	        +---------------------+----------+   |   o L2ARC eligible
- *	ARC_mru |:#:::::::::::::::::::|#o#ooo####|-->|   : ARC buffer
- *	        +---------------------+----------+   |
- *	             15.9 Gbytes      ^ 32 Mbytes    |
- *	                           headroom          |
- *	                                      l2arc_feed_thread()
- *	                                             |
- *	                 l2arc write hand <--[oooo]--'
- *	                         |           8 Mbyte
- *	                         |          write max
- *	                         V
- *		  +==============================+
- *	L2ARC dev |####|#|###|###|    |####| ... |
- *	          +==============================+
- *	                     32 Gbytes
- *
- * 3. If an ARC buffer is copied to the L2ARC but then hit instead of
- * evicted, then the L2ARC has cached a buffer much sooner than it probably
- * needed to, potentially wasting L2ARC device bandwidth and storage.  It is
- * safe to say that this is an uncommon case, since buffers at the end of
- * the ARC lists have moved there due to inactivity.
- *
- * 4. If the ARC evicts faster than the L2ARC can maintain a headroom,
- * then the L2ARC simply misses copying some buffers.  This serves as a
- * pressure valve to prevent heavy read workloads from both stalling the ARC
- * with waits and clogging the L2ARC with writes.  This also helps prevent
- * the potential for the L2ARC to churn if it attempts to cache content too
- * quickly, such as during backups of the entire pool.
- *
- * 5. After system boot and before the ARC has filled main memory, there are
- * no evictions from the ARC and so the tails of the ARC_mfu and ARC_mru
- * lists can remain mostly static.  Instead of searching from tail of these
- * lists as pictured, the l2arc_feed_thread() will search from the list heads
- * for eligible buffers, greatly increasing its chance of finding them.
- *
- * The L2ARC device write speed is also boosted during this time so that
- * the L2ARC warms up faster.  Since there have been no ARC evictions yet,
- * there are no L2ARC reads, and no fear of degrading read performance
- * through increased writes.
- *
- * 6. Writes to the L2ARC devices are grouped and sent in-sequence, so that
- * the vdev queue can aggregate them into larger and fewer writes.  Each
- * device is written to in a rotor fashion, sweeping writes through
- * available space then repeating.
- *
- * 7. The L2ARC does not store dirty content.  It never needs to flush
- * write buffers back to disk based storage.
- *
- * 8. If an ARC buffer is written (and dirtied) which also exists in the
- * L2ARC, the now stale L2ARC buffer is immediately dropped.
+ * -# There is no eviction path from the ARC to the L2ARC.  Evictions from
+ *    the ARC behave as usual, freeing buffers and placing headers on ghost
+ *    lists.  The ARC does not send buffers to the L2ARC during eviction as
+ *    this would add inflated write latencies for all ARC memory pressure.
+ * -# The L2ARC attempts to cache data from the ARC before it is evicted.
+ *    It does this by periodically scanning buffers from the eviction-end of
+ *    the MFU and MRU ARC lists, copying them to the L2ARC devices if they are
+ *    not already there.  It scans until a headroom of buffers is satisfied,
+ *    which itself is a buffer for ARC eviction.  The thread that does this is
+ *    l2arc_feed_thread(), illustrated below; example sizes are included to
+ *    provide a better sense of ratio than this diagram:
+ \verbatim
+  	       head -->                        tail
+  	        +---------------------+----------+
+  	ARC_mfu |:::::#:::::::::::::::|o#o###o###|-->.   # already on L2ARC
+  	        +---------------------+----------+   |   o L2ARC eligible
+  	ARC_mru |:#:::::::::::::::::::|#o#ooo####|-->|   : ARC buffer
+  	        +---------------------+----------+   |
+  	             15.9 Gbytes      ^ 32 Mbytes    |
+  	                           headroom          |
+  	                                      l2arc_feed_thread()
+  	                                             |
+  	                 l2arc write hand <--[oooo]--'
+  	                         |           8 Mbyte
+  	                         |          write max
+  	                         V
+  		  +==============================+
+  	L2ARC dev |####|#|###|###|    |####| ... |
+  	          +==============================+
+  	                     32 Gbytes
+ \endverbatim 
+ * -# If an ARC buffer is copied to the L2ARC but then hit instead of
+ *    evicted, then the L2ARC has cached a buffer much sooner than it probably
+ *    needed to, potentially wasting L2ARC device bandwidth and storage.  It is
+ *    safe to say that this is an uncommon case, since buffers at the end of
+ *    the ARC lists have moved there due to inactivity.
+ * -# If the ARC evicts faster than the L2ARC can maintain a headroom,
+ *    then the L2ARC simply misses copying some buffers.  This serves as a
+ *    pressure valve to prevent heavy read workloads from both stalling the ARC
+ *    with waits and clogging the L2ARC with writes.  This also helps prevent
+ *    the potential for the L2ARC to churn if it attempts to cache content too
+ *    quickly, such as during backups of the entire pool.
+ * -# After system boot and before the ARC has filled main memory, there are
+ *    no evictions from the ARC and so the tails of the ARC_mfu and ARC_mru
+ *    lists can remain mostly static.  Instead of searching from tail of these
+ *    lists as pictured, the l2arc_feed_thread() will search from the list heads
+ *    for eligible buffers, greatly increasing its chance of finding them.
+ *    <br><br>
+ *    The L2ARC device write speed is also boosted during this time so that
+ *    the L2ARC warms up faster.  Since there have been no ARC evictions yet,
+ *    there are no L2ARC reads, and no fear of degrading read performance
+ *    through increased writes.
+ * -# Writes to the L2ARC devices are grouped and sent in-sequence, so that
+ *    the vdev queue can aggregate them into larger and fewer writes.  Each
+ *    device is written to in a rotor fashion, sweeping writes through
+ *    available space then repeating.
+ * -# The L2ARC does not store dirty content.  It never needs to flush
+ *    write buffers back to disk based storage.
+ * -# If an ARC buffer is written (and dirtied) which also exists in the
+ *    L2ARC, the now stale L2ARC buffer is immediately dropped.
  *
  * The performance of the L2ARC can be tweaked by a number of tunables, which
  * may be necessary for different workloads:
  *
- *	l2arc_write_max		max write bytes per interval
- *	l2arc_write_boost	extra write bytes during device warmup
- *	l2arc_noprefetch	skip caching prefetched buffers
- *	l2arc_headroom		number of max device writes to precache
- *	l2arc_feed_secs		seconds between L2ARC writing
+ *	- l2arc_write_max	max write bytes per interval
+ *	- l2arc_write_boost	extra write bytes during device warmup
+ *	- l2arc_noprefetch	skip caching prefetched buffers
+ *	- l2arc_headroom	number of max device writes to precache
+ *	- l2arc_feed_secs	seconds between L2ARC writing
  *
  * Tunables may be removed or added as future performance improvements are
  * integrated, and also may become zpool properties.
  *
  * There are three key functions that control how the L2ARC warms up:
  *
- *	l2arc_write_eligible()	check if a buffer is eligible to cache
- *	l2arc_write_size()	calculate how much to write
- *	l2arc_write_interval()	calculate sleep delay between writes
+ *	- l2arc_write_eligible()	check if a buffer is eligible to cache
+ *	- l2arc_write_size()		calculate how much to write
+ *	- l2arc_write_interval()	calculate sleep delay between writes
  *
  * These three functions determine what to write, how much, and how quickly
  * to send writes.
@@ -4263,7 +4340,7 @@ l2arc_hdr_stat_remove(void)
 	ARCSTAT_INCR(arcstat_hdr_size, HDR_SIZE);
 }
 
-/*
+/**
  * Cycle through L2ARC devices.  This is how L2ARC load balances.
  * If a device is returned, this also returns holding the spa config lock.
  */
@@ -4324,7 +4401,7 @@ out:
 	return (next);
 }
 
-/*
+/**
  * Free buffers that were tagged for destruction.
  */
 static void
@@ -4348,7 +4425,7 @@ l2arc_do_free_on_write()
 	mutex_exit(&l2arc_free_on_write_mtx);
 }
 
-/*
+/**
  * A write to a cache device has completed.  Update all headers to allow
  * reads from these buffers to begin.
  */
@@ -4424,7 +4501,7 @@ l2arc_write_done(zio_t *zio)
 	kmem_free(cb, sizeof (l2arc_write_callback_t));
 }
 
-/*
+/**
  * A read to a cache device completed.  Validate buffer contents before
  * handing over to the regular ARC routines.
  */
@@ -4471,7 +4548,7 @@ l2arc_read_done(zio_t *zio)
 		if (zio->io_error != 0) {
 			ARCSTAT_BUMP(arcstat_l2_io_error);
 		} else {
-			zio->io_error = EIO;
+			ZIO_SET_ERROR(zio, EIO);
 		}
 		if (!equal)
 			ARCSTAT_BUMP(arcstat_l2_cksum_bad);
@@ -4495,7 +4572,7 @@ l2arc_read_done(zio_t *zio)
 	kmem_free(cb, sizeof (l2arc_read_callback_t));
 }
 
-/*
+/**
  * This is the list priority from which the L2ARC will search for pages to
  * cache.  This is used within loops (0..3) to cycle through lists in the
  * desired order.  This order can have a significant effect on cache
@@ -4537,7 +4614,7 @@ l2arc_list_locked(int list_num, kmutex_t **lock)
 	return (list);
 }
 
-/*
+/**
  * Evict buffers from the device write hand to the distance specified in
  * bytes.  This distance may span populated buffers, it may span nothing.
  * This is clearing a region on the L2ARC device ready for writing.
@@ -4668,7 +4745,7 @@ top:
 	dev->l2ad_evict = taddr;
 }
 
-/*
+/**
  * Find and write ARC buffers to the L2ARC device.
  *
  * An ARC_L2_WRITING flag is set so that the L2ARC buffers are not valid
@@ -4855,9 +4932,9 @@ l2arc_write_buffers(spa_t *spa, l2arc_dev_t *dev, uint64_t target_sz)
 	return (write_sz);
 }
 
-/*
- * This thread feeds the L2ARC at regular intervals.  This is the beating
- * heart of the L2ARC.
+/**
+ * Feed the L2ARC with buffers from the ARC at regular intervals.
+ * This thread is the beating heart of the L2ARC.
  */
 static void
 l2arc_feed_thread(void *dummy __unused)
@@ -4968,7 +5045,7 @@ l2arc_vdev_present(vdev_t *vd)
 	return (dev != NULL);
 }
 
-/*
+/**
  * Add a vdev for use by the L2ARC.  By this point the spa has already
  * validated the vdev and opened it.
  */
@@ -5014,7 +5091,7 @@ l2arc_add_vdev(spa_t *spa, vdev_t *vd)
 	mutex_exit(&l2arc_dev_mtx);
 }
 
-/*
+/**
  * Remove a vdev from the L2ARC.
  */
 void

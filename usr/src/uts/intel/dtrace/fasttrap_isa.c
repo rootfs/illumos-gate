@@ -74,12 +74,10 @@ proc_ops(int op, proc_t *p, void *kaddr, off_t uaddr, size_t len)
 	uio.uio_segflg = UIO_SYSSPACE;
 	uio.uio_td = curthread;
 	uio.uio_rw = op;
-	PHOLD(p);
-	if (proc_rwmem(p, &uio) < 0) {
-		PRELE(p);
+	PROC_ASSERT_HELD(p);
+	PROC_LOCK_ASSERT((p), MA_NOTOWNED);
+	if (proc_rwmem(p, &uio) < 0)
 		return (-1);
-	}
-	PRELE(p);
 
 	return (0);
 }
@@ -1034,6 +1032,7 @@ fasttrap_pid_probe(struct reg *rp)
 #endif
 
 	PROC_LOCK(p);
+	_PHOLD(p);
 	pid = p->p_pid;
 #if defined(sun)
 	pid_mtx = &cpu_core[CPU->cpu_id].cpuc_pid_lock;
@@ -1059,6 +1058,7 @@ fasttrap_pid_probe(struct reg *rp)
 #if defined(sun)
 		mutex_exit(pid_mtx);
 #endif
+		_PRELE(p);
 		PROC_UNLOCK(p);
 		return (-1);
 	}
@@ -1732,7 +1732,6 @@ fasttrap_pid_probe(struct reg *rp)
 
 		ASSERT(i <= sizeof (scratch));
 
-
 #if defined(sun)
 		if (fasttrap_copyout(scratch, (char *)addr, i)) {
 #else
@@ -1794,7 +1793,11 @@ done:
 	}
 
 	rp->r_rip = new_pc;
-	set_regs(curthread, rp);
+
+	PROC_LOCK(p);
+	proc_write_regs(curthread, rp);
+	_PRELE(p);
+	PROC_UNLOCK(p);
 
 	return (0);
 }

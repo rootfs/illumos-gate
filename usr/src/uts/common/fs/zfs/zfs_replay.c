@@ -45,7 +45,8 @@
 #include <sys/cred.h>
 #include <sys/namei.h>
 
-/*
+/**
+ * \file zfs_replay.c
  * Functions to replay ZFS intent log (ZIL) records
  * The functions are called through a function vector (zfs_replay_vector)
  * which is indexed by the transaction type.
@@ -168,7 +169,7 @@ zfs_replay_fuid_domain_common(zfs_fuid_info_t *fuid_infop, void *start,
 	return (start);
 }
 
-/*
+/**
  * Set the uid/gid in the fuid_info structure.
  */
 static void
@@ -185,7 +186,7 @@ zfs_replay_fuid_ugid(zfs_fuid_info_t *fuid_infop, uint64_t uid, uint64_t gid)
 		fuid_infop->z_fuid_group = gid;
 }
 
-/*
+/**
  * Load fuid domains into fuid_info_t
  */
 static zfs_fuid_info_t *
@@ -212,7 +213,7 @@ zfs_replay_fuid_domain(void *buf, void **end, uint64_t uid, uint64_t gid)
 	return (fuid_infop);
 }
 
-/*
+/**
  * load zfs_fuid_t's and fuid_domains into fuid_info_t
  */
 static zfs_fuid_info_t *
@@ -259,7 +260,7 @@ zfs_replay_swap_attrs(lr_attr_t *lrattr)
 	    (lrattr->lr_attr_masksize - 1)), 3 * sizeof (uint64_t));
 }
 
-/*
+/**
  * Replay file create with optional ACL, xvattr information as well
  * as option FUID information.
  */
@@ -765,7 +766,7 @@ zfs_replay_write(zfsvfs_t *zfsvfs, lr_write_t *lr, boolean_t byteswap)
 	return (error);
 }
 
-/*
+/**
  * TX_WRITE2 are only generated when dmu_sync() returns EALREADY
  * meaning the pool block is already being synced. So now that we always write
  * out full blocks, all we have to do is expand the eof if
@@ -904,11 +905,15 @@ zfs_replay_setattr(zfsvfs_t *zfsvfs, lr_setattr_t *lr, boolean_t byteswap)
 	return (error);
 }
 
+extern int zfs_setsecattr(vnode_t *vp, vsecattr_t *vsecp, int flag, cred_t *cr,
+    caller_context_t *ct);
+
 static int
 zfs_replay_acl_v0(zfsvfs_t *zfsvfs, lr_acl_v0_t *lr, boolean_t byteswap)
 {
 	ace_t *ace = (ace_t *)(lr + 1);	/* ace array follows lr_acl_t */
 	vsecattr_t vsa;
+	vnode_t *vp;
 	znode_t *zp;
 	int error;
 
@@ -927,18 +932,17 @@ zfs_replay_acl_v0(zfsvfs_t *zfsvfs, lr_acl_v0_t *lr, boolean_t byteswap)
 	vsa.vsa_aclflags = 0;
 	vsa.vsa_aclentp = ace;
 
-#ifdef TODO
-	error = VOP_SETSECATTR(ZTOV(zp), &vsa, 0, kcred, NULL);
-#else
-	panic("%s:%u: unsupported condition", __func__, __LINE__);
-#endif
+	vp = ZTOV(zp);
+	vn_lock(vp, LK_EXCLUSIVE | LK_RETRY);
+	error = zfs_setsecattr(vp, &vsa, 0, kcred, NULL);
+	VOP_UNLOCK(vp, 0);
 
-	VN_RELE(ZTOV(zp));
+	VN_RELE(vp);
 
 	return (error);
 }
 
-/*
+/**
  * Replaying ACLs is complicated by FUID support.
  * The log record may contain some optional data
  * to be used for replaying FUID's.  These pieces
@@ -958,6 +962,7 @@ zfs_replay_acl(zfsvfs_t *zfsvfs, lr_acl_t *lr, boolean_t byteswap)
 	ace_t *ace = (ace_t *)(lr + 1);
 	vsecattr_t vsa;
 	znode_t *zp;
+	vnode_t *vp;
 	int error;
 
 	if (byteswap) {
@@ -973,7 +978,6 @@ zfs_replay_acl(zfsvfs_t *zfsvfs, lr_acl_t *lr, boolean_t byteswap)
 	if ((error = zfs_zget(zfsvfs, lr->lr_foid, &zp)) != 0)
 		return (error);
 
-#ifdef TODO
 	bzero(&vsa, sizeof (vsa));
 	vsa.vsa_mask = VSA_ACE | VSA_ACECNT | VSA_ACE_ACLFLAGS;
 	vsa.vsa_aclcnt = lr->lr_aclcnt;
@@ -990,21 +994,21 @@ zfs_replay_acl(zfsvfs_t *zfsvfs, lr_acl_t *lr, boolean_t byteswap)
 		    lr->lr_fuidcnt, lr->lr_domcnt, 0, 0);
 	}
 
-	error = VOP_SETSECATTR(ZTOV(zp), &vsa, 0, kcred, NULL);
+	vp = ZTOV(zp);
+	vn_lock(vp, LK_EXCLUSIVE | LK_RETRY);
+	error = zfs_setsecattr(vp, &vsa, 0, kcred, NULL);
+	VOP_UNLOCK(vp, 0);
 
 	if (zfsvfs->z_fuid_replay)
 		zfs_fuid_info_free(zfsvfs->z_fuid_replay);
-#else
-	error = EOPNOTSUPP;
-#endif
 
 	zfsvfs->z_fuid_replay = NULL;
-	VN_RELE(ZTOV(zp));
+	VN_RELE(vp);
 
 	return (error);
 }
 
-/*
+/**
  * Callback vectors for replaying records
  */
 zil_replay_func_t *zfs_replay_vector[TX_MAX_TYPE] = {

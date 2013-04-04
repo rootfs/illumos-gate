@@ -319,12 +319,15 @@ static acl_ops_t zfs_acl_fuid_ops = {
 	zfs_ace_fuid_data
 };
 
-/*
- * The following three functions are provided for compatibility with
- * older ZPL version in order to determine if the file use to have
- * an external ACL and what version of ACL previously existed on the
- * file.  Would really be nice to not need this, sigh.
+/**
+ * \name External ACL (Old ZPL Version) Compatibility
+ *
+ * Provided for compatibility with older ZPL versions in order to determine if
+ * the file used to have an external ACL and what version of ACL previously
+ * existed on the file.  Would really be nice to not need this, sigh.
+ * \{
  */
+
 uint64_t
 zfs_external_acl(znode_t *zp)
 {
@@ -356,7 +359,7 @@ zfs_external_acl(znode_t *zp)
 	}
 }
 
-/*
+/**
  * Determine size of ACL in bytes
  *
  * This is more complicated than it should be since we have to deal
@@ -429,6 +432,7 @@ zfs_znode_acl_version(znode_t *zp)
 		}
 	}
 }
+/** \} */
 
 static int
 zfs_acl_version(int version)
@@ -647,12 +651,13 @@ zfs_acl_curr_node(zfs_acl_t *aclp)
 	return (aclp->z_curr_node);
 }
 
-/*
+/**
  * Copy ACE to internal ZFS format.
+ *
  * While processing the ACL each ACE will be validated for correctness.
  * ACE FUIDs will be created later.
  */
-int
+static int
 zfs_copy_ace_2_fuid(zfsvfs_t *zfsvfs, vtype_t obj_type, zfs_acl_t *aclp,
     void *datap, zfs_ace_t *z_acl, uint64_t aclcnt, size_t *size,
     zfs_fuid_info_t **fuidp, cred_t *cr)
@@ -711,7 +716,286 @@ zfs_copy_ace_2_fuid(zfsvfs_t *zfsvfs, vtype_t obj_type, zfs_acl_t *aclp,
 	return (0);
 }
 
-/*
+static int
+zfs_freebsd_sid_ace_from_ace(zfsvfs_t *zfsvfs, struct sid_acl_entry **pentry,
+    uint64_t who, uint32_t access_mask, uint16_t iflags, uint16_t type)
+{
+	struct sid_acl_entry *entry;
+	struct sid *sid = NULL;
+	acl_tag_t sae_tag;
+	int error;
+
+	if (iflags & ACE_OWNER)
+		sae_tag = ACL_USER_OBJ;
+	else if (iflags & ACE_GROUP)
+		sae_tag = ACL_GROUP_OBJ;
+	else if (iflags & ACE_EVERYONE)
+		sae_tag = ACL_EVERYONE;
+	else if (iflags & ACE_IDENTIFIER_GROUP)
+		sae_tag = ACL_GROUP;
+	else
+		sae_tag = ACL_USER;
+
+	if (sae_tag == ACL_USER) {
+		error = zfs_fuid_map_sid(zfsvfs, who, ZFS_ACE_USER, &sid);
+		if (error != 0)
+			return (error);
+	}
+
+	if (sae_tag == ACL_GROUP) {
+		error = zfs_fuid_map_sid(zfsvfs, who, ZFS_ACE_GROUP, &sid);
+		if (error != 0)
+			return (error);
+	}
+
+	// Create sidace now that sid is known.
+	entry = sid_ace_alloc(sid);
+	entry->sae_tag = sae_tag;
+	entry->sae_perm = bsd_ace_perms_from_zfs(access_mask);
+	entry->sae_flags = bsd_ace_flags_from_zfs(iflags);
+
+	switch (type) {
+	case ACE_ACCESS_ALLOWED_ACE_TYPE:
+		entry->sae_entry_type = ACL_ENTRY_TYPE_ALLOW;
+		break;
+	case ACE_ACCESS_DENIED_ACE_TYPE:
+		entry->sae_entry_type = ACL_ENTRY_TYPE_DENY;
+		break;
+	case ACE_SYSTEM_AUDIT_ACE_TYPE:
+		entry->sae_entry_type = ACL_ENTRY_TYPE_AUDIT;
+		break;
+	case ACE_SYSTEM_ALARM_ACE_TYPE:
+		entry->sae_entry_type = ACL_ENTRY_TYPE_ALARM;
+		break;
+	default:
+		panic("%s: a_type is 0x%x", __func__, type);
+	}
+
+	*pentry = entry;
+	return (0);
+}
+
+/**
+ * Copy internal ZFS formated ACL into FreeBSD SID format.
+ */
+static int
+zfs_freebsd_copy_fuid_2_sidacls(zfsvfs_t *zfsvfs, vtype_t obj_type,
+    zfs_acl_t *aclp, struct sid_acl **psid_dacl, struct sid_acl **psid_sacl)
+{
+	uint64_t who;
+	uint32_t access_mask;
+	uint16_t iflags, type;
+	zfs_ace_hdr_t *zacep = NULL;
+	uint16_t entry_type;
+	struct sid_acl_entry *sidace;
+	int error = 0;
+
+	while (zacep = zfs_acl_next_ace(aclp, zacep,
+	    &who, &access_mask, &iflags, &type)) {
+
+		switch (type) {
+		case ACE_ACCESS_ALLOWED_ACE_TYPE:
+		case ACE_ACCESS_DENIED_ACE_TYPE:
+		case ACE_SYSTEM_AUDIT_ACE_TYPE:
+		case ACE_SYSTEM_ALARM_ACE_TYPE:
+			break;
+		default:
+			continue;
+		}
+
+		error = zfs_freebsd_sid_ace_from_ace(zfsvfs,
+		    &sidace, who, access_mask, iflags, type);
+		if (error != 0)
+			break;
+		
+		switch (type) {
+		case ACE_ACCESS_ALLOWED_ACE_TYPE:
+		case ACE_ACCESS_DENIED_ACE_TYPE:
+			error = sid_acl_append_ace(psid_dacl, sidace);
+			break;
+		case ACE_SYSTEM_AUDIT_ACE_TYPE:
+		case ACE_SYSTEM_ALARM_ACE_TYPE:
+			error = sid_acl_append_ace(psid_sacl, sidace);
+			break;
+		default:
+			break;
+		}
+		sid_ace_free(sidace);
+		if (error != 0)
+			break;
+	}
+
+	return (error);
+}
+
+static void
+zfs_freebsd_ace_from_sid_ace(zfs_ace_t *ace, const struct sid_acl_entry *entry)
+{
+	if (entry->sae_tag == ACL_USER_OBJ)
+		ace->z_hdr.z_flags = ACE_OWNER;
+	else if (entry->sae_tag == ACL_GROUP_OBJ)
+		ace->z_hdr.z_flags = (ACE_GROUP | ACE_IDENTIFIER_GROUP);
+	else if (entry->sae_tag == ACL_GROUP)
+		ace->z_hdr.z_flags = ACE_IDENTIFIER_GROUP;
+	else if (entry->sae_tag == ACL_EVERYONE)
+		ace->z_hdr.z_flags = ACE_EVERYONE;
+	else /* ACL_USER */
+		ace->z_hdr.z_flags = 0;
+
+	ace->z_hdr.z_access_mask = zfs_ace_perms_from_bsd(entry->sae_perm);
+	ace->z_hdr.z_flags |= zfs_ace_flags_from_bsd(entry->sae_flags);
+
+	switch (entry->sae_entry_type) {
+	case ACL_ENTRY_TYPE_ALLOW:
+		ace->z_hdr.z_type = ACE_ACCESS_ALLOWED_ACE_TYPE;
+		break;
+	case ACL_ENTRY_TYPE_DENY:
+		ace->z_hdr.z_type = ACE_ACCESS_DENIED_ACE_TYPE;
+		break;
+	case ACL_ENTRY_TYPE_ALARM:
+		ace->z_hdr.z_type = ACE_SYSTEM_ALARM_ACE_TYPE;
+		break;
+	case ACL_ENTRY_TYPE_AUDIT:
+		ace->z_hdr.z_type = ACE_SYSTEM_AUDIT_ACE_TYPE;
+		break;
+	default:
+		panic("%s: ae_entry_type is 0x%x", __func__,
+		    entry->sae_entry_type);
+	}
+}
+
+static int
+zfs_freebsd_copy_sidace_2_fuid(zfsvfs_t *zfsvfs, vtype_t obj_type,
+    const struct sid_acl_entry *sid_ace, zfs_acl_t *aclp, zfs_ace_t **paceptr,
+    zfs_fuid_info_t **fuidp)
+{
+	zfs_ace_t *aceptr = *paceptr;
+	uint16_t entry_type;
+
+	zfs_freebsd_ace_from_sid_ace(aceptr, sid_ace);
+	entry_type = aceptr->z_hdr.z_flags & ACE_TYPE_FLAGS;
+	if (entry_type != ACE_OWNER && entry_type != OWNING_GROUP &&
+	    entry_type != ACE_EVERYONE) {
+		char *domain;
+		uint32_t rid;
+		int err;
+
+		err = sid_to_domain_and_rid(sid_ace->sae_sid, &domain,
+		    &rid);
+		if (err != 0) {
+			sid_string_free(domain);
+			return (err);
+		}
+
+		aceptr->z_fuid = zfs_fuid_create_rid_domain(zfsvfs,
+		    (entry_type == 0) ? ZFS_ACE_USER : ZFS_ACE_GROUP,
+		    rid, domain, fuidp);
+		sid_string_free(domain);
+	}
+
+	/* XXX Deal with OBJECT aces. */
+
+	/*
+	 * Make sure ACE is valid
+	 */
+	if (zfs_ace_valid(obj_type, aclp, aceptr->z_hdr.z_type,
+	    aceptr->z_hdr.z_flags) != B_TRUE)
+		return (EINVAL);
+
+	aceptr = (zfs_ace_t *)((caddr_t)aceptr +
+	    aclp->z_ops.ace_size(aceptr));
+	*paceptr = aceptr;
+	return (0);
+}
+
+/**
+ * Copy FreeBSD ACLs to internal ZFS format.
+ *
+ * While processing an ACL each ACE will be validated for correctness.
+ * ACE FUIDs will be created later.
+ */
+static int
+zfs_freebsd_copy_sidacls_2_fuid(zfsvfs_t *zfsvfs, vtype_t obj_type,
+    zfs_acl_t *aclp, struct sid_acl *sid_dacl, struct sid_acl *sid_sacl,
+    zfs_ace_t *z_acl, size_t *size, zfs_fuid_info_t **fuidp, cred_t *cr)
+{
+	int i;
+	zfs_ace_t *aceptr = z_acl;
+	struct sid_acl_iter acl_iter;
+	struct sid_acl_entry *sid_ace;
+	zfs_object_ace_t *zobjacep;
+	ace_object_t *aceobjp;
+
+	if (sid_dacl) {
+		int error;
+
+		sid_acl_iter_init(&acl_iter, sid_dacl);
+		while ((sid_ace = sid_acl_iter_next(&acl_iter)) != NULL) {
+			error = zfs_freebsd_copy_sidace_2_fuid(zfsvfs,
+			    obj_type, sid_ace, aclp, &aceptr, fuidp);
+			if (error != 0)
+				return (error);
+		}
+	}
+
+	if (sid_sacl) {
+		int error;
+
+		sid_acl_iter_init(&acl_iter, sid_sacl);
+		while ((sid_ace = sid_acl_iter_next(&acl_iter)) != NULL) {
+			error = zfs_freebsd_copy_sidace_2_fuid(zfsvfs,
+			    obj_type, sid_ace, aclp, &aceptr, fuidp);
+			if (error != 0)
+				return (error);
+		}
+	}
+
+	*size = (caddr_t)aceptr - (caddr_t)z_acl;
+
+	return (0);
+}
+
+int
+zfs_freebsd_sidacls_to_aclp(zfsvfs_t *zfsvfs, vtype_t obj_type,
+    struct sid_acl *sid_dacl, struct sid_acl *sid_sacl, cred_t *cr,
+    zfs_fuid_info_t **fuidp, zfs_acl_t **zaclp)
+{
+	zfs_acl_t *aclp;
+	zfs_acl_node_t *aclnode;
+	int acecnt = 0;
+	int error;
+
+	if (sid_dacl)
+		acecnt += sid_dacl->sacl_ace_cnt;
+	if (sid_sacl)
+		acecnt += sid_sacl->sacl_ace_cnt;
+
+	if (acecnt > MAX_ACL_ENTRIES || acecnt == 0)
+		return (EINVAL);
+
+	aclp = zfs_acl_alloc(zfs_acl_version(zfsvfs->z_version));
+
+	aclp->z_hints = 0;
+	aclnode = zfs_acl_node_alloc(acecnt * sizeof (zfs_object_ace_t));
+
+	if ((error = zfs_freebsd_copy_sidacls_2_fuid(zfsvfs, obj_type,
+	    aclp, sid_dacl, sid_sacl, aclnode->z_acldata, &aclnode->z_size,
+	    fuidp, cr)) != 0) {
+		zfs_acl_free(aclp);
+		zfs_acl_node_free(aclnode);
+		return (error);
+	}
+	aclp->z_acl_bytes = aclnode->z_size;
+	aclnode->z_ace_count = acecnt;
+	aclp->z_acl_count = acecnt;
+	list_insert_head(&aclp->z_acl, aclnode);
+
+	*zaclp = aclp;
+
+	return (0);
+}
+
+/**
  * Copy ZFS ACEs to fixed size ace_t layout
  */
 static void
@@ -794,8 +1078,8 @@ zfs_copy_ace_2_oldace(vtype_t obj_type, zfs_acl_t *aclp, ace_t *acep,
 	return (0);
 }
 
-/*
- * convert old ACL format to new
+/**
+ * Convert old ACL format to new
  */
 void
 zfs_acl_xform(znode_t *zp, zfs_acl_t *aclp, cred_t *cr)
@@ -850,7 +1134,7 @@ zfs_acl_xform(znode_t *zp, zfs_acl_t *aclp, cred_t *cr)
 
 }
 
-/*
+/**
  * Convert unix access mask to v4 access mask
  */
 static uint32_t
@@ -881,7 +1165,7 @@ zfs_set_ace(zfs_acl_t *aclp, void *acep, uint32_t access_mask,
 		aclp->z_ops.ace_who_set(acep, fuid);
 }
 
-/*
+/**
  * Determine mode of file based on ACL.
  * Also, create FUIDs for any User/Group ACEs
  */
@@ -1052,7 +1336,7 @@ zfs_mode_compute(uint64_t fmode, zfs_acl_t *aclp,
 	return (mode);
 }
 
-/*
+/**
  * Read an external acl object.  If the intent is to modify, always
  * create a new acl and leave any cached acl in place.
  */
@@ -1107,7 +1391,7 @@ zfs_acl_node_read(znode_t *zp, boolean_t have_lock, zfs_acl_t **aclpp,
 		if (znode_acl.z_acl_extern_obj) {
 			error = dmu_read(zp->z_zfsvfs->z_os,
 			    znode_acl.z_acl_extern_obj, 0, aclnode->z_size,
-			    aclnode->z_acldata, DMU_READ_PREFETCH);
+			    aclnode->z_acldata, DMU_CTX_FLAG_PREFETCH);
 		} else {
 			bcopy(znode_acl.z_ace_data, aclnode->z_acldata,
 			    aclnode->z_size);
@@ -1169,8 +1453,8 @@ zfs_acl_chown_setattr(znode_t *zp)
 	return (error);
 }
 
-/*
- * common code for setting ACLs.
+/**
+ * Common code for setting ACLs.
  *
  * This function is called from zfs_mode_update, zfs_perm_init, and zfs_setacl.
  * zfs_setacl passes a non-NULL inherit pointer (ihp) to indicate that it's
@@ -1358,7 +1642,8 @@ zfs_acl_chmod(vtype_t vtype, uint64_t mode, boolean_t trim, zfs_acl_t *aclp)
 		zacep = (void *)((uintptr_t)zacep + abstract_size);
 		new_count++;
 		new_bytes += abstract_size;
-	} if (masks.deny1) {
+	}
+	if (masks.deny1) {
 		zfs_set_ace(aclp, zacep, masks.deny1, DENY, -1, ACE_OWNER);
 		zacep = (void *)((uintptr_t)zacep + abstract_size);
 		new_count++;
@@ -1460,8 +1745,8 @@ zfs_acl_chmod_setattr(znode_t *zp, zfs_acl_t **aclp, uint64_t mode)
 	return (error);
 }
 
-/*
- * strip off write_owner and write_acl
+/**
+ * Strip off write_owner and write_acl
  */
 static void
 zfs_restricted_update(zfsvfs_t *zfsvfs, zfs_acl_t *aclp, void *acep)
@@ -1475,7 +1760,7 @@ zfs_restricted_update(zfsvfs_t *zfsvfs, zfs_acl_t *aclp, void *acep)
 	}
 }
 
-/*
+/**
  * Should ACE be inherited?
  */
 static int
@@ -1491,8 +1776,8 @@ zfs_ace_can_use(vtype_t vtype, uint16_t acep_flags)
 	return (0);
 }
 
-/*
- * inherit inheritable ACEs from parent
+/**
+ * Inherit inheritable ACEs from parent
  */
 static zfs_acl_t *
 zfs_acl_inherit(zfsvfs_t *zfsvfs, vtype_t vtype, zfs_acl_t *paclp,
@@ -1610,7 +1895,7 @@ zfs_acl_inherit(zfsvfs_t *zfsvfs, vtype_t vtype, zfs_acl_t *paclp,
 	return (aclp);
 }
 
-/*
+/**
  * Create file system object initial permissions
  * including inheritable ACEs.
  */
@@ -1659,11 +1944,30 @@ zfs_acl_ids_create(znode_t *dzp, int flag, vattr_t *vap, cred_t *cr,
 				acl_ids->z_fgid = 0;
 		}
 		if (acl_ids->z_fgid == 0) {
+			/*
+			 * On BSD, the group of a file is inherited from its
+			 * parent directory regardless of the setgid bit.
+			 */
+#ifndef __FreeBSD__
 			if (dzp->z_mode & S_ISGID) {
+#endif
 				char		*domain;
 				uint32_t	rid;
 
 				acl_ids->z_fgid = dzp->z_gid;
+#ifdef __FreeBSD__
+				/*
+				 * XXX
+				 * gid is used below in security policy checks.
+				 * Use the credential's gid when operating in
+				 * directories owned by a group represented by
+				 * a FUID until we have proper UID mapping
+				 * for use by security policy and other APIs.
+				 */
+				if (IS_EPHEMERAL(acl_ids->z_fgid))
+					gid = crgetgid(cr);
+				else
+#endif
 				gid = zfs_fuid_map_id(zfsvfs, acl_ids->z_fgid,
 				    cr, ZFS_GROUP);
 
@@ -1678,15 +1982,13 @@ zfs_acl_ids_create(znode_t *dzp, int flag, vattr_t *vap, cred_t *cr,
 					    FUID_INDEX(acl_ids->z_fgid),
 					    acl_ids->z_fgid, ZFS_GROUP);
 				}
+#ifndef __FreeBSD__
 			} else {
 				acl_ids->z_fgid = zfs_fuid_create_cred(zfsvfs,
 				    ZFS_GROUP, cr, &acl_ids->z_fuidp);
-#ifdef __FreeBSD__
-				gid = acl_ids->z_fgid = dzp->z_gid;
-#else
-				gid = crgetgid(cr);
-#endif
+				gid = crgetgid(cr);                              
 			}
+#endif
 		}
 	}
 
@@ -1744,7 +2046,7 @@ zfs_acl_ids_create(znode_t *dzp, int flag, vattr_t *vap, cred_t *cr,
 	return (0);
 }
 
-/*
+/**
  * Free ACL and fuid_infop, but not the acl_ids structure
  */
 void
@@ -1765,7 +2067,7 @@ zfs_acl_ids_overquota(zfsvfs_t *zfsvfs, zfs_acl_ids_t *acl_ids)
 	    zfs_fuid_overquota(zfsvfs, B_TRUE, acl_ids->z_fgid));
 }
 
-/*
+/**
  * Retrieve a files ACL
  */
 int
@@ -1797,7 +2099,9 @@ zfs_getacl(znode_t *zp, vsecattr_t *vsecp, boolean_t skipaclchk, cred_t *cr)
 	/*
 	 * Scan ACL to determine number of ACEs
 	 */
-	if ((zp->z_pflags & ZFS_ACL_OBJ_ACE) && !(mask & VSA_ACE_ALLTYPES)) {
+	if (!(zp->z_pflags & ZFS_ACL_OBJ_ACE)) {
+		count = (int)aclp->z_acl_count;
+	} else {
 		void *zacep = NULL;
 		uint64_t who;
 		uint32_t access_mask;
@@ -1816,13 +2120,13 @@ zfs_getacl(znode_t *zp, vsecattr_t *vsecp, boolean_t skipaclchk, cred_t *cr)
 				count++;
 			}
 		}
-		vsecp->vsa_aclcnt = count;
-	} else
-		count = (int)aclp->z_acl_count;
-
-	if (mask & VSA_ACECNT) {
-		vsecp->vsa_aclcnt = count;
 	}
+
+	if (!(mask & VSA_ACE_ALLTYPES))
+		largeace = 0;
+
+	if (mask & VSA_ACECNT)
+		vsecp->vsa_aclcnt = count + largeace;
 
 	if (mask & VSA_ACE) {
 		size_t aclsz;
@@ -1920,8 +2224,8 @@ zfs_vsec_2_aclp(zfsvfs_t *zfsvfs, vtype_t obj_type,
 	return (0);
 }
 
-/*
- * Set a files ACL
+/**
+ * Set a file's ACL
  */
 int
 zfs_setacl(znode_t *zp, vsecattr_t *vsecp, boolean_t skipaclchk, cred_t *cr)
@@ -2025,10 +2329,12 @@ done:
 	return (error);
 }
 
-/*
+/**
  * Check accesses of interest (AoI) against attributes of the dataset
- * such as read-only.  Returns zero if no AoI conflict with dataset
- * attributes, otherwise an appropriate errno is returned.
+ * such as read-only.
+ *
+ * \return   zero if no AoI conflict with dataset attributes,
+ *           otherwise an appropriate errno is returned.
  */
 static int
 zfs_zaccess_dataset_check(znode_t *zp, uint32_t v4_mode)
@@ -2076,7 +2382,7 @@ zfs_zaccess_dataset_check(znode_t *zp, uint32_t v4_mode)
 	return (0);
 }
 
-/*
+/**
  * The primary usage of this function is to loop through all of the
  * ACEs in the znode, determining what accesses of interest (AoI) to
  * the caller are allowed or denied.  The AoI are expressed as bits in
@@ -2220,7 +2526,7 @@ zfs_zaccess_aces_check(znode_t *zp, uint32_t *working_mode,
 	return (0);
 }
 
-/*
+/**
  * Return true if any access whatsoever granted, we don't actually
  * care what access is granted.
  */
@@ -2352,8 +2658,9 @@ slow:
 	return (error);
 }
 
-/*
+/**
  * Determine whether Access should be granted/denied.
+ *
  * The least priv subsytem is always consulted as a basic privilege
  * can define any form of access.
  */
@@ -2516,7 +2823,7 @@ zfs_zaccess(znode_t *zp, int mode, int flags, boolean_t skipaclchk, cred_t *cr)
 	return (error);
 }
 
-/*
+/**
  * Translate traditional unix VREAD/VWRITE/VEXEC mode into
  * native ACL format and call zfs_zaccess()
  */
@@ -2526,7 +2833,7 @@ zfs_zaccess_rwx(znode_t *zp, mode_t mode, int flags, cred_t *cr)
 	return (zfs_zaccess(zp, zfs_unix_to_v4(mode >> 6), flags, B_FALSE, cr));
 }
 
-/*
+/**
  * Access function for secpolicy_vnode_setattr
  */
 int
@@ -2555,7 +2862,7 @@ zfs_delete_final_check(znode_t *zp, znode_t *dzp,
 	return (error);
 }
 
-/*
+/**
  * Determine whether Access should be granted/deny, without
  * consulting least priv subsystem.
  *
@@ -2563,32 +2870,36 @@ zfs_delete_final_check(znode_t *zp, znode_t *dzp,
  * The following chart is the recommended NFSv4 enforcement for
  * ability to delete an object.
  *
- *      -------------------------------------------------------
- *      |   Parent Dir  |           Target Object Permissions |
- *      |  permissions  |                                     |
- *      -------------------------------------------------------
- *      |               | ACL Allows | ACL Denies| Delete     |
- *      |               |  Delete    |  Delete   | unspecified|
- *      -------------------------------------------------------
- *      |  ACL Allows   | Permit     | Permit    | Permit     |
- *      |  DELETE_CHILD |                                     |
- *      -------------------------------------------------------
- *      |  ACL Denies   | Permit     | Deny      | Deny       |
- *      |  DELETE_CHILD |            |           |            |
- *      -------------------------------------------------------
- *      | ACL specifies |            |           |            |
- *      | only allow    | Permit     | Permit    | Permit     |
- *      | write and     |            |           |            |
- *      | execute       |            |           |            |
- *      -------------------------------------------------------
- *      | ACL denies    |            |           |            |
- *      | write and     | Permit     | Deny      | Deny       |
- *      | execute       |            |           |            |
- *      -------------------------------------------------------
- *         ^
- *         |
- *         No search privilege, can't even look up file?
+ * \verbatim
+        -------------------------------------------------------
+        |   Parent Dir  |           Target Object Permissions |
+        |  permissions  |                                     |
+        -------------------------------------------------------
+        |               | ACL Allows | ACL Denies| Delete     |
+        |               |  Delete    |  Delete   | unspecified|
+        -------------------------------------------------------
+        |  ACL Allows   | Permit     | Permit    | Permit     |
+        |  DELETE_CHILD |                                     |
+        -------------------------------------------------------
+        |  ACL Denies   | Permit     | Deny      | Deny       |
+        |  DELETE_CHILD |            |           |            |
+        -------------------------------------------------------
+        | ACL specifies |            |           |            |
+        | only allow    | Permit     | Permit    | Permit     |
+        | write and     |            |           |            |
+        | execute       |            |           |            |
+        -------------------------------------------------------
+        | ACL denies    |            |           |            |
+        | write and     | Permit     | Deny      | Deny       |
+        | execute       |            |           |            |
+        -------------------------------------------------------
+           ^
+           |
+           No search privilege, can't even look up file?
+   \endverbatim
  *
+ * \note  If the parent dir's ACL denies write and execute permissions,
+ *        then it may be impossible to even lookup the file
  */
 int
 zfs_zaccess_delete(znode_t *dzp, znode_t *zp, cred_t *cr)
@@ -2723,4 +3034,57 @@ zfs_zaccess_rename(znode_t *sdzp, znode_t *szp, znode_t *tdzp,
 	error = zfs_zaccess(tdzp, add_perm, 0, B_FALSE, cr);
 
 	return (error);
+}
+
+/**
+ * Retrieve a file's ACL in SID format.
+ */
+int
+zfs_freebsd_getsidacls(znode_t *zp, struct sid_acl **psid_dacl,
+    struct sid_acl **psid_sacl, int filter, boolean_t skipaclchk, cred_t *cr)
+{
+	zfs_acl_t	*aclp;
+	struct sid_acl  *sid_dacl;
+	struct sid_acl  *sid_sacl;
+	int		error;
+	int 		count = 0;
+	int		largeace = 0;
+
+	*psid_dacl = NULL;
+	*psid_sacl = NULL;
+	if (error = zfs_zaccess(zp, ACE_READ_ACL, 0, skipaclchk, cr))
+		return (error);
+
+	mutex_enter(&zp->z_acl_lock);
+
+	error = zfs_acl_node_read(zp, B_FALSE, &aclp, B_FALSE);
+	if (error != 0) {
+		mutex_exit(&zp->z_acl_lock);
+		return (error);
+	}
+
+	sid_dacl = sid_acl_alloc();
+	sid_sacl = sid_acl_alloc();
+	error = zfs_freebsd_copy_fuid_2_sidacls(zp->z_zfsvfs,
+	    ZTOV(zp)->v_type, aclp, &sid_dacl, &sid_sacl); 
+	mutex_exit(&zp->z_acl_lock);
+
+	if (error == 0) {
+		/*
+		 * Unlike DACLs, an empty and non-existant SACL have
+		 * equivalent semantics.  Save space and processing
+		 * in callers by culling empty SACLs here.
+		 */
+		if (sid_sacl->sacl_ace_cnt == 0) {
+			sid_acl_free(sid_sacl);
+			sid_sacl = NULL;
+		}
+		*psid_dacl = sid_dacl;
+		*psid_sacl = sid_sacl;
+	} else {
+		sid_acl_free(sid_dacl);
+		sid_acl_free(sid_sacl);
+	}
+
+	return (0);
 }

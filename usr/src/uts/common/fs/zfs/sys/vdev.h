@@ -38,10 +38,10 @@ extern "C" {
 #endif
 
 typedef enum vdev_dtl_type {
-	DTL_MISSING,	/* 0% replication: no copies of the data */
-	DTL_PARTIAL,	/* less than 100% replication: some copies missing */
-	DTL_SCRUB,	/* unable to fully repair during scrub/resilver */
-	DTL_OUTAGE,	/* temporarily missing (used to attempt detach) */
+	DTL_MISSING,	/**< 0% replication: no copies of the data */
+	DTL_PARTIAL,	/**< less than 100% replication: some copies missing */
+	DTL_SCRUB,	/**< unable to fully repair during scrub/resilver */
+	DTL_OUTAGE,	/**< temporarily missing (used to attempt detach) */
 	DTL_TYPES
 } vdev_dtl_type_t;
 
@@ -146,12 +146,12 @@ extern nvlist_t *vdev_label_read_config(vdev_t *vd, uint64_t txg);
 extern void vdev_uberblock_load(vdev_t *, struct uberblock *, nvlist_t **);
 
 typedef enum {
-	VDEV_LABEL_CREATE,	/* create/add a new device */
-	VDEV_LABEL_REPLACE,	/* replace an existing device */
-	VDEV_LABEL_SPARE,	/* add a new hot spare */
-	VDEV_LABEL_REMOVE,	/* remove an existing device */
-	VDEV_LABEL_L2CACHE,	/* add an L2ARC cache device */
-	VDEV_LABEL_SPLIT	/* generating new label for split-off dev */
+	VDEV_LABEL_CREATE,	/**< create/add a new device */
+	VDEV_LABEL_REPLACE,	/**< replace an existing device */
+	VDEV_LABEL_SPARE,	/**< add a new hot spare */
+	VDEV_LABEL_REMOVE,	/**< remove an existing device */
+	VDEV_LABEL_L2CACHE,	/**< add an L2ARC cache device */
+	VDEV_LABEL_SPLIT	/**< generating new label for split-off dev */
 } vdev_labeltype_t;
 
 extern int vdev_label_init(vdev_t *vd, uint64_t txg, vdev_labeltype_t reason);

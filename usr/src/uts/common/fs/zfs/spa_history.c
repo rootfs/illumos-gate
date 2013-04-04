@@ -38,7 +38,8 @@
 #include <sys/zone.h>
 #endif
 
-/*
+/**
+ * \file spa_history.c
  * Routines to manage the on-disk history log.
  *
  * The history log is stored as a dmu object containing
@@ -67,7 +68,9 @@
  * and permanently lost.
  */
 
-/* convert a logical offset to physical */
+/**
+ * convert a logical offset to physical 
+ */
 static uint64_t
 spa_history_log_to_phys(uint64_t log_off, spa_history_phys_t *shpp)
 {
@@ -112,7 +115,7 @@ spa_history_create_obj(spa_t *spa, dmu_tx_t *tx)
 	dmu_buf_rele(dbp, FTAG);
 }
 
-/*
+/**
  * Change 'sh_bof' to the beginning of the next record.
  */
 static int
@@ -127,12 +130,12 @@ spa_history_advance_bof(spa_t *spa, spa_history_phys_t *shpp)
 	firstread = MIN(sizeof (reclen), shpp->sh_phys_max_off - phys_bof);
 
 	if ((err = dmu_read(mos, spa->spa_history, phys_bof, firstread,
-	    buf, DMU_READ_PREFETCH)) != 0)
+	    buf, DMU_CTX_FLAG_PREFETCH)) != 0)
 		return (err);
 	if (firstread != sizeof (reclen)) {
 		if ((err = dmu_read(mos, spa->spa_history,
 		    shpp->sh_pool_create_len, sizeof (reclen) - firstread,
-		    buf + firstread, DMU_READ_PREFETCH)) != 0)
+		    buf + firstread, DMU_CTX_FLAG_PREFETCH)) != 0)
 			return (err);
 	}
 
@@ -186,7 +189,7 @@ spa_history_zone()
 	return ("global");
 }
 
-/*
+/**
  * Write out a history event.
  */
 /*ARGSUSED*/
@@ -294,7 +297,7 @@ spa_history_log_sync(void *arg1, void *arg2, dmu_tx_t *tx)
 	kmem_free(hap, sizeof (history_arg_t));
 }
 
-/*
+/**
  * Write out a history event.
  */
 int
@@ -331,7 +334,7 @@ spa_history_log(spa_t *spa, const char *history_str, history_log_type_t what)
 	return (err);
 }
 
-/*
+/**
  * Read out the command history.
  */
 int
@@ -417,10 +420,10 @@ spa_history_get(spa_t *spa, uint64_t *offp, uint64_t *len, char *buf)
 	}
 
 	err = dmu_read(mos, spa->spa_history, phys_read_off, read_len, buf,
-	    DMU_READ_PREFETCH);
+	    DMU_CTX_FLAG_PREFETCH);
 	if (leftover && err == 0) {
 		err = dmu_read(mos, spa->spa_history, shpp->sh_pool_create_len,
-		    leftover, buf + read_len, DMU_READ_PREFETCH);
+		    leftover, buf + read_len, DMU_CTX_FLAG_PREFETCH);
 	}
 	mutex_exit(&spa->spa_history_lock);
 
