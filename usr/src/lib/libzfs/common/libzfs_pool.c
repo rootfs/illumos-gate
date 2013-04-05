@@ -1179,21 +1179,6 @@ zpool_create(libzfs_handle_t *hdl, const char *pool, nvlist_t *nvroot,
 		}
 	}
 
-	/*
-	 * If this is an alternate root pool, then we automatically set the
-	 * mountpoint of the root dataset to be '/'.
-	 */
-	if (nvlist_lookup_string(props, zpool_prop_to_name(ZPOOL_PROP_ALTROOT),
-	    &altroot) == 0) {
-		zfs_handle_t *zhp;
-
-		verify((zhp = zfs_open(hdl, pool, ZFS_TYPE_DATASET)) != NULL);
-		verify(zfs_prop_set(zhp, zfs_prop_to_name(ZFS_PROP_MOUNTPOINT),
-		    "/") == 0);
-
-		zfs_close(zhp);
-	}
-
 create_failed:
 	zcmd_free_nvlists(&zc);
 	nvlist_free(zc_props);
