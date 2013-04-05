@@ -797,6 +797,8 @@ dbuf_free_range(dnode_t *dn, uint64_t start, uint64_t end, dmu_tx_t *tx)
 	uint64_t first_l1 = start >> epbs;
 	uint64_t last_l1 = end >> epbs;
 
+	ASSERT(RW_WRITE_HELD(&dn->dn_struct_rwlock));
+
 	if (end > dn->dn_maxblkid && (end != DMU_SPILL_BLKID)) {
 		end = dn->dn_maxblkid;
 		last_l1 = end >> epbs;

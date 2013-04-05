@@ -231,8 +231,8 @@ dmu_rm_spill(objset_t *os, uint64_t object, dmu_tx_t *tx)
 	int error;
 
 	error = dnode_hold(os, object, FTAG, &dn);
-	dbuf_rm_spill(dn, tx);
 	rw_enter(&dn->dn_struct_rwlock, RW_WRITER);
+	dbuf_rm_spill(dn, tx);
 	dnode_rm_spill(dn, tx);
 	rw_exit(&dn->dn_struct_rwlock);
 	dnode_rele(dn, FTAG);
