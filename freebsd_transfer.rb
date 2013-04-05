@@ -56,8 +56,8 @@ class IllumosFreeBSD
     raise "FreeBSD prefix not specified" unless freebsd
     illumos = File.expand_path(illumos)
     freebsd = File.expand_path(freebsd)
-    raise "Illumos prefix not a directory" unless File.directory?(illumos)
-    raise "Illumos prefix not a directory" unless File.directory?(freebsd)
+    raise "Prefix '#{illumos}' not Illumos" unless File.directory?("#{illumos}/exception_lists")
+    raise "Prefix '#{illumos}' not FreeBSD" unless File.file?("#{freebsd}/Makefile.inc1")
 
     direction = args.shift || "<" # Default to copy to Illumos.
 
