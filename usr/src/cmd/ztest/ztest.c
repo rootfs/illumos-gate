@@ -5280,7 +5280,7 @@ static void *
 ztest_deadman_thread(void *arg)
 {
 	ztest_shared_t *zs = arg;
-	int grace = 300;
+	int grace = ztest_opts.zo_time * 2;
 	hrtime_t delta;
 
 	delta = (zs->zs_thread_stop - zs->zs_thread_start) / NANOSEC + grace;
