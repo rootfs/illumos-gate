@@ -40,38 +40,38 @@ extern "C" {
 typedef struct space_map_ops space_map_ops_t;
 
 typedef struct space_map {
-	avl_tree_t	sm_root;	/**< AVL tree of map segments */
-	uint64_t	sm_space;	/**< sum of all segments in the map */
-	uint64_t	sm_start;	/**< start of map */
-	uint64_t	sm_size;	/**< size of map */
-	uint8_t		sm_shift;	/**< unit shift */
-	uint8_t		sm_pad[3];	/**< unused */
-	uint8_t		sm_loaded;	/**< map loaded? */
-	uint8_t		sm_loading;	/**< map loading? */
-	kcondvar_t	sm_load_cv;	/**< map load completion */
-	space_map_ops_t	*sm_ops;	/**< space map block picker ops */
-	avl_tree_t	*sm_pp_root;	/**< picker-private AVL tree */
-	void		*sm_ppd;	/**< picker-private data */
-	kmutex_t	*sm_lock;	/**< pointer to lock protecting map */
+	avl_tree_t	sm_root;	/* AVL tree of map segments */
+	uint64_t	sm_space;	/* sum of all segments in the map */
+	uint64_t	sm_start;	/* start of map */
+	uint64_t	sm_size;	/* size of map */
+	uint8_t		sm_shift;	/* unit shift */
+	uint8_t		sm_pad[3];	/* unused */
+	uint8_t		sm_loaded;	/* map loaded? */
+	uint8_t		sm_loading;	/* map loading? */
+	kcondvar_t	sm_load_cv;	/* map load completion */
+	space_map_ops_t	*sm_ops;	/* space map block picker ops vector */
+	avl_tree_t	*sm_pp_root;	/* picker-private AVL tree */
+	void		*sm_ppd;	/* picker-private data */
+	kmutex_t	*sm_lock;	/* pointer to lock that protects map */
 } space_map_t;
 
 typedef struct space_seg {
-	avl_node_t	ss_node;	/**< AVL node */
-	avl_node_t	ss_pp_node;	/**< AVL picker-private node */
-	uint64_t	ss_start;	/**< starting offset of this segment */
-	uint64_t	ss_end;		/**< ending offset (non-inclusive) */
+	avl_node_t	ss_node;	/* AVL node */
+	avl_node_t	ss_pp_node;	/* AVL picker-private node */
+	uint64_t	ss_start;	/* starting offset of this segment */
+	uint64_t	ss_end;		/* ending offset (non-inclusive) */
 } space_seg_t;
 
 typedef struct space_ref {
-	avl_node_t	sr_node;	/**< AVL node */
-	uint64_t	sr_offset;	/**< offset (start or end) */
-	int64_t		sr_refcnt;	/**< associated reference count */
+	avl_node_t	sr_node;	/* AVL node */
+	uint64_t	sr_offset;	/* offset (start or end) */
+	int64_t		sr_refcnt;	/* associated reference count */
 } space_ref_t;
 
 typedef struct space_map_obj {
-	uint64_t	smo_object;	/**< on-disk space map object */
-	uint64_t	smo_objsize;	/**< size of the object */
-	uint64_t	smo_alloc;	/**< space allocated from the map */
+	uint64_t	smo_object;	/* on-disk space map object */
+	uint64_t	smo_objsize;	/* size of the object */
+	uint64_t	smo_alloc;	/* space allocated from the map */
 } space_map_obj_t;
 
 struct space_map_ops {
@@ -84,26 +84,23 @@ struct space_map_ops {
 	boolean_t (*smop_fragmented)(space_map_t *sm);
 };
 
-/**
- * \file space_map.h
- *
+/*
  * debug entry
- \verbatim
-     1      3         10                     50
-   ,---+--------+------------+---------------------------------.
-   | 1 | action |  syncpass  |        txg (lower bits)         |
-   `---+--------+------------+---------------------------------'
-    63  62    60 59        50 49                               0
- \endverbatim
+ *
+ *    1      3         10                     50
+ *  ,---+--------+------------+---------------------------------.
+ *  | 1 | action |  syncpass  |        txg (lower bits)         |
+ *  `---+--------+------------+---------------------------------'
+ *   63  62    60 59        50 49                               0
+ *
  *
  * non-debug entry
- \verbatim
-     1               47                   1           15
-   ,-----------------------------------------------------------.
-   | 0 |   offset (sm_shift units)    | type |       run       |
-   `-----------------------------------------------------------'
-    63  62                          17   16   15               0
- \endverbatim
+ *
+ *    1               47                   1           15
+ *  ,-----------------------------------------------------------.
+ *  | 0 |   offset (sm_shift units)    | type |       run       |
+ *  `-----------------------------------------------------------'
+ *   63  62                          17   16   15               0
  */
 
 /* All this stuff takes and returns bytes */
@@ -130,7 +127,7 @@ struct space_map_ops {
 #define	SM_ALLOC	0x0
 #define	SM_FREE		0x1
 
-/**
+/*
  * The data for a given space map can be kept on blocks of any size.
  * Larger blocks entail fewer i/o operations, but they also cause the
  * DMU to keep more data in-core, and also to waste more i/o bandwidth

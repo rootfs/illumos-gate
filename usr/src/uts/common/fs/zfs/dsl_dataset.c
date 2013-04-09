@@ -69,7 +69,7 @@ static dsl_syncfunc_t dsl_dataset_set_reservation_sync;
 #define	DSL_DATASET_IS_DESTROYED(ds)	((ds)->ds_owner == dsl_reaper)
 
 
-/**
+/*
  * Figure out how much of this delta should be propogated to the dsl_dir
  * layer.  If there's a refreservation, that space has already been
  * partially accounted for in our ancestors.
@@ -957,9 +957,7 @@ dmu_get_recursive_snaps_nvl(const char *fsname, const char *snapname,
 /* FreeBSD ioctl compat end */
 #endif /* __FreeBSD__ */
 
-/**
- * Destroy 'snapname' in all descendants of 'fsname'.
- *
+/*
  * The snapshots must all be in the same pool.
  */
 int
@@ -1042,11 +1040,11 @@ dsl_dataset_might_destroy_origin(dsl_dataset_t *ds)
 	return (might_destroy);
 }
 
-/**
+/*
  * If we're removing a clone, and these three conditions are true:
- *	-# the clone's origin has no other children
- *	-# the clone's origin has no user references
- *	-# the clone's origin has been marked for deferred destruction
+ *	1) the clone's origin has no other children
+ *	2) the clone's origin has no user references
+ *	3) the clone's origin has been marked for deferred destruction
  *
  * Then, prepare to remove the origin as part of this sync task group.
  */
@@ -1082,7 +1080,7 @@ dsl_dataset_origin_rm_prep(struct dsl_ds_destroyarg *dsda, void *tag)
 	return (0);
 }
 
-/**
+/*
  * ds must be opened as OWNER.  On return (whether successful or not),
  * ds will be closed and caller can no longer dereference it.
  */
@@ -1430,7 +1428,7 @@ dsl_dataset_origin_check(struct dsl_ds_destroyarg *dsda, void *tag,
 	return (0);
 }
 
-/**
+/*
  * If you add new checks here, you may need to add
  * additional checks to the "temporary" case in
  * snapshot_check() in dmu_objset.c.
@@ -3008,7 +3006,7 @@ dsl_dataset_promote_sync(void *arg1, void *arg2, dmu_tx_t *tx)
 }
 
 static char *snaplist_tag = "snaplist";
-/**
+/*
  * Make a list of dsl_dataset_t's for the snapshots between first_obj
  * (exclusive) and last_obj (inclusive).  The list will be in reverse
  * order (last_obj will be the list_head()).  If first_obj == 0, do all
@@ -3094,7 +3092,7 @@ snaplist_destroy(list_t *l, boolean_t own)
 	list_destroy(l);
 }
 
-/**
+/*
  * Promote a clone.
  *
  * Nomenclature note:
@@ -3386,7 +3384,7 @@ dsl_dataset_clone_swap_sync(void *arg1, void *arg2, dmu_tx_t *tx)
 	dsl_scan_ds_clone_swapped(csa->ohds, csa->cds, tx);
 }
 
-/**
+/*
  * Swap 'clone' with its origin head datasets.  Used at the end of "zfs
  * recv" into an existing fs to swizzle the file system to the new
  * version, and by "zfs rollback".  Can also be used to swap two
@@ -3426,9 +3424,7 @@ retry:
 	return (error);
 }
 
-/**
- * Find the name of a dataset
- *
+/*
  * Given a pool name and a dataset object number in that pool,
  * return the name of that dataset.
  */
@@ -3699,7 +3695,7 @@ dsl_register_onexit_hold_cleanup(dsl_dataset_t *ds, const char *htag,
 	    dsl_dataset_user_release_onexit, ca, NULL));
 }
 
-/**
+/*
  * If you add new checks here, you may need to add
  * additional checks to the "temporary" case in
  * snapshot_check() in dmu_objset.c.
@@ -4141,7 +4137,7 @@ top:
 	return (error);
 }
 
-/**
+/*
  * Called at spa_load time (with retry == B_FALSE) to release a stale
  * temporary user hold.  Also called by the onexit code (with retry == B_TRUE).
  */
@@ -4217,11 +4213,11 @@ dsl_dataset_get_holds(const char *dsname, nvlist_t **nvp)
 	return (0);
 }
 
-/**
- * \note  This function is used as the callback for dmu_objset_find().  We
- *        always return 0 so that we will continue to find and process
- *        inconsistent datasets, even if we encounter an error trying to
- *        process one of them.
+/*
+ * Note, this function is used as the callback for dmu_objset_find().  We
+ * always return 0 so that we will continue to find and process
+ * inconsistent datasets, even if we encounter an error trying to
+ * process one of them.
  */
 /* ARGSUSED */
 int

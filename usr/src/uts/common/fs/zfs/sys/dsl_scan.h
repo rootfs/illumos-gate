@@ -46,8 +46,8 @@ struct dmu_tx;
  * purposes.
  */
 typedef struct dsl_scan_phys {
-	uint64_t scn_func; /**< pool_scan_func_t */
-	uint64_t scn_state; /**< dsl_scan_state_t */
+	uint64_t scn_func; /* pool_scan_func_t */
+	uint64_t scn_state; /* dsl_scan_state_t */
 	uint64_t scn_queue_obj;
 	uint64_t scn_min_txg;
 	uint64_t scn_max_txg;
@@ -55,15 +55,15 @@ typedef struct dsl_scan_phys {
 	uint64_t scn_cur_max_txg;
 	uint64_t scn_start_time;
 	uint64_t scn_end_time;
-	uint64_t scn_to_examine; /**< total bytes to be scanned */
-	uint64_t scn_examined; /**< bytes scanned so far */
+	uint64_t scn_to_examine; /* total bytes to be scanned */
+	uint64_t scn_examined; /* bytes scanned so far */
 	uint64_t scn_to_process;
 	uint64_t scn_processed;
-	uint64_t scn_errors;	/**< scan I/O error count */
+	uint64_t scn_errors;	/* scan I/O error count */
 	uint64_t scn_ddt_class_max;
 	ddt_bookmark_t scn_ddt_bookmark;
 	zbookmark_t scn_bookmark;
-	uint64_t scn_flags; /**< dsl_scan_flags_t */
+	uint64_t scn_flags; /* dsl_scan_flags_t */
 } dsl_scan_phys_t;
 
 #define	SCAN_PHYS_NUMINTS (sizeof (dsl_scan_phys_t) / sizeof (uint64_t))

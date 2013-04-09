@@ -484,7 +484,7 @@ traverse_prefetch_thread(void *arg)
 	mutex_exit(&td_main->td_pfd->pd_mtx);
 }
 
-/**
+/*
  * NB: dataset must not be changing on-disk (eg, is a snapshot or we are
  * in syncing context).
  */
@@ -555,7 +555,7 @@ traverse_impl(spa_t *spa, dsl_dataset_t *ds, uint64_t objset, blkptr_t *rootbp,
 	return (err);
 }
 
-/**
+/*
  * NB: dataset must not be changing on-disk (eg, is a snapshot or we are
  * in syncing context).
  */

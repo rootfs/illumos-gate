@@ -44,17 +44,14 @@
 #include <sys/zfeature.h>
 #include <sys/zil_impl.h>
 
-/** \addtogroup tunables */
-/* \{ */
 int zfs_no_write_throttle = 0;
-int zfs_write_limit_shift = 3;			/**< 1/8th of physical memory */
-int zfs_txg_synctime_ms = 1000;		/**< target millisecs to sync a txg */
+int zfs_write_limit_shift = 3;			/* 1/8th of physical memory */
+int zfs_txg_synctime_ms = 1000;		/* target millisecs to sync a txg */
 
-uint64_t zfs_write_limit_min = 32 << 20;	/**< min write limit is 32MB */
-uint64_t zfs_write_limit_max = 0;		/**< max data payload per txg */
+uint64_t zfs_write_limit_min = 32 << 20;	/* min write limit is 32MB */
+uint64_t zfs_write_limit_max = 0;		/* max data payload per txg */
 uint64_t zfs_write_limit_inflated = 0;
 uint64_t zfs_write_limit_override = 0;
-/* \} */
 
 kmutex_t zfs_write_limit_lock;
 
@@ -583,7 +580,7 @@ dsl_pool_sync_done(dsl_pool_t *dp, uint64_t txg)
 	ASSERT(!dmu_objset_is_dirty(dp->dp_meta_objset, txg));
 }
 
-/**
+/*
  * TRUE if the current thread is the tx_sync_thread or if we
  * are being called from SPA context during pool initialization.
  */
@@ -867,7 +864,7 @@ dsl_pool_vnrele_taskq(dsl_pool_t *dp)
 	return (dp->dp_vnrele_taskq);
 }
 
-/**
+/*
  * Walk through the pool-wide zap object of temporary snapshot user holds
  * and release them.
  */
@@ -898,7 +895,7 @@ dsl_pool_clean_tmp_userrefs(dsl_pool_t *dp)
 	zap_cursor_fini(&zc);
 }
 
-/**
+/*
  * Create the pool-wide zap object for storing temporary snapshot holds.
  */
 void
@@ -948,7 +945,7 @@ dsl_pool_user_hold_rele_impl(dsl_pool_t *dp, uint64_t dsobj,
 	return (error);
 }
 
-/**
+/*
  * Add a temporary hold for the given dataset object and tag.
  */
 int
@@ -958,7 +955,7 @@ dsl_pool_user_hold(dsl_pool_t *dp, uint64_t dsobj, const char *tag,
 	return (dsl_pool_user_hold_rele_impl(dp, dsobj, tag, now, tx, B_TRUE));
 }
 
-/**
+/*
  * Release a temporary hold for the given dataset object and tag.
  */
 int

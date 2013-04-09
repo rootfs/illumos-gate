@@ -37,10 +37,8 @@
 #include <sys/zio_compress.h>
 #include <sys/dsl_scan.h>
 
-/**
+/*
  * Enable/disable prefetching of dedup-ed blocks which are going to be freed.
- *
- * \ingroup tunables
  */
 int zfs_dedup_prefetch = 1;
 

@@ -56,7 +56,7 @@
 #include <sys/dnlc.h>
 #include <sys/extdirent.h>
 
-/**
+/*
  * zfs_match_find() is used by zfs_dirent_lock() to peform zap lookups
  * of names after deciding which is the appropriate lookup interface.
  */
@@ -97,7 +97,7 @@ zfs_match_find(zfsvfs_t *zfsvfs, znode_t *dzp, char *name, boolean_t exact,
 	return (error);
 }
 
-/**
+/*
  * Lock a directory entry.  A dirlock on <dzp, name> protects that name
  * in dzp's directory zap object.  As long as you hold a dirlock, you can
  * assume two things: (1) dzp cannot be reaped, and (2) no other thread
@@ -328,7 +328,7 @@ zfs_dirent_lock(zfs_dirlock_t **dlpp, znode_t *dzp, char *name, znode_t **zpp,
 	return (0);
 }
 
-/**
+/*
  * Unlock this directory entry and wake anyone who was waiting for it.
  */
 void
@@ -358,7 +358,7 @@ zfs_dirent_unlock(zfs_dirlock_t *dl)
 	kmem_free(dl, sizeof (*dl) + dl->dl_namesize);
 }
 
-/**
+/*
  * Look up an entry in a directory.
  *
  * NOTE: '.' and '..' are handled as special cases because
@@ -438,7 +438,7 @@ zfs_dirlook(znode_t *dzp, char *name, vnode_t **vpp, int flags,
 	return (error);
 }
 
-/**
+/*
  * unlinked Set (formerly known as the "delete queue") Error Handling
  *
  * When dealing with the unlinked set, we dmu_tx_hold_zap(), but we
@@ -516,7 +516,7 @@ zfs_unlinked_drain(zfsvfs_t *zfsvfs)
 	zap_cursor_fini(&zc);
 }
 
-/**
+/*
  * Delete the entire contents of a directory.  Return a count
  * of the number of entries that could not be deleted. If we encounter
  * an error, return a count of at least one so that the directory stays
@@ -698,7 +698,7 @@ zfs_dirent(znode_t *zp, uint64_t mode)
 	return (de);
 }
 
-/**
+/*
  * Link zp into dl.  Can only fail if zp has been unlinked.
  */
 int
@@ -796,7 +796,7 @@ zfs_dropname(zfs_dirlock_t *dl, znode_t *zp, znode_t *dzp, dmu_tx_t *tx,
 	return (error);
 }
 
-/**
+/*
  * Unlink zp from dl, and mark zp for deletion if this was the last link.
  * Can fail if zp is a mount point (EBUSY) or a non-empty directory (EEXIST).
  * If 'unlinkedp' is NULL, we put unlinked znodes on the unlinked list.
@@ -906,7 +906,7 @@ zfs_link_destroy(zfs_dirlock_t *dl, znode_t *zp, dmu_tx_t *tx, int flag,
 	return (0);
 }
 
-/**
+/*
  * Indicate whether the directory is empty.  Works with or without z_lock
  * held, but can only be consider a hint in the latter case.  Returns true
  * if only "." and ".." remain and there's no work in progress.
@@ -992,7 +992,7 @@ top:
 	return (0);
 }
 
-/**
+/*
  * Return a znode for the extended attribute directory for zp.
  * ** If the directory does not already exist, it is created **
  *
@@ -1067,7 +1067,7 @@ top:
 	return (error);
 }
 
-/**
+/*
  * Decide whether it is okay to remove within a sticky directory.
  *
  * In sticky directories, write access is not sufficient;

@@ -28,7 +28,7 @@
 #include <sys/dmu.h>
 #include <sys/uio.h>
 
-/**
+/*
  * Currently available byteswap functions.
  * If it all possible new attributes should used
  * one of the already defined byteswap functions.
@@ -46,21 +46,21 @@ typedef enum sa_bswap_type {
 
 typedef uint16_t	sa_attr_type_t;
 
-/**
+/*
  * Attribute to register support for.
  */
 typedef struct sa_attr_reg {
-	char 			*sa_name;	/**< attribute name */
+	char 			*sa_name;	/* attribute name */
 	uint16_t 		sa_length;
-	sa_bswap_type_t		sa_byteswap;	/**< bswap functon enum */
-	sa_attr_type_t 		sa_attr; /**< filled in during registration */
+	sa_bswap_type_t		sa_byteswap;	/* bswap functon enum */
+	sa_attr_type_t 		sa_attr; /* filled in during registration */
 } sa_attr_reg_t;
 
 
 typedef void (sa_data_locator_t)(void **, uint32_t *, uint32_t,
     boolean_t, void *userptr);
 
-/**
+/*
  * array of attributes to store.
  *
  * This array should be treated as opaque/private data.
@@ -84,14 +84,14 @@ typedef struct sa_bulk_attr {
 } sa_bulk_attr_t;
 
 
-/**
+/*
  * special macro for adding entries for bulk attr support
- * 	- bulk  - sa_bulk_attr_t
- * 	- count - integer that will be incremented during each add
- * 	- attr  - attribute to manipulate
- * 	- func  - function for accessing data.
- * 	- data  - pointer to data.
- * 	- len   - length of data
+ * bulk  - sa_bulk_attr_t
+ * count - integer that will be incremented during each add
+ * attr  - attribute to manipulate
+ * func  - function for accessing data.
+ * data  - pointer to data.
+ * len   - length of data
  */
 
 #define	SA_ADD_BULK_ATTR(b, idx, attr, func, data, len) \

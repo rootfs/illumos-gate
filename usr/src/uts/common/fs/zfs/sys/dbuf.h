@@ -42,9 +42,8 @@ extern "C" {
 
 #define	IN_DMU_SYNC 2
 
-/**
- * \name Define flags for dbuf_read
- * \{
+/*
+ * define flags for dbuf_read
  */
 
 #define	DB_RF_MUST_SUCCEED	(1 << 0)
@@ -54,27 +53,23 @@ extern "C" {
 #define	DB_RF_NEVERWAIT		(1 << 4)
 #define	DB_RF_CACHED		(1 << 5)
 #define	DB_RF_CACHED_ONLY	(1 << 6)
-/** \} */
 
-/**
+/*
  * The simplified state transition diagram for dbufs looks like:
  * 
- *
- \verbatim
-		+-> PARTIAL_FILL <---> PARTIAL-+
-		|		 	  |    |
-		+---------->READ_FILL<----[----+
-		|		^	  |
-		|		|	  |
-		|		V	  |
-		+-----------> READ ------+[-------+
-		|			 ||	  |
-		|			 VV	  V
-    (alloc)-->UNCACHED----------------->FILL--->CACHED----> EVICTING-->(free)
-		|						^
-		|						|
-		+--------------------> NOFILL ------------------+
- \endverbatim
+ *		+-> PARTIAL_FILL <---> PARTIAL-+
+ *		|		 	  |    |
+ *		+---------->READ_FILL<----[----+
+ *		|		^	  |
+ *		|		|	  |
+ *		|		V	  |
+ *		+-----------> READ ------+[-------+
+ *		|			 ||	  |
+ *		|			 VV	  V
+ *  (alloc)-->UNCACHED----------------->FILL--->CACHED----> EVICTING-->(free)
+ *		|						^
+ *		|						|
+ *		+--------------------> NOFILL ------------------+
  *
  * Reader State Transitions:
  * UNCACHED ->  READ:		Access to a block that does not have an
@@ -184,12 +179,12 @@ extern "C" {
  * Since the read cannot be avoided, it is issued immediately.
  */
 typedef enum dbuf_states {
-	/**
+	/*
 	 * Dbuf has no valid data.
 	 */
 	DB_UNCACHED		= 0x01,
 
-	/**
+	/*
 	 * The Dbuf's contents are being modified by an active thread.
 	 * This state can be combined with PARTIAL or READ.  When
 	 * just in the DB_FILL state, the entire buffer's contents are
@@ -198,41 +193,41 @@ typedef enum dbuf_states {
 	 */
 	DB_FILL			= 0x02,
 
-	/**
+	/*
 	 * Dbuf has been partially dirtied by writers.  No read has been
 	 * issued to resolve the COW fault.
 	 */
 	DB_PARTIAL		= 0x04,
 
-	/**
+	/*
 	 * A NULL DBuf associated with swap backing store.
 	 */
 	DB_NOFILL		= 0x08,
 
-	/**
+	/*
 	 * A read has been issued for an uncached buffer with no
 	 * outstanding dirty data (i.e. Not PARTIAL).
 	 */
 	DB_READ			= 0x10,
 
-	/**
+	/*
 	 * The entire contents of this dbuf are valid.  The buffer
 	 * may still be dirty.
 	 */
 	DB_CACHED		= 0x20,
 
-	/**
+	/*
 	 * The Dbuf is in the process of being freed.
 	 */
 	DB_EVICTING		= 0x40,
 
-	/**
+	/*
 	 * Dbuf has been partially dirtied by writers and a
 	 * thread is actively modifying the dbuf.
 	 */
 	DB_PARTIAL_FILL		= DB_PARTIAL|DB_FILL,
 
-	/**
+	/*
 	 * Dbuf has been partially dirtied by writers, a read
 	 * has been issued to resolve the COW fault, and a
 	 * thread is actively modifying the dbuf.
@@ -252,20 +247,20 @@ struct dmu_tx;
 struct dmu_buf_impl;
 
 typedef enum override_states {
-	/**
+	/*
 	 * The data for this dirty record must be written to media in
 	 * order to complete the TXG.
 	 */
 	DR_NOT_OVERRIDDEN,
 
-	/**
+	/*
 	 * dmu_sync() has issued an I/O to commit the data for this block
 	 * in advance of the TXG being retired.  This write has yet to
 	 * complete.
 	 */
 	DR_IN_DMU_SYNC,           
 
-	/**
+	/*
 	 * dmu_sync() has successfully written the data for this dirty
 	 * record to an alternate block.  When the TXG is retired, the
 	 * block pointer for this block must refer to the block used by
@@ -274,7 +269,7 @@ typedef enum override_states {
 	DR_OVERRIDDEN
 } override_states_t;
 
-/**
+/*
  * The structure of dirty records (DR) mirror the dbufs they belong to.  That
  * is, a dnode, its indirect blocks, and its data (leaf) blocks all have
  * their own DRs.  Each can only have one for each in-flight TXG.  Each can
@@ -312,25 +307,25 @@ typedef union dbuf_dirty_record_types {
 } dbuf_dirty_record_types_t;
 
 typedef struct dbuf_dirty_record {
-	/** link on our parents dirty list */
+	/* link on our parents dirty list */
 	list_node_t dr_dirty_node;
 
-	/** transaction group this data will sync in */
+	/* transaction group this data will sync in */
 	uint64_t dr_txg;
 
-	/** zio of outstanding write IO */
+	/* zio of outstanding write IO */
 	zio_t *dr_zio;
 
-	/** zio of outstanding override write IO */
+	/* zio of outstanding override write IO */
 	zio_t *dr_override_zio;
 
-	/** pointer back to our dbuf */
+	/* pointer back to our dbuf */
 	struct dmu_buf_impl *dr_dbuf;
 
-	/** list link for dbuf dirty records */
+	/* list link for dbuf dirty records */
 	list_node_t db_dirty_record_link;
 
-	/** pointer to parent dirty record */
+	/* pointer to parent dirty record */
 	struct dbuf_dirty_record *dr_parent;
 
 	union dbuf_dirty_record_types dt;
@@ -352,18 +347,18 @@ typedef struct dmu_buf_impl {
 	 * db.db_data, which is protected by db_mtx.
 	 */
 
-	/** the publicly visible structure */
+	/* the publicly visible structure */
 	dmu_buf_t db;
 
-	/** the objset we belong to */
+	/* the objset we belong to */
 	struct objset *db_objset;
 
-	/**
+	/*
 	 * handle to safely access the dnode we belong to (NULL when evicted)
 	 */
 	struct dnode_handle *db_dnode_handle;
 
-	/**
+	/*
 	 * our parent buffer; if the dnode points to us directly,
 	 * db_parent == db_dnode_handle->dnh_dnode->dn_dbuf
 	 * only accessed by sync thread ???
@@ -373,21 +368,21 @@ typedef struct dmu_buf_impl {
 	 */
 	struct dmu_buf_impl *db_parent;
 
-	/**
+	/*
 	 * link for hash table of all dmu_buf_impl_t's
 	 */
 	struct dmu_buf_impl *db_hash_next;
 
-	/** our block number */
+	/* our block number */
 	uint64_t db_blkid;
 
-	/**
+	/*
 	 * Pointer to the blkptr_t which points to us. May be NULL if we
 	 * don't have one yet. (NULL when evicted)
 	 */
 	blkptr_t *db_blkptr;
 
-	/**
+	/*
 	 * Our indirection level.  Data buffers have db_level==0.
 	 * Indirect buffers which point to data buffers have
 	 * db_level==1. etc.  Buffers which contain dnodes have
@@ -395,45 +390,45 @@ typedef struct dmu_buf_impl {
 	 */
 	uint8_t db_level;
 
-	/** db_mtx protects the members below */
+	/* db_mtx protects the members below */
 	kmutex_t db_mtx;
 
-	/**
+	/*
 	 * Current state of the buffer
 	 */
 	dbuf_states_t db_state;
 
-	/**
+	/*
 	 * Refcount accessed by dmu_buf_{hold,rele}.
 	 * If nonzero, the buffer can't be destroyed.
 	 * Protected by db_mtx.
 	 */
 	refcount_t db_holds;
 
-	/** buffer holding our data */
+	/* buffer holding our data */
 	arc_buf_t *db_buf;
 
 	kcondvar_t db_changed;
 	dbuf_dirty_record_t *db_data_pending;
 
-	/** List of dirty records for the buffer sorted newest to oldest. */
+	/* List of dirty records for the buffer sorted newest to oldest. */
 	list_t db_dirty_records;
 
-	/**
+	/*
 	 * List of DMU buffer sets dependent on this dbuf.
 	 * See dmu_context_node_t, the indirect list entry structure used.
 	 */
 	list_t db_dmu_buf_sets;
 
-	/**
+	/*
 	 * Our link on the owner dnodes's dn_dbufs list.
 	 * Protected by its dn_dbufs_mtx.
 	 */
 	list_node_t db_link;
 
-	/** Data which is unique to data (leaf) blocks: */
+	/* Data which is unique to data (leaf) blocks: */
 
-	/** User callback information.  See dmu_buf_set_user(). */
+	/* User callback information.  See dmu_buf_set_user(). */
 	dmu_buf_user_t *db_user;
 
 	uint8_t db_immediate_evict;
@@ -443,9 +438,9 @@ typedef struct dmu_buf_impl {
 
 } dmu_buf_impl_t;
 
+/* Note: The dbuf hash table is exposed only for the mdb module */
 #define	DBUF_MUTEXES 256
 #define	DBUF_HASH_MUTEX(h, idx) (&(h)->hash_mutexes[(idx) & (DBUF_MUTEXES-1)])
-/** \note  The dbuf hash table is exposed only for the mdb module. */
 typedef struct dbuf_hash_table {
 	uint64_t hash_table_mask;
 	dmu_buf_impl_t **hash_table;
@@ -454,10 +449,10 @@ typedef struct dbuf_hash_table {
 
 typedef struct dmu_context_node {
 
-	/** This entry's link in the list. */
+	/* This entry's link in the list. */
 	list_node_t dcn_link;
 
-	/** This entry's buffer set pointer. */
+	/* This entry's buffer set pointer. */
 	dmu_buf_set_t *buf_set;
 
 } dmu_context_node_t;
@@ -465,12 +460,12 @@ typedef struct dmu_context_node {
 void dmu_context_node_add(list_t *list, dmu_buf_set_t *buf_set);
 void dmu_context_node_remove(list_t *list, dmu_context_node_t *dcn);
 
-/**
+/*
  * Thread-specific DMU callback state for processing async I/O's.
  */
 typedef struct dmu_cb_state {
 
-	/** The list of IOs that are ready to be processed. */
+	/* The list of IOs that are ready to be processed. */
 	list_t io_list;
 
 } dmu_cb_state_t;

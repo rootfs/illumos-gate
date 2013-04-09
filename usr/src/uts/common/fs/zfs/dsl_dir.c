@@ -206,7 +206,7 @@ dsl_dir_close(dsl_dir_t *dd, void *tag)
 	dmu_buf_rele(dd->dd_dbuf, tag);
 }
 
-/** buf must be long enough (MAXNAMELEN + strlen(MOS_DIR_NAME) + 1 should do) */
+/* buf must be long enough (MAXNAMELEN + strlen(MOS_DIR_NAME) + 1 should do) */
 void
 dsl_dir_name(dsl_dir_t *dd, char *buf)
 {
@@ -301,7 +301,7 @@ getcomponent(const char *path, char *component, const char **nextp)
 	return (0);
 }
 
-/**
+/*
  * same as dsl_open_dir, ignore the first component of name and use the
  * spa instead
  */
@@ -400,7 +400,7 @@ dsl_dir_open_spa(spa_t *spa, const char *name, void *tag,
 	return (err);
 }
 
-/**
+/*
  * Return the dsl_dir_t, and possibly the last component which couldn't
  * be found in *tail.  Return NULL if the path is bogus, or if
  * tail==NULL and we couldn't parse the whole name.  (*tail)[0] == '@'
@@ -621,7 +621,7 @@ dsl_dir_space_towrite(dsl_dir_t *dd)
 	return (space);
 }
 
-/**
+/*
  * How much space would dd have available if ancestor had delta applied
  * to it?  If ondiskonly is set, we're only interested in what's
  * on-disk, not estimated pending changes.
@@ -810,7 +810,7 @@ dsl_dir_tempreserve_impl(dsl_dir_t *dd, uint64_t asize, boolean_t netfree,
 	}
 }
 
-/**
+/*
  * Reserve space in this dsl_dir, to be used in this tx's txg.
  * After the space has been dirtied (and dsl_dir_willuse_space()
  * has been called), the reservation should be canceled, using
@@ -871,7 +871,7 @@ dsl_dir_tempreserve_space(dsl_dir_t *dd, uint64_t lsize, uint64_t asize,
 	return (err);
 }
 
-/**
+/*
  * Clear a temporary reservation that we previously made with
  * dsl_dir_tempreserve_space().
  */
@@ -928,7 +928,7 @@ dsl_dir_willuse_space_impl(dsl_dir_t *dd, int64_t space, dmu_tx_t *tx)
 		dsl_dir_willuse_space_impl(dd->dd_parent, parent_space, tx);
 }
 
-/**
+/*
  * Call in open context when we think we're going to write/free space,
  * eg. when dirtying data.  Be conservative (ie. OK to write less than
  * this or free more than this, but don't write more or free less).
@@ -940,7 +940,7 @@ dsl_dir_willuse_space(dsl_dir_t *dd, int64_t space, dmu_tx_t *tx)
 	dsl_dir_willuse_space_impl(dd, space, tx);
 }
 
-/** call from syncing context when we actually write/free space for this dd */
+/* call from syncing context when we actually write/free space for this dd */
 void
 dsl_dir_diduse_space(dsl_dir_t *dd, dd_used_t type,
     int64_t used, int64_t compressed, int64_t uncompressed, dmu_tx_t *tx)
@@ -1222,7 +1222,7 @@ closest_common_ancestor(dsl_dir_t *ds1, dsl_dir_t *ds2)
 	return (NULL);
 }
 
-/**
+/*
  * If delta is applied to dd, how much of that delta would be applied to
  * ancestor?  Syncing context only.
  */

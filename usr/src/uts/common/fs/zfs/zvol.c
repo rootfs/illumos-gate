@@ -30,8 +30,7 @@
 /* Portions Copyright 2010 Robert Milkowski */
 /* Portions Copyright 2011 Martin Matuska <mm@FreeBSD.org> */
 
-/**
- * \file zvol.c
+/*
  * ZFS volume emulation driver.
  *
  * Makes a DMU object look like a volume of arbitrary size, up to 2^64 bytes.
@@ -76,7 +75,7 @@
 
 #include "zfs_namecheck.h"
 
-/**
+/*
  * This lock protects the zfsdev_state structure from being modified
  * while it's being used, e.g. an open that comes in before a create
  * finishes.  It also protects temporary opens of the dataset so that,
@@ -169,7 +168,7 @@ zvol_dumpify_size_change(zvol_state_t *zv, objset_t *os, uint64_t volsize)
 }
 
 #ifdef ZVOL_DUMP
-/** extent mapping arg */
+/* extent mapping arg */
 struct maparg {
 	zvol_state_t	*ma_zv;
 	uint64_t	ma_blks;
@@ -640,7 +639,7 @@ zvol_create_cb(objset_t *os, void *arg, cred_t *cr, dmu_tx_t *tx)
 	ASSERT(error == 0);
 }
 
-/**
+/*
  * Replay a TX_WRITE ZIL transaction that didn't get committed
  * after a system failure
  */
@@ -688,31 +687,31 @@ zvol_replay_err(zvol_state_t *zv, lr_t *lr, boolean_t byteswap)
 	return (ENOTSUP);
 }
 
-/**
+/*
  * Callback vectors for replaying records.
  * Only TX_WRITE is needed for zvol.
  */
 zil_replay_func_t *zvol_replay_vector[TX_MAX_TYPE] = {
-	zvol_replay_err,	/**< 0 no such transaction type */
-	zvol_replay_err,	/**< TX_CREATE */
-	zvol_replay_err,	/**< TX_MKDIR */
-	zvol_replay_err,	/**< TX_MKXATTR */
-	zvol_replay_err,	/**< TX_SYMLINK */
-	zvol_replay_err,	/**< TX_REMOVE */
-	zvol_replay_err,	/**< TX_RMDIR */
-	zvol_replay_err,	/**< TX_LINK */
-	zvol_replay_err,	/**< TX_RENAME */
-	zvol_replay_write,	/**< TX_WRITE */
-	zvol_replay_err,	/**< TX_TRUNCATE */
-	zvol_replay_err,	/**< TX_SETATTR */
-	zvol_replay_err,	/**< TX_ACL */
-	zvol_replay_err,	/**< TX_CREATE_ACL */
-	zvol_replay_err,	/**< TX_CREATE_ATTR */
-	zvol_replay_err,	/**< TX_CREATE_ACL_ATTR */
-	zvol_replay_err,	/**< TX_MKDIR_ACL */
-	zvol_replay_err,	/**< TX_MKDIR_ATTR */
-	zvol_replay_err,	/**< TX_MKDIR_ACL_ATTR */
-	zvol_replay_err,	/**< TX_WRITE2 */
+	zvol_replay_err,	/* 0 no such transaction type */
+	zvol_replay_err,	/* TX_CREATE */
+	zvol_replay_err,	/* TX_MKDIR */
+	zvol_replay_err,	/* TX_MKXATTR */
+	zvol_replay_err,	/* TX_SYMLINK */
+	zvol_replay_err,	/* TX_REMOVE */
+	zvol_replay_err,	/* TX_RMDIR */
+	zvol_replay_err,	/* TX_LINK */
+	zvol_replay_err,	/* TX_RENAME */
+	zvol_replay_write,	/* TX_WRITE */
+	zvol_replay_err,	/* TX_TRUNCATE */
+	zvol_replay_err,	/* TX_SETATTR */
+	zvol_replay_err,	/* TX_ACL */
+	zvol_replay_err,	/* TX_CREATE_ACL */
+	zvol_replay_err,	/* TX_CREATE_ATTR */
+	zvol_replay_err,	/* TX_CREATE_ACL_ATTR */
+	zvol_replay_err,	/* TX_MKDIR_ACL */
+	zvol_replay_err,	/* TX_MKDIR_ATTR */
+	zvol_replay_err,	/* TX_MKDIR_ACL_ATTR */
+	zvol_replay_err,	/* TX_WRITE2 */
 };
 
 static void
@@ -729,7 +728,7 @@ zvol_get_done(zgd_t *zgd, int error)
 	kmem_free(zgd, sizeof (zgd_t));
 }
 
-/**
+/*
  * Get data to generate a TX_WRITE intent log record.
  */
 static int
@@ -850,7 +849,7 @@ zvol_destroy_devices(const char *name_prefix, boolean_t ignore_errors, int flags
 	    flags));
 }
 
-/**
+/*
  * For each member of the given snaplist, remove the zvol device for the
  * snap itself, and create a new one given the clone's name.
  *
@@ -1222,7 +1221,7 @@ out:
 }
 
 ssize_t zvol_immediate_write_sz = 32768;
-/**
+/*
  * handles synchronous writes using TX_WRITE ZIL transactions.
  *
  * We store data in the log buffers if it's small enough.

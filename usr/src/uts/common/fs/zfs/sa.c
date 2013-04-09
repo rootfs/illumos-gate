@@ -43,9 +43,8 @@
 #include <sys/errno.h>
 #include <sys/zfs_context.h>
 
-/**
- * \file sa.c
- * ZFS System attributes
+/*
+ * ZFS System attributes:
  *
  * A generic mechanism to allow for arbitrary attributes
  * to be stored in a dnode.  The data will be stored in the bonus buffer of
@@ -56,7 +55,7 @@
  * attributes that would be in the way of the blkptr_t will be relocated
  * into the spill block.
  *
- * <H2>Attribute registration</H2>
+ * Attribute registration:
  *
  * Stored persistently on a per dataset basis
  * a mapping between attribute "string" names and their actual attribute
@@ -65,7 +64,7 @@
  * id value.  If an attribute can have a variable size then the value
  * 0 will be used to indicate this.
  *
- * <H2>Attribute Layout</H2>
+ * Attribute Layout:
  *
  * Attribute layouts are a way to compactly store multiple attributes, but
  * without taking the overhead associated with managing each attribute
@@ -111,7 +110,7 @@
  * data and special "data locator" function if the data isn't in a contiguous
  * location.
  *
- * <H2>Byteswap implications</H2>
+ * Byteswap implications:
  *
  * Since the SA attributes are not entirely self describing we can't do
  * the normal byteswap processing.  The special ZAP layout attribute and
@@ -163,9 +162,7 @@ arc_byteswap_func_t *sa_bswap_table[] = {
 			sa_copy_data(f, s, t, l); \
 	}
 
-/**
- * List of legacy attributes
- *
+/*
  * This table is fixed and cannot be changed.  Its purpose is to
  * allow the SA code to work with both old/new ZPL file systems.
  * It contains the list of legacy attributes.  These attributes aren't
@@ -192,16 +189,14 @@ sa_attr_reg_t sa_legacy_attrs[] = {
 	{"ZPL_ZNODE_ACL", 88, SA_UINT8_ARRAY, 15},
 };
 
-/**
- * ZPL legacy layout
- *
+/*
  * This is only used for objects of type DMU_OT_ZNODE
  */
 sa_attr_type_t sa_legacy_zpl_layout[] = {
     0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15
 };
 
-/**
+/*
  * Special dummy layout used for buffers with no attributes.
  */
 sa_attr_type_t sa_dummy_zpl_layout[] = { 0 };
@@ -322,12 +317,11 @@ sa_get_spill(sa_handle_t *hdl)
 	return (rc);
 }
 
-/**
+/*
  * Main attribute lookup/update function
+ * returns 0 for success or non zero for failures
  *
  * Operates on bulk array, first failure will abort further processing
- *
- * \return 0  for success or non zero for failures
  */
 int
 sa_attr_op(sa_handle_t *hdl, sa_bulk_attr_t *bulk, int count,
@@ -542,7 +536,7 @@ sa_copy_data(sa_data_locator_t *func, void *datastart, void *target, int buflen)
 	}
 }
 
-/**
+/*
  * Determine several different sizes
  * first the sa header size
  * the number of bytes to be stored
@@ -630,7 +624,7 @@ next:
 
 #define	BUF_SPACE_NEEDED(total, header) (total + header)
 
-/**
+/*
  * Find layout that corresponds to ordering of attributes
  *
  * If not found a new layout number is created and added to
@@ -1584,7 +1578,7 @@ sa_attr_register_sync(sa_handle_t *hdl, dmu_tx_t *tx)
 	mutex_exit(&sa->sa_lock);
 }
 
-/**
+/*
  * Replace all attributes with attributes specified in template.
  * If dnode had a spill buffer then those attributes will be
  * also be replaced, possibly with just an empty spill block
@@ -1617,7 +1611,7 @@ sa_replace_all_by_template(sa_handle_t *hdl, sa_bulk_attr_t *attr_desc,
 	return (error);
 }
 
-/**
+/*
  * Add/remove a single attribute or replace a variable-sized attribute value
  * with a value of a different size, and then rewrite the entire set
  * of attributes.
@@ -1780,7 +1774,7 @@ sa_bulk_update_impl(sa_handle_t *hdl, sa_bulk_attr_t *bulk, int count,
 	return (error);
 }
 
-/**
+/*
  * update or add new attribute
  */
 int
@@ -1819,7 +1813,7 @@ sa_update_from_cb(sa_handle_t *hdl, sa_attr_type_t attr,
 	return (error);
 }
 
-/**
+/*
  * Return size of an attribute
  */
 int

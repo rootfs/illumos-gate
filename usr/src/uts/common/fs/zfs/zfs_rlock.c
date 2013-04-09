@@ -26,10 +26,7 @@
  * Copyright (c) 2012 by Delphix. All rights reserved.
  */
 
-/**
- * \file zfs_rlock.c
- * File Range Locking for ZFS
- *
+/*
  * This file contains the code to implement file range locking in
  * ZFS, although there isn't much specific to ZFS (all that comes to mind is
  * support for growing the blocksize).
@@ -100,7 +97,7 @@
 
 #include <sys/zfs_rlock.h>
 
-/**
+/*
  * Check if a write lock can be grabbed, or wait and recheck until available.
  */
 static void
@@ -186,7 +183,7 @@ wait:
 	}
 }
 
-/**
+/*
  * If this is an original (non-proxy) lock then replace it by
  * a proxy and return the proxy.
  */
@@ -218,7 +215,7 @@ zfs_range_proxify(avl_tree_t *tree, rl_t *rl)
 	return (proxy);
 }
 
-/**
+/*
  * Split the range lock at the supplied offset
  * returning the *front* proxy.
  */
@@ -250,7 +247,7 @@ zfs_range_split(avl_tree_t *tree, rl_t *rl, uint64_t off)
 	return (front);
 }
 
-/**
+/*
  * Create and add a new proxy range lock for the supplied range.
  */
 static void
@@ -352,7 +349,7 @@ zfs_range_add_reader(avl_tree_t *tree, rl_t *new, rl_t *prev, avl_index_t where)
 	    (off + len) - (prev->r_off + prev->r_len));
 }
 
-/**
+/*
  * Check if a reader lock can be grabbed, or wait and recheck until available.
  */
 static void
@@ -453,7 +450,7 @@ zfs_range_lock(znode_t *zp, uint64_t off, uint64_t len, rl_type_t type)
 	return (new);
 }
 
-/**
+/*
  * Unlock a reader lock
  */
 static void
@@ -553,7 +550,7 @@ zfs_range_unlock(rl_t *rl)
 	}
 }
 
-/**
+/*
  * Reduce range locked as RL_WRITER from whole file to specified range.
  * Asserts the whole file is exclusivly locked and so there's only one
  * entry in the tree.

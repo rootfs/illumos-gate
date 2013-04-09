@@ -36,8 +36,7 @@
 #include <sys/zio.h>
 #include <sys/fs/zfs.h>
 
-/**
- * \file vdev_mirror.c
+/*
  * Virtual device vector for mirroring.
  */
 
@@ -253,7 +252,7 @@ vdev_mirror_scrub_done(zio_t *zio)
 	mc->mc_skipped = 0;
 }
 
-/**
+/*
  * Try to find a child whose DTL doesn't contain the block we want to read.
  * If we can't, try the read on any vdev we haven't already tried.
  */

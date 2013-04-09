@@ -34,8 +34,7 @@
 #include <sys/efi_partition.h>
 #include <sys/fm/fs/zfs.h>
 
-/**
- * \file
+/*
  * Virtual device vector for disks.
  */
 
@@ -573,7 +572,7 @@ vdev_ops_t vdev_disk_ops = {
 	B_TRUE			/* leaf vdev */
 };
 
-/**
+/*
  * Given the root disk device devid or pathname, read the label from
  * the device, and construct a configuration nvlist.
  */

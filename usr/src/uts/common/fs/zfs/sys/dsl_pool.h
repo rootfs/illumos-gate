@@ -48,7 +48,7 @@ struct dsl_pool;
 struct dmu_tx;
 struct dsl_scan;
 
-/* For indexing into the zfs_all_blkstats_t. */
+/* These macros are for indexing into the zfs_all_blkstats_t. */
 #define	DMU_OT_DEFERRED	DMU_OT_NONE
 #define	DMU_OT_OTHER	DMU_OT_NUMTYPES /* place holder for DMU_OT() types */
 #define	DMU_OT_TOTAL	(DMU_OT_NUMTYPES + 1)
@@ -70,9 +70,7 @@ typedef struct zfs_all_blkstats {
 
 
 typedef struct dsl_pool {
-	/**
-	 * \name Immutable 
-	 * \{ */
+	/* Immutable */
 	spa_t *dp_spa;
 	struct objset *dp_meta_objset;
 	struct dsl_dir *dp_root_dir;
@@ -82,26 +80,19 @@ typedef struct dsl_pool {
 	uint64_t dp_root_dir_obj;
 	struct taskq *dp_vnrele_taskq;
 
-	/**
-	 * \}
-	 * \name Sync context only
-	 * No lock needed 
-	 * \{ */
+	/* No lock needed - sync context only */
 	blkptr_t dp_meta_rootbp;
 	hrtime_t dp_read_overhead;
-	uint64_t dp_throughput; /**< bytes per millisec */
+	uint64_t dp_throughput; /* bytes per millisec */
 	uint64_t dp_write_limit;
 	uint64_t dp_tmp_userrefs_obj;
 	bpobj_t dp_free_bpobj;
 	uint64_t dp_bptree_obj;
 	uint64_t dp_empty_bpobj;
-	/** \} */
 
 	struct dsl_scan *dp_scan;
 
-	/**
-	 * \name Uses dp_lock
-	 * \{ */
+	/* Uses dp_lock */
 	kmutex_t dp_lock;
 	uint64_t dp_space_towrite[TXG_SIZE];
 	uint64_t dp_tempreserved[TXG_SIZE];
@@ -109,18 +100,14 @@ typedef struct dsl_pool {
 	uint64_t dp_mos_compressed_delta;
 	uint64_t dp_mos_uncompressed_delta;
 
-	/**
-	 * \}
-	 * \name Has its own locking
-	 * \{ */
+	/* Has its own locking */
 	tx_state_t dp_tx;
 	txg_list_t dp_dirty_datasets;
 	txg_list_t dp_dirty_zilogs;
 	txg_list_t dp_dirty_dirs;
 	txg_list_t dp_sync_tasks;
 
-	/** \} */
-	/**
+	/*
 	 * Protects administrative changes (properties, namespace)
 	 *
 	 * It is only held for write in syncing context.  Therefore

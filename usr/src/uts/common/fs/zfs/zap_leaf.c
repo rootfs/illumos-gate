@@ -22,8 +22,7 @@
  * Copyright (c) 2005, 2010, Oracle and/or its affiliates. All rights reserved.
  */
 
-/**
- * \file zap_leaf.c
+/*
  * The 512-byte leaf is broken into 32 16-byte chunks.
  * chunk number n means l_chunk[n], even though the header precedes it.
  * the names are stored null-terminated.
@@ -269,10 +268,7 @@ zap_leaf_array_free(zap_leaf_t *l, uint16_t *chunkp)
 	}
 }
 
-/**
- * \param	array_len	In units of integers, not bytes	
- * \param	buf_len		In units of integers, not bytes
- */
+/* array_len and buf_len are in integers, not bytes */
 static void
 zap_leaf_array_read(zap_leaf_t *l, uint16_t chunk,
     int array_int_len, int array_len, int buf_int_len, uint64_t buf_len,
@@ -661,7 +657,7 @@ zap_entry_create(zap_leaf_t *l, zap_name_t *zn, uint32_t cd,
 	return (0);
 }
 
-/**
+/*
  * Determine if there is another entry with the same normalized form.
  *
  * For performance purposes, either zn or name must be provided (the
@@ -788,7 +784,7 @@ zap_leaf_transfer_entry(zap_leaf_t *l, int entry, zap_leaf_t *nl)
 	nl->l_phys->l_hdr.lh_nentries++;
 }
 
-/**
+/*
  * Transfer the entries whose hash prefix ends in 1 to the new leaf.
  */
 void

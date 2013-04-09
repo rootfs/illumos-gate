@@ -38,16 +38,15 @@
 
 SYSCTL_DECL(_vfs_zfs);
 SYSCTL_NODE(_vfs_zfs, OID_AUTO, zio, CTLFLAG_RW, 0, "ZFS ZIO");
-/**
- * \ingroup tunables
- */
-int zio_use_uma = 0;
+static int zio_use_uma = 0;
 TUNABLE_INT("vfs.zfs.zio.use_uma", &zio_use_uma);
 SYSCTL_INT(_vfs_zfs_zio, OID_AUTO, use_uma, CTLFLAG_RDTUN, &zio_use_uma, 0,
     "Use uma(9) for ZIO allocations");
 
-/**
+/*
+ * ==========================================================================
  * I/O priority table
+ * ==========================================================================
  */
 uint8_t zio_priority_table[ZIO_PRIORITY_TABLE_SIZE] = {
 	0,	/* ZIO_PRIORITY_NOW		*/
@@ -64,8 +63,10 @@ uint8_t zio_priority_table[ZIO_PRIORITY_TABLE_SIZE] = {
 	2,	/* ZIO_PRIORITY_DDT_PREFETCH	*/
 };
 
-/**
+/*
+ * ==========================================================================
  * I/O type descriptions
+ * ==========================================================================
  */
 char *zio_type_name[ZIO_TYPES] = {
 	"zio_null", "zio_read", "zio_write", "zio_free", "zio_claim",
@@ -243,7 +244,7 @@ zio_fini(void)
  * ==========================================================================
  */
 
-/**
+/*
  * Use zio_buf_alloc to allocate ZFS metadata.  This data will appear in a
  * crashdump if the kernel panics, so use it judiciously.  Obviously, it's
  * useful to inspect ZFS metadata, but if possible, we should avoid keeping
@@ -262,7 +263,7 @@ zio_buf_alloc(size_t size)
 		return (kmem_alloc(size, KM_SLEEP));
 }
 
-/**
+/*
  * Use zio_data_buf_alloc to allocate data.  The data will not appear in a
  * crashdump if the kernel panics.  This exists so that we will limit the amount
  * of ZFS data that shows up in a kernel crashdump.  (Thus reducing the amount
@@ -379,12 +380,13 @@ zio_decompress(zio_t *zio, void *data, uint64_t size)
  * I/O parent/child relationships and pipeline interlocks
  * ==========================================================================
  */
-/**
- * \note  Callers must continue calling zio_walk_parents until it
- *        returns NULL.  Otherwise, the next caller will pick up the
- *        list walk in some indeterminate state.  (Otherwise every
- *        caller would have to pass in a cookie to keep the state
- *        represented by io_walk_link, which gets annoying.)
+/*
+ * NOTE - Callers to zio_walk_parents() and zio_walk_children must
+ *        continue calling these functions until they return NULL.
+ *        Otherwise, the next caller will pick up the list walk in
+ *        some indeterminate state.  (Otherwise every caller would
+ *        have to pass in a cookie to keep the state represented by
+ *        io_walk_link, which gets annoying.)
  */
 zio_t *
 zio_walk_parents(zio_t *cio)
@@ -402,13 +404,6 @@ zio_walk_parents(zio_t *cio)
 	return (zl->zl_parent);
 }
 
-/**
- * \note  Callers must continue calling zio_walk_children until it
- *        returns NULL.  Otherwise, the next caller will pick up the
- *        list walk in some indeterminate state.  (Otherwise every
- *        caller would have to pass in a cookie to keep the state
- *        represented by io_walk_link, which gets annoying.)
- */
 zio_t *
 zio_walk_children(zio_t *pio)
 {
@@ -539,8 +534,10 @@ zio_inherit_child_errors(zio_t *zio, enum zio_child c)
 	}
 }
 
-/**
+/*
+ * ==========================================================================
  * Create the various types of I/O (read, write, free, etc)
+ * ==========================================================================
  */
 static zio_t *
 zio_create(zio_t *pio, spa_t *spa, uint64_t txg, const blkptr_t *bp,
@@ -862,7 +859,7 @@ zio_write_phys(zio_t *pio, vdev_t *vd, uint64_t offset, uint64_t size,
 	return (zio);
 }
 
-/**
+/*
  * Create a child I/O to do some work for us.
  */
 zio_t *
@@ -949,8 +946,10 @@ zio_shrink(zio_t *zio, uint64_t size)
 		zio->io_orig_size = zio->io_size = size;
 }
 
-/**
+/*
+ * ==========================================================================
  * Prepare to read and write logical blocks
+ * ==========================================================================
  */
 static int
 zio_read_bp_init(zio_t *zio)
@@ -1062,8 +1061,10 @@ zio_write_bp_init(zio_t *zio)
 	}
 
 	if (compress != ZIO_COMPRESS_OFF) {
+		metaslab_class_t *mc = spa_normal_class(spa);
 		void *cbuf = zio_buf_alloc(lsize);
-		psize = zio_compress_data(compress, zio->io_data, cbuf, lsize);
+		psize = zio_compress_data(compress, zio->io_data, cbuf, lsize,
+		    (size_t)metaslab_class_get_minblocksize(mc));
 		if (psize == 0 || psize == lsize) {
 			compress = ZIO_COMPRESS_OFF;
 			zio_buf_free(cbuf, lsize);
@@ -1207,14 +1208,15 @@ zio_interrupt(zio_t *zio)
 
 static zio_pipe_stage_t *zio_pipeline[];
 
-/**
+/*
  * Execute the I/O pipeline until one of the following occurs:
- * 	-# the I/O completes
- * 	-# the pipeline stalls waiting for dependent child I/Os
- * 	-# the I/O issues, so we're waiting for an I/O completion interrupt
- * 	-# the I/O is delegated by vdev-level caching or aggregation
- * 	-# the I/O is deferred due to vdev-level queueing
- * 	-# the I/O is handed off to another thread.
+ *
+ * 	(1) the I/O completes
+ * 	(2) the pipeline stalls waiting for dependent child I/Os
+ * 	(3) the I/O issues, so we're waiting for an I/O completion interrupt
+ * 	(4) the I/O is delegated by vdev-level caching or aggregation
+ * 	(5) the I/O is deferred due to vdev-level queueing
+ * 	(6) the I/O is handed off to another thread.
  *
  * In all cases, the pipeline stops whenever there's no CPU work; it never
  * burns a thread in cv_wait().
@@ -1271,8 +1273,10 @@ zio_execute(zio_t *zio)
 	dmu_thread_context_process();
 }
 
-/**
+/*
+ * ==========================================================================
  * Initiate I/O, either sync or async
+ * ==========================================================================
  */
 int
 zio_wait(zio_t *zio)
@@ -1317,8 +1321,10 @@ zio_nowait(zio_t *zio)
 	zio_execute(zio);
 }
 
-/**
+/*
+ * ==========================================================================
  * Reexecute or suspend/resume failed I/O
+ * ==========================================================================
  */
 static void
 zio_reexecute(zio_t *pio)
@@ -1432,9 +1438,9 @@ zio_resume_wait(spa_t *spa)
 	mutex_exit(&spa->spa_suspend_lock);
 }
 
-/**
- * \file zio.c
- * <H2>Gang blocks</H2>
+/*
+ * ==========================================================================
+ * Gang blocks.
  *
  * A gang block is a collection of small blocks that looks to the DMU
  * like one large block.  When zio_dva_allocate() cannot find a block
@@ -1495,6 +1501,7 @@ zio_resume_wait(spa_t *spa)
  * each constituent bp and we can allocate a new block on the next sync pass.
  *
  * In all cases, the gang tree allows complete recovery from partial failure.
+ * ==========================================================================
  */
 
 static zio_t *
@@ -2324,7 +2331,7 @@ zio_dva_claim(zio_t *zio)
 	return (ZIO_PIPELINE_CONTINUE);
 }
 
-/**
+/*
  * Undo an allocation.  This is used by zio_done() when an I/O fails
  * and we want to give back the block we just allocated.
  * This handles both normal blocks and gang blocks.
@@ -2346,10 +2353,8 @@ zio_dva_unallocate(zio_t *zio, zio_gang_node_t *gn, blkptr_t *bp)
 	}
 }
 
-/**
- * Try to allocate an intent log block.
- *
- * \return  0 on success, errno on failure.
+/*
+ * Try to allocate an intent log block.  Return 0 on success, errno on failure.
  */
 int
 zio_alloc_zil(spa_t *spa, uint64_t txg, blkptr_t *new_bp, blkptr_t *old_bp,
@@ -2392,7 +2397,7 @@ zio_alloc_zil(spa_t *spa, uint64_t txg, blkptr_t *new_bp, blkptr_t *old_bp,
 	return (error);
 }
 
-/**
+/*
  * Free an intent log block.
  */
 void
@@ -2552,7 +2557,7 @@ zio_vdev_io_done(zio_t *zio)
 	return (ZIO_PIPELINE_CONTINUE);
 }
 
-/**
+/*
  * For non-raidz ZIOs, we can just copy aside the bad data read from the
  * disk, and use that to finish the checksum ereport later.
  */
@@ -2733,7 +2738,7 @@ zio_checksum_verify(zio_t *zio)
 	return (ZIO_PIPELINE_CONTINUE);
 }
 
-/**
+/*
  * Called by RAID-Z to ensure we don't compute the checksum twice.
  */
 void
@@ -2742,14 +2747,14 @@ zio_checksum_verified(zio_t *zio)
 	zio->io_pipeline &= ~ZIO_STAGE_CHECKSUM_VERIFY;
 }
 
-/**
- * Compare the severity of errors
- *
- * Errors are ranked in the order 0, ENXIO, ECKSUM, EIO, other.  An error of
- * 0 indictes success.  ENXIO indicates whole-device failure, which may be
- * transient (e.g. unplugged) or permament.  ECKSUM and EIO indicate errors
- * that are specific to one I/O, and most likely permanent.  Any other error
- * is presumed to be worse because we weren't expecting it.
+/*
+ * ==========================================================================
+ * Error rank.  Errors are ranked in the order 0, ENXIO, ECKSUM, EIO, other.
+ * An error of 0 indictes success.  ENXIO indicates whole-device failure,
+ * which may be transient (e.g. unplugged) or permament.  ECKSUM and EIO
+ * indicate errors that are specific to one I/O, and most likely permanent.
+ * Any other error is presumed to be worse because we weren't expecting it.
+ * ==========================================================================
  */
 int
 zio_worst_error(int e1, int e2)

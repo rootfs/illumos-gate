@@ -23,9 +23,7 @@
  * Copyright (c) 2012 by Delphix. All rights reserved.
  */
 
-/**
- * \file zap.c
- * 
+/*
  * This file contains the top half of the zfs directory structure
  * implementation.  The bottom half is in zap_leaf.c.
  *
@@ -136,7 +134,7 @@ zap_tryupgradedir(zap_t *zap, dmu_tx_t *tx)
 	return (0);
 }
 
-/**
+/*
  * Generic routines for dealing with the pointer & cookie tables.
  */
 
@@ -300,7 +298,7 @@ zap_table_load(zap_t *zap, zap_table_phys_t *tbl, uint64_t idx, uint64_t *valp)
 	return (err);
 }
 
-/**
+/*
  * Routines for growing the ptrtbl.
  */
 
@@ -747,7 +745,7 @@ fzap_check(zap_name_t *zn, uint64_t integer_size, uint64_t num_integers)
 	return (fzap_checksize(integer_size, num_integers));
 }
 
-/**
+/*
  * Routines for manipulating attributes.
  */
 int

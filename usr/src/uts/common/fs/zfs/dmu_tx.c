@@ -1044,20 +1044,21 @@ dmu_tx_unassign(dmu_tx_t *tx)
 	tx->tx_txg = 0;
 }
 
-/**
- * Assign tx to a transaction group.  
+/*
+ * Assign tx to a transaction group.  txg_how can be one of:
  *
- * txg_how can be one of:
- * -# TXG_WAIT.  If the current open txg is full, waits until there's
- *    a new one.  This should be used when you're not holding locks.
- *    If will only fail if we're truly out of space (or over quota).
- * -# TXG_NOWAIT.  If we can't assign into the current open txg without
- *    blocking, returns immediately with ERESTART.  This should be used
- *    whenever you're holding locks.  On an ERESTART error, the caller
- *    should drop locks, do a dmu_tx_wait(tx), and try again.
- * -# A specific txg.  Use this if you need to ensure that multiple
- *    transactions all sync in the same txg.  Like TXG_NOWAIT, it
- *    returns ERESTART if it can't assign you into the requested txg.
+ * (1)	TXG_WAIT.  If the current open txg is full, waits until there's
+ *	a new one.  This should be used when you're not holding locks.
+ *	If will only fail if we're truly out of space (or over quota).
+ *
+ * (2)	TXG_NOWAIT.  If we can't assign into the current open txg without
+ *	blocking, returns immediately with ERESTART.  This should be used
+ *	whenever you're holding locks.  On an ERESTART error, the caller
+ *	should drop locks, do a dmu_tx_wait(tx), and try again.
+ *
+ * (3)	A specific txg.  Use this if you need to ensure that multiple
+ *	transactions all sync in the same txg.  Like TXG_NOWAIT, it
+ *	returns ERESTART if it can't assign you into the requested txg.
  */
 int
 dmu_tx_assign(dmu_tx_t *tx, uint64_t txg_how)
@@ -1231,7 +1232,7 @@ dmu_tx_callback_register(dmu_tx_t *tx, dmu_tx_callback_func_t *func, void *data)
 	list_insert_tail(&tx->tx_callbacks, dcb);
 }
 
-/**
+/*
  * Call all the commit callbacks on a list, with a given error code.
  */
 void
@@ -1246,7 +1247,7 @@ dmu_tx_do_callbacks(list_t *cb_list, int error)
 	}
 }
 
-/**
+/*
  * hold necessary attribute name for attribute registration.
  * should be a very rare case where this is needed.  If it does
  * happen it would only happen on the first write to the file system.
@@ -1303,14 +1304,12 @@ dmu_tx_hold_spill(dmu_tx_t *tx, uint64_t object)
 	}
 }
 
-/**
- * Interface to hold a bunch of attributes.  Used for creating new
- * files.
+/*
+ * Interface to hold a bunch of attributes.  Used for creating new files.
+ * attrsize is the total size of all attributes to be added during object
+ * creation.
  *
  * For updating/adding a single attribute dmu_tx_hold_sa() should be used.
- *
- * \param[in]	attrsize	The total size of all attributes to be added
- * 				during object creation.
  */
 void
 dmu_tx_hold_sa_create(dmu_tx_t *tx, int attrsize)
@@ -1340,7 +1339,7 @@ dmu_tx_hold_sa_create(dmu_tx_t *tx, int attrsize)
 	    THT_SPILL, 0, 0);
 }
 
-/**
+/*
  * Hold SA attribute
  *
  * dmu_tx_hold_sa(dmu_tx_t *tx, sa_handle_t *, attribute, add, size)

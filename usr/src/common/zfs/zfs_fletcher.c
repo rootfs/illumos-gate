@@ -125,6 +125,17 @@
  * than sha-256, and slower than 'off', which doesn't touch the data at all.
  */
 
+/* 
+ * TODO: vectorize these functions
+ * All of these functions are written so that each iteration of the loop
+ * depends on the value of the previous iteration.  Also, in the fletcher_4
+ * functions, each statement of the loop body depends on the previous
+ * statement.  These dependencies prevent the compiler from vectorizing the
+ * code to take advantage of SIMD extensions (unless GCC is far smarter than I
+ * think).  It would be easy to rewrite the loops to be amenable to
+ * autovectorization.
+ */
+
 #include <sys/types.h>
 #include <sys/sysmacros.h>
 #include <sys/byteorder.h>

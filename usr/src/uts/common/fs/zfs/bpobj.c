@@ -342,7 +342,7 @@ out:
 	return (err);
 }
 
-/**
+/*
  * Iterate and remove the entries.  If func returns nonzero, iteration
  * will stop and that entry will not be removed.
  */
@@ -352,7 +352,7 @@ bpobj_iterate(bpobj_t *bpo, bpobj_itor_t func, void *arg, dmu_tx_t *tx)
 	return (bpobj_iterate_impl(bpo, func, arg, tx, B_TRUE));
 }
 
-/**
+/*
  * Iterate the entries.  If func returns nonzero, iteration will stop.
  */
 int

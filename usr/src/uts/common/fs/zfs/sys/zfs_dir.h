@@ -35,18 +35,18 @@ extern "C" {
 #endif
 
 /* zfs_dirent_lock() flags */
-#define	ZNEW		0x0001		/**< entry should not exist */
-#define	ZEXISTS		0x0002		/**< entry should exist */
-#define	ZSHARED		0x0004		/**< shared access (zfs_dirlook()) */
-#define	ZXATTR		0x0008		/**< we want the xattr dir */
-#define	ZRENAMING	0x0010		/**< znode is being renamed */
-#define	ZCILOOK		0x0020		/**< case-insensitive lookup requested */
-#define	ZCIEXACT	0x0040		/**< c-i requires c-s match (rename) */
-#define	ZHAVELOCK	0x0080		/**< z_name_lock is already held */
+#define	ZNEW		0x0001		/* entry should not exist */
+#define	ZEXISTS		0x0002		/* entry should exist */
+#define	ZSHARED		0x0004		/* shared access (zfs_dirlook()) */
+#define	ZXATTR		0x0008		/* we want the xattr dir */
+#define	ZRENAMING	0x0010		/* znode is being renamed */
+#define	ZCILOOK		0x0020		/* case-insensitive lookup requested */
+#define	ZCIEXACT	0x0040		/* c-i requires c-s match (rename) */
+#define	ZHAVELOCK	0x0080		/* z_name_lock is already held */
 
 /* mknode flags */
-#define	IS_ROOT_NODE	0x01		/**< create a root node */
-#define	IS_XATTR	0x02		/**< create an extended attribute node */
+#define	IS_ROOT_NODE	0x01		/* create a root node */
+#define	IS_XATTR	0x02		/* create an extended attribute node */
 
 extern int zfs_dirent_lock(zfs_dirlock_t **, znode_t *, char *, znode_t **,
     int, int *, pathname_t *);

@@ -77,8 +77,7 @@
 #include <vm/vm_pageout.h>
 #include <vm/vm_page.h>
 
-/**
- * \file zfs_vnops.c
+/*
  * ZFS VNode operations.  Entry points to the ZFS module
  *
  * Programming rules.
@@ -91,12 +90,13 @@
  * The ordering of events is important to avoid deadlocks and references
  * to freed memory.  The example below illustrates the following Big Rules:
  *
- *   -# A check must be made in each zfs thread for a mounted file system.
+ *  (1)	A check must be made in each zfs thread for a mounted file system.
  *	This is done avoiding races using ZFS_ENTER(zfsvfs).
  *	A ZFS_EXIT(zfsvfs) is needed before all returns.  Any znodes
  *	must be checked with ZFS_VERIFY_ZP(zp).  Both of these macros
  *	can return EIO from the calling function.
- *   -# VN_RELE() should always be the last thing except for zil_commit()
+ *
+ *  (2)	VN_RELE() should always be the last thing except for zil_commit()
  *	(if necessary) and ZFS_EXIT(). This is for 3 reasons:
  *	First, if it's the last reference, the vnode/znode
  *	can be freed, so the zp may point to freed memory.  Second, the last
@@ -105,65 +105,68 @@
  *	cached atime changes.  Third, zfs_zinactive() may require a new tx,
  *	which could deadlock the system if you were already holding one.
  *	If you must call VN_RELE() within a tx then use VN_RELE_ASYNC().
- *   -# All range locks must be grabbed before calling dmu_tx_assign(),
+ *
+ *  (3)	All range locks must be grabbed before calling dmu_tx_assign(),
  *	as they can span dmu_tx_assign() calls.
- *   -# Always pass TXG_NOWAIT as the second argument to dmu_tx_assign().
+ *
+ *  (4)	Always pass TXG_NOWAIT as the second argument to dmu_tx_assign().
  *	This is critical because we don't want to block while holding locks.
  *	Note, in particular, that if a lock is sometimes acquired before
  *	the tx assigns, and sometimes after (e.g. z_lock), then failing to
  *	use a non-blocking assign can deadlock the system.  The scenario:
- *	   - Thread A has grabbed a lock before calling dmu_tx_assign().
- *	   - Thread B is in an already-assigned tx, and blocks for this lock.
- *	   - Thread A calls dmu_tx_assign(TXG_WAIT) and blocks in
- *	     txg_wait_open() forever, because the previous txg can't
- *	     quiesce until B's tx commits.
- *	   .
+ *
+ *	Thread A has grabbed a lock before calling dmu_tx_assign().
+ *	Thread B is in an already-assigned tx, and blocks for this lock.
+ *	Thread A calls dmu_tx_assign(TXG_WAIT) and blocks in txg_wait_open()
+ *	forever, because the previous txg can't quiesce until B's tx commits.
+ *
  *	If dmu_tx_assign() returns ERESTART and zfsvfs->z_assign is
  *	TXG_NOWAIT, then drop all locks, call dmu_tx_wait(), and try again.
- *   -# If the operation succeeded, generate the intent log entry for it
+ *
+ *  (5)	If the operation succeeded, generate the intent log entry for it
  *	before dropping locks.  This ensures that the ordering of events
  *	in the intent log matches the order in which they actually occurred.
  *	During ZIL replay the zfs_log_* functions will update the sequence
  *	number to indicate the zil transaction has replayed.
- *   -# At the end of each vnode op, the DMU tx must always commit,
+ *
+ *  (6)	At the end of each vnode op, the DMU tx must always commit,
  *	regardless of whether there were any errors.
- *   -# After dropping all locks, invoke zil_commit(zilog, foid)
+ *
+ *  (7)	After dropping all locks, invoke zil_commit(zilog, foid)
  *	to ensure that synchronous semantics are provided when necessary.
  *
  * In general, this is how things should be ordered in each vnode op:
  *
- \code
- 	ZFS_ENTER(zfsvfs);		// exit if unmounted
-  top:
- 	zfs_dirent_lock(&dl, ...)	// lock directory entry (may VN_HOLD())
- 	rw_enter(...);			// grab any other locks you need
- 	tx = dmu_tx_create(...);	// get DMU tx
- 	dmu_tx_hold_*();		// hold each object you might modify
- 	error = dmu_tx_assign(tx, TXG_NOWAIT);	// try to assign
- 	if (error) {
- 		rw_exit(...);		// drop locks
- 		zfs_dirent_unlock(dl);	// unlock directory entry
- 		VN_RELE(...);		// release held vnodes
- 		if (error == ERESTART) {
- 			dmu_tx_wait(tx);
- 			dmu_tx_abort(tx);
- 			goto top;
- 		}
- 		dmu_tx_abort(tx);	// abort DMU tx
- 		ZFS_EXIT(zfsvfs);	// finished in zfs
- 		return (error);		// really out of space
- 	}
- 	error = do_real_work();		// do whatever this VOP does
- 	if (error == 0)
- 		zfs_log_*(...);		// on success, make ZIL entry
- 	dmu_tx_commit(tx);		// commit DMU tx -- error or not
- 	rw_exit(...);			// drop locks
- 	zfs_dirent_unlock(dl);		// unlock directory entry
- 	VN_RELE(...);			// release held vnodes
- 	zil_commit(zilog, foid);	// synchronous when necessary
- 	ZFS_EXIT(zfsvfs);		// finished in zfs
- 	return (error);			// done, report error
- \endcode
+ *	ZFS_ENTER(zfsvfs);		// exit if unmounted
+ * top:
+ *	zfs_dirent_lock(&dl, ...)	// lock directory entry (may VN_HOLD())
+ *	rw_enter(...);			// grab any other locks you need
+ *	tx = dmu_tx_create(...);	// get DMU tx
+ *	dmu_tx_hold_*();		// hold each object you might modify
+ *	error = dmu_tx_assign(tx, TXG_NOWAIT);	// try to assign
+ *	if (error) {
+ *		rw_exit(...);		// drop locks
+ *		zfs_dirent_unlock(dl);	// unlock directory entry
+ *		VN_RELE(...);		// release held vnodes
+ *		if (error == ERESTART) {
+ *			dmu_tx_wait(tx);
+ *			dmu_tx_abort(tx);
+ *			goto top;
+ *		}
+ *		dmu_tx_abort(tx);	// abort DMU tx
+ *		ZFS_EXIT(zfsvfs);	// finished in zfs
+ *		return (error);		// really out of space
+ *	}
+ *	error = do_real_work();		// do whatever this VOP does
+ *	if (error == 0)
+ *		zfs_log_*(...);		// on success, make ZIL entry
+ *	dmu_tx_commit(tx);		// commit DMU tx -- error or not
+ *	rw_exit(...);			// drop locks
+ *	zfs_dirent_unlock(dl);		// unlock directory entry
+ *	VN_RELE(...);			// release held vnodes
+ *	zil_commit(zilog, foid);	// synchronous when necessary
+ *	ZFS_EXIT(zfsvfs);		// finished in zfs
+ *	return (error);			// done, report error
  */
 
 /* ARGSUSED */
@@ -229,7 +232,7 @@ zfs_close(vnode_t *vp, int flag, int count, offset_t offset, cred_t *cr,
 	return (0);
 }
 
-/**
+/*
  * Lseek support for finding holes (cmd == _FIO_SEEK_HOLE) and
  * data (cmd == _FIO_SEEK_DATA). "off" is an in/out parameter.
  */
@@ -381,7 +384,7 @@ zfs_unmap_page(struct sf_buf *sf)
 	sf_buf_free(sf);
 }
 
-/**
+/*
  * When a file is memory mapped, we must keep the IO data synchronized
  * between the DMU cache and the memory mapped pages.  What this means:
  *
@@ -428,14 +431,14 @@ update_pages(vnode_t *vp, int64_t start, int len, objset_t *os, uint64_t oid,
 	VM_OBJECT_UNLOCK(obj);
 }
 
-/**
+/*
  * Read with UIO_NOCOPY flag means that sendfile(2) requests
  * ZFS to populate a range of page cache pages with data.
  *
- * \note  This function could be optimized to pre-allocate
- *	  all pages in advance, drain VPO_BUSY on all of them,
- *	  map them into contiguous KVA region and populate them
- *	  in one single dmu_read() call.
+ * NOTE: this function could be optimized to pre-allocate
+ * all pages in advance, drain VPO_BUSY on all of them,
+ * map them into contiguous KVA region and populate them
+ * in one single dmu_read() call.
  */
 static int
 mappedread_sf(vnode_t *vp, int nbytes, uio_t *uio)
@@ -493,15 +496,15 @@ mappedread_sf(vnode_t *vp, int nbytes, uio_t *uio)
 	return (error);
 }
 
-/**
+/*
  * When a file is memory mapped, we must keep the IO data synchronized
  * between the DMU cache and the memory mapped pages.  What this means:
  *
  * On Read:	We "read" preferentially from memory mapped pages,
  *		else we default from the dmu buffer.
  *
- * \note  We will always "break up" the IO into PAGESIZE uiomoves when
- *	  the file is memory mapped.
+ * NOTE: We will always "break up" the IO into PAGESIZE uiomoves when
+ *	 the file is memory mapped.
  */
 static int
 mappedread(vnode_t *vp, int nbytes, uio_t *uio)
@@ -552,21 +555,22 @@ mappedread(vnode_t *vp, int nbytes, uio_t *uio)
 
 offset_t zfs_read_chunk_size = 1024 * 1024; /* Tunable */
 
-/**
+/*
  * Read bytes from specified file into supplied buffer.
  *
- * \param[in,out]	vp	vnode of file to be read from.  On return,
- * 				atime is updated if byte count > 0
- * \param[in,out]	uio	structure supplying read location, range info,
- * 				and return buffer.  On return, the range and
- * 				offset is updated, and the buffer is filled
- * \param[in]		ioflag	SYNC flags; used to provide FRSYNC semantics
- * \param[in]		cr	credentials of caller
- * \param[in]		ct	caller context
+ *	IN:	vp	- vnode of file to be read from.
+ *		uio	- structure supplying read location, range info,
+ *			  and return buffer.
+ *		ioflag	- SYNC flags; used to provide FRSYNC semantics.
+ *		cr	- credentials of caller.
+ *		ct	- caller context
  *
- * \return  0 if success, or an error code on failure
+ *	OUT:	uio	- updated offset and range, buffer filled.
+ *
+ *	RETURN:	0 on success, error code on failure.
+ *
  * Side Effects:
- *	- vp - atime updated if byte count > 0
+ *	vp - atime updated if byte count > 0
  */
 /* ARGSUSED */
 static int
@@ -711,22 +715,23 @@ out:
 	return (error);
 }
 
-/**
+/*
  * Write the bytes to a file.
  *
- * \param[in,out]	vp	vnode of file to be written to.  On return,
- * 				ctime and/or mtime is updated if byte count > 0
- * \param[in,out]	uio	structure supplying write location, range
- * 				info, and data buffer.  On return, offset and
- * 				range is updated
- * \param[in]		ioflag	FAPPEND, FSYNC, and/or FDSYNC
- * \param[in]		cr	credentials of caller
- * \param[in]		ct	caller context (NFS/CIFS fem monitor only)
+ *	IN:	vp	- vnode of file to be written to.
+ *		uio	- structure supplying write location, range info,
+ *			  and data buffer.
+ *		ioflag	- FAPPEND, FSYNC, and/or FDSYNC.  FAPPEND is
+ *			  set if in append mode.
+ *		cr	- credentials of caller.
+ *		ct	- caller context (NFS/CIFS fem monitor only)
  *
- * \return  0 on success, error code on failure
+ *	OUT:	uio	- updated offset and range.
+ *
+ *	RETURN:	0 on success, error code on failure.
  *
  * Timestamps:
- *	- vp - ctime|mtime updated if byte count > 0
+ *	vp - ctime|mtime updated if byte count > 0
  */
 /* ARGSUSED */
 static int
@@ -1125,7 +1130,7 @@ zfs_get_done(zgd_t *zgd, int error)
 static int zil_fault_io = 0;
 #endif
 
-/**
+/*
  * Get data to generate a TX_WRITE intent log record.
  */
 int
@@ -1272,7 +1277,7 @@ zfs_access(vnode_t *vp, int mode, int flag, cred_t *cr,
 	return (error);
 }
 
-/**
+/*
  * If vnode is for a device return a specfs vnode instead.
  */
 static int
@@ -1293,17 +1298,19 @@ specvp_check(vnode_t **vpp, cred_t *cr)
 }
 
 
-/**
+/*
  * Lookup an entry in a directory, or an extended attribute directory.
  * If it exists, return a held vnode reference for it.
  *
- * \param[in]	dvp	vnode of directory to search
- * \param[in]	nm	name of entry to lookup
- * \param[out]	vpp	vnode of located entry, NULL if not found.
- * \param[in]	cr	credentials of caller
- * \param[in]	flags	LOOKUP_XATTR set if looking for an attribute.
+ *	IN:	dvp	- vnode of directory to search.
+ *		nm	- name of entry to lookup.
+ *		flags	- LOOKUP_XATTR set if looking for an attribute.
+ *		cr	- credentials of caller.
+ *		ct	- caller context
  *
- * \return  0 on success, error code on failure
+ *	OUT:	vpp	- vnode of located entry, NULL if not found.
+ *
+ *	RETURN:	0 on success, error code on failure.
  *
  * Timestamps:
  *	NA
@@ -1483,30 +1490,25 @@ zfs_lookup(vnode_t *dvp, char *nm, vnode_t **vpp, struct componentname *cnp,
 	return (error);
 }
 
-/**
+/*
  * Attempt to create a new entry in a directory.  If the entry
  * already exists, truncate the file if permissible, else return
  * an error.  Return the vp of the created or trunc'd file.
  *
- * \param[in,out]	dvp	vnode of directory to put new file entry in.
- * 				On return, ctime|mtime are updated if new
- * 				entry created
- * \param[in]		name	name of new file entry.
- * \param[in]		vap	attributes of new file.
- * \param[in]		excl	flag indicating exclusive or non-exclusive
- * 				mode.
- * \param[in]		mode	mode to open file with.
- * \param[out]		vpp	storage for the returned vnode of created or
- * 				trunc'd entry.  On return, ctime|mtime are
- * 				updated, and atime is updated if the file is
- * 				new
- * \param[in]		cr	credentials of caller
+ *	IN:	dvp	- vnode of directory to put new file entry in.
+ *		name	- name of new file entry.
+ *		vap	- attributes of new file.
+ *		excl	- flag indicating exclusive or non-exclusive mode.
+ *		mode	- mode to open file with.
+ *		cr	- credentials of caller.
  *
- * \return  0 on success, error code on failure.
+ *	OUT:	vpp	- vnode of created or trunc'd entry.
+ *
+ *	RETURN:	0 on success, error code on failure.
  *
  * Timestamps:
- *	- dvp - ctime|mtime updated if new entry created
- *	-  vp - ctime|mtime always, atime if new
+ *	dvp - ctime|mtime updated if new entry created
+ *	 vp - ctime|mtime updated always, atime if new
  */
 /* ARGSUSED */
 static int
@@ -1744,21 +1746,20 @@ out:
 
 uint64_t null_xattr = 0;
 
-/**
+/*
  * Remove an entry from a directory.
  *
- * \param[in,out]	dvp	vnode of directory to remove entry from.  On
- * 				return, ctime and mtime are updated
- * \param[in]		name	name of entry to remove.
- * \param[in]		cr	credentials of caller.
- * \param[in]		ct      caller context
- * \param[in]		flags	case flags
+ *	IN:	dvp	- vnode of directory to remove entry from.
+ *		name	- name of entry to remove.
+ *		cr	- credentials of caller.
+ *		ct	- caller context
+ *		flags	- case flags
  *
- * \return  0 on success, or error code on failure
+ *	RETURN:	0 on success, error code on failure.
  *
  * Timestamps:
- *	- dvp - ctime|mtime
- *	-  vp - ctime (if nlink > 0)
+ *	dvp - ctime|mtime
+ *	 vp - ctime (if nlink > 0)
  */
 /*ARGSUSED*/
 static int
@@ -1978,25 +1979,25 @@ out:
 	return (error);
 }
 
-/**
+/*
  * Create a new directory and insert it into dvp using the name
  * provided.  Return a pointer to the inserted directory.
  *
- * \param[in,out]	dvp	vnode of directory to add subdir to.  On
- * 				return, ctime and mtime are updated
- * \param[in]		dirname	name of new directory.
- * \param[in]		vap	attributes of new directory.
- * \param[out]		vpp	storage for the returned vnode of the created
- * 				directory.  Ctime, mtime, and atime are updated
- * \param[in]		cr	credentials of caller.
- * \param[in]		ct	caller context
- * \param[in]		vsecp	ACL to be set
+ *	IN:	dvp	- vnode of directory to add subdir to.
+ *		dirname	- name of new directory.
+ *		vap	- attributes of new directory.
+ *		cr	- credentials of caller.
+ *		ct	- caller context
+ *		flags	- case flags
+ *		vsecp	- ACL to be set
  *
- * \return  0 on success, error code on failure
+ *	OUT:	vpp	- vnode of created directory.
+ *
+ *	RETURN:	0 on success, error code on failure.
  *
  * Timestamps:
- *	- dvp - ctime|mtime updated
- *	-  vp - ctime|mtime|atime updated
+ *	dvp - ctime|mtime updated
+ *	 vp - ctime|mtime|atime updated
  */
 /*ARGSUSED*/
 static int
@@ -2160,23 +2161,22 @@ top:
 	return (0);
 }
 
-/**
+/*
  * Remove a directory subdir entry.  If the current working
  * directory is the same as the subdir to be removed, the
  * remove will fail.
  *
- * \param[in,out]	dvp	vnode of directory to remove from. On return,
- * 				ctime and mtime are updated
- * \param[in]		name	name of directory to be removed.
- * \param[in]		cwd	vnode of current working directory.
- * \param[in]		cr	credentials of caller.
- * \param[in]		ct	caller context
- * \param[in]		flags	case flags
+ *	IN:	dvp	- vnode of directory to remove from.
+ *		name	- name of directory to be removed.
+ *		cwd	- vnode of current working directory.
+ *		cr	- credentials of caller.
+ *		ct	- caller context
+ *		flags	- case flags
  *
- * \return  0 on success, error code on failure
+ *	RETURN:	0 on success, error code on failure
  *
  * Timestamps:
- *	- dvp - ctime|mtime updated
+ *	dvp - ctime|mtime updated
  */
 /*ARGSUSED*/
 static int
@@ -2295,32 +2295,30 @@ out:
 	return (error);
 }
 
-/**
- * Read multiple directory entries.
+/*
+ * Read as many directory entries as will fit into the provided
+ * buffer from the given directory cursor position (specified in
+ * the uio structure).
  *
- * Read as many directory entries as will fit into the provided buffer from
- * the given directory cursor position (specified in the uio structure.
+ *	IN:	vp	- vnode of directory to read.
+ *		uio	- structure supplying read location, range info,
+ *			  and return buffer.
+ *		cr	- credentials of caller.
  *
- * \param[in,out]	vp	  vnode of directory to read.  On return, atime
- * 				  is updated
- * \param[in,out]	uio	  structure supplying read location, range info,
- * 				  and return buffer.  On return, offset and
- * 				  range are updated and buffer is filled
- * \param[in]		cr	  credentials of caller
- * \param[out]		eofp	  set to true if end-of-file detected
- * \param[out]		ncookies  number of returned cookies
- * \param[out]		cookies	  array of cookies returned by ZAP.  Note that
- * 				  the low 4 bits of the cookie returned by zap
- * 				  is always zero.  This allows us to use the low
- * 				  range for "special" directory entries: We use
- * 				  0 for '.', and 1 for '..'.  If this is the
- *				  root of the filesystem, we use the offset 2
- *				  for the '.zfs' directory.
+ *	OUT:	uio	- updated offset and range, buffer filled.
+ *		eofp	- set to true if end-of-file detected.
+ *		ncookies- number of returned cookies
+ *		cookies	- array of cookies returned by ZAP.  Note that the
+ *			  low 4 bits of the cookie returned by zap is always
+ *			  zero.  This allows us to use the low range for
+ *			  "special" directory entries: 0 for '.' and 1 for
+ *			  '..'.  If this is the root of the filesystem, we
+ *			  use the offset 2 for the '.zfs' directory.
  *
- * \return  0 on success, error code on failure
+ *	RETURN:	0 on success, error code on failure.
  *
  * Timestamps:
- *	- vp - atime updated
+ *	vp - atime updated
  */
 /* ARGSUSED */
 static int
@@ -2647,19 +2645,20 @@ zfs_fsync(vnode_t *vp, int syncflag, cred_t *cr, caller_context_t *ct)
 }
 
 
-/**
+/*
  * Get the requested file attributes and place them in the provided
  * vattr structure.
  *
- * \param[in]		vp	vnode of file.
- * \param[in,out]	vap	va_mask identifies requested attributes.  If
- * 				AT_XVATTR set, then optional attrs are
- * 				requested.  Attribute values are returned here
- * \param[in]		flags	ATTR_NOACLCHECK (CIFS server context)
- * \param[in]		cr	credentials of caller.
- * \param[in]		ct	caller context
+ *	IN:	vp	- vnode of file.
+ *		vap	- va_mask identifies requested attributes.
+ *			  If AT_XVATTR set, then optional attrs are requested
+ *		flags	- ATTR_NOACLCHECK (CIFS server context)
+ *		cr	- credentials of caller.
+ *		ct	- caller context
  *
- * \return  0 (always succeeds)
+ *	OUT:	vap	- attribute values.
+ *
+ *	RETURN:	0 (always succeeds)
  */
 /* ARGSUSED */
 static int
@@ -2868,25 +2867,22 @@ zfs_getattr(vnode_t *vp, vattr_t *vap, int flags, cred_t *cr,
 	return (0);
 }
 
-/**
+/*
  * Set the file attributes to the values contained in the
  * vattr structure.
  *
- * \param[in,out]	vp	vnode of file to be modified.  On return,
- * 				ctime is updated.  mtime is updated if the size
- * 				changed
- * \param[in]		vap	new attribute values.  If AT_XVATTR set, then
- * 				optional attrs are being set
- * \param[in]		flags	flags - ATTR_UTIME set if non-default time
- * 				values provided - ATTR_NOACLCHECK (CIFS context
- * 				only)
- * \param[in]		cr	credentials of caller
- * \param[in]		ct	caller context
+ *	IN:	vp	- vnode of file to be modified.
+ *		vap	- new attribute values.
+ *			  If AT_XVATTR set, then optional attrs are being set
+ *		flags	- ATTR_UTIME set if non-default time values provided.
+ *			- ATTR_NOACLCHECK (CIFS context only).
+ *		cr	- credentials of caller.
+ *		ct	- caller context
  *
- * \return  0 on success, error code on failure
+ *	RETURN:	0 on success, error code on failure.
  *
  * Timestamps:
- *	- vp - ctime updated, mtime updated if size changed.
+ *	vp - ctime updated, mtime updated if size changed.
  */
 /* ARGSUSED */
 static int
@@ -3522,12 +3518,12 @@ out:
 }
 
 typedef struct zfs_zlock {
-	krwlock_t	*zl_rwlock;	/**< lock we acquired */
-	znode_t		*zl_znode;	/**< znode we held */
-	struct zfs_zlock *zl_next;	/**< next in list */
+	krwlock_t	*zl_rwlock;	/* lock we acquired */
+	znode_t		*zl_znode;	/* znode we held */
+	struct zfs_zlock *zl_next;	/* next in list */
 } zfs_zlock_t;
 
-/**
+/*
  * Drop locks and release vnodes that were held by zfs_rename_lock().
  */
 static void
@@ -3544,7 +3540,7 @@ zfs_rename_unlock(zfs_zlock_t **zlpp)
 	}
 }
 
-/**
+/*
  * Search back through the directory tree, using the ".." entries.
  * Lock each directory in the chain to prevent concurrent renames.
  * Fail any attempt to move a directory into one of its own descendants.
@@ -3618,24 +3614,22 @@ zfs_rename_lock(znode_t *szp, znode_t *tdzp, znode_t *sdzp, zfs_zlock_t **zlpp)
 	return (0);
 }
 
-/**
+/*
  * Move an entry from the provided source directory to the target
  * directory.  Change the entry name as indicated.
  *
- * \param[in,out]	sdvp	Source directory containing the "old entry".
- * 				ctime|mtime are updated on return
- * \param[in]		snm	Old entry name.
- * \param[in,out]	tdvp	Target directory to contain the "new entry".
- *				ctime|mtime are updated on return
- * \param[in]		tnm	New entry name.
- * \param[in]		cr	credentials of caller.
- * \param[in]		ct	caller context
- * \param[in]		flags	case flags
+ *	IN:	sdvp	- Source directory containing the "old entry".
+ *		snm	- Old entry name.
+ *		tdvp	- Target directory to contain the "new entry".
+ *		tnm	- New entry name.
+ *		cr	- credentials of caller.
+ *		ct	- caller context
+ *		flags	- case flags
  *
- * \return  0 on success, error code on failure
+ *	RETURN:	0 on success, error code on failure.
  *
  * Timestamps:
- *	- sdvp,tdvp - ctime|mtime updated
+ *	sdvp,tdvp - ctime|mtime updated
  */
 /*ARGSUSED*/
 static int
@@ -3985,20 +3979,19 @@ out:
 	return (error);
 }
 
-/**
+/*
  * Insert the indicated symbolic reference entry into the directory.
  *
- * \param[in,out]	dvp	Directory to contain new symbolic link.  On
- * 				return, ctime and mtime are updated
- * \param[in]		name	target path of new symlink
- * \param[in]		vap	Attributes of new entry
- * \param[in]		link	Name for new symlink entry
- * \param[in]		cr	credentials of caller
+ *	IN:	dvp	- Directory to contain new symbolic link.
+ *		name	- target path of new symlink
+ *		vap	- Attributes of new entry.
+ *		link	- Name for new symlink entry
+ *		cr	- credentials of caller
  *
- * \return  0 on success, error code on failure
+ *	RETURN:	0 on success, error code on failure.
  *
  * Timestamps:
- *	- dvp - ctime|mtime updated
+ *	dvp - ctime|mtime updated
  */
 /*ARGSUSED*/
 static int
@@ -4136,20 +4129,21 @@ top:
 	return (error);
 }
 
-/**
+/*
  * Return, in the buffer contained in the provided uio structure,
  * the symbolic path referred to by vp.
  *
- * \param[in,out]	vp	vnode of symbolic link.  On return, atime is
- * 				updated
- * \param[in,out]	uio	structure to contain the link path.
- * \param[in]		cr	credentials of caller.
- * \param[in]		ct	caller context
+ *	IN:	vp	- vnode of symbolic link.
+ *		uio	- structure to contain the link path.
+ *		cr	- credentials of caller.
+ *		ct	- caller context
  *
- * \return  0 on success, error code on failure
+ *	OUT:	uio	- structure containing the link path.
+ *
+ *	RETURN:	0 on success, error code on failure.
  *
  * Timestamps:
- *	- vp - atime updated
+ *	vp - atime updated
  */
 /* ARGSUSED */
 static int
@@ -4176,21 +4170,20 @@ zfs_readlink(vnode_t *vp, uio_t *uio, cred_t *cr, caller_context_t *ct)
 	return (error);
 }
 
-/**
+/*
  * Insert a new entry into directory tdvp referencing svp.
  *
- * \param[in,out]	tdvp	Directory to contain new entry.  On return,
- * 				ctime and mtime are updated
- * \param[in,out]	svp	vnode of new entry.  On return, ctime is updated
- * \param[in]		name	name of new entry.
- * \param[in]		cr	credentials of caller
- * \param[in]		ct	caller context
+ *	IN:	tdvp	- Directory to contain new entry.
+ *		svp	- vnode of new entry.
+ *		name	- name of new entry.
+ *		cr	- credentials of caller.
+ *		ct	- caller context
  *
- * \return  0 on success, error code on failure
+ *	RETURN:	0 on success, error code on failure.
  *
  * Timestamps:
- *	- tdvp - ctime|mtime updated
- *	-  svp - ctime updated
+ *	tdvp - ctime|mtime updated
+ *	 svp - ctime updated
  */
 /* ARGSUSED */
 static int
@@ -4331,7 +4324,7 @@ top:
 }
 
 #ifdef sun
-/**
+/*
  * zfs_null_putapage() is used when the file system has been force
  * unmounted. It just drops the pages.
  */
@@ -4344,21 +4337,22 @@ zfs_null_putapage(vnode_t *vp, page_t *pp, u_offset_t *offp,
 	return (0);
 }
 
-/**
- * Push a page out to disk, klustering if possible.
+/*
+ * Push a page out to disk, clustering if possible.
  *
- * \param[in]	vp	file to push page to.
- * \param[in]	pp	page to push.
- * \param[out]	offp	start of range pushed.
- * \param[out]	lenp	len of range pushed.
- * \param[in]	flags	additional flags.
- * \param[in]	cr	credentials of caller.
+ *	IN:	vp	- file to push page to.
+ *		pp	- page to push.
+ *		flags	- additional flags.
+ *		cr	- credentials of caller.
  *
- * \return  0 on success, error code on failure
+ *	OUT:	offp	- start of range pushed.
+ *		lenp	- length of range pushed.
  *
- * \note  Callers must have locked the page to be pushed.  On
- *        exit, the page (and all other pages in the kluster) must be
- *        unlocked.
+ *	RETURN:	0 on success, error code on failure.
+ *
+ * NOTE: callers must have locked the page to be pushed.  On
+ * exit, the page (and all other pages in the cluster) must be
+ * unlocked.
  */
 /* ARGSUSED */
 static int
@@ -4465,22 +4459,21 @@ out:
 	return (err);
 }
 
-/**
+/*
  * Copy the portion of the file indicated from pages into the file.
  * The pages are stored in a page list attached to the files vnode.
  *
- * \param[in,out]	vp	vnode of file to push page data to.  On
- * 				return, ctime and mtime are updated
- * \param[in]		off	position in file to put data.
- * \param[in]		len	amount of data to write.
- * \param[in]		flags	flags to control the operation.
- * \param[in]		cr	credentials of caller.
- * \param[in]		ct	caller context
+ *	IN:	vp	- vnode of file to push page data to.
+ *		off	- position in file to put data.
+ *		len	- amount of data to write.
+ *		flags	- flags to control the operation.
+ *		cr	- credentials of caller.
+ *		ct	- caller context.
  *
- * \return  0 on success, error code on failure
+ *	RETURN:	0 on success, error code on failure
  *
  * Timestamps:
- *	- vp - ctime|mtime updated
+ *	vp - ctime|mtime updated
  */
 /*ARGSUSED*/
 static int
@@ -4618,16 +4611,15 @@ zfs_inactive(vnode_t *vp, cred_t *cr, caller_context_t *ct)
 }
 
 #ifdef sun
-/**
+/*
  * Bounds-check the seek operation.
  *
- * \param[in]	vp	vnode seeking within
- * \param[in]	ooff	old file offset
- * \param[in]	noffp	pointer to new file offset
- * \param[in]	ct	caller context
+ *	IN:	vp	- vnode seeking within
+ *		ooff	- old file offset
+ *		noffp	- pointer to new file offset
+ *		ct	- caller context
  *
- * \retval 0       success
- * \retval EINVAL  new offset is invalid
+ *	RETURN:	0 on success, EINVAL if new offset invalid.
  */
 /* ARGSUSED */
 static int
@@ -4639,7 +4631,7 @@ zfs_seek(vnode_t *vp, offset_t ooff, offset_t *noffp,
 	return ((*noffp < 0 || *noffp > MAXOFFSET_T) ? EINVAL : 0);
 }
 
-/**
+/*
  * Pre-filter the generic locking function to trap attempts to place
  * a mandatory lock on a memory mapped file.
  */
@@ -4667,7 +4659,7 @@ zfs_frlock(vnode_t *vp, int cmd, flock64_t *bfp, int flag, offset_t offset,
 	return (fs_frlock(vp, cmd, bfp, flag, offset, flk_cbp, cr, ct));
 }
 
-/**
+/*
  * If we can't find a page in the cache, we will create a new page
  * and fill it with file data.  For efficiency, we may try to fill
  * multiple pages at once (klustering) to fill up the supplied page
@@ -4742,7 +4734,7 @@ zfs_fillpage(vnode_t *vp, u_offset_t off, struct seg *seg,
 	return (0);
 }
 
-/**
+/*
  * Return pointers to the pages for the file region [off, off + len]
  * in the pl array.  If plsz is greater than len, this function may
  * also return page pointers from after the specified region
@@ -4750,28 +4742,28 @@ zfs_fillpage(vnode_t *vp, u_offset_t off, struct seg *seg,
  * only returned if they are already in the cache, or were created as
  * part of a klustered read.
  *
- * \param[in,out]	vp	vnode of file to get data from.  On return,
- * 				atime is updated
- * \param[in]		off	position in file to get data from.
- * \param[in]		len	amount of data to retrieve.
- * \param[out]		protp	protection mode of created pages.
- * \param[out]		pl	list of pages created.
- * \param[in]		plsz	length of provided page list.
- * \param[in]		seg	segment to obtain pages for.
- * \param[in]		addr	virtual address of fault.
- * \param[in]		rw	mode of created pages.
- * \param[in]		cr	credentials of caller.
- * \param[in]		ct	caller context.
+ *	IN:	vp	- vnode of file to get data from.
+ *		off	- position in file to get data from.
+ *		len	- amount of data to retrieve.
+ *		plsz	- length of provided page list.
+ *		seg	- segment to obtain pages for.
+ *		addr	- virtual address of fault.
+ *		rw	- mode of created pages.
+ *		cr	- credentials of caller.
+ *		ct	- caller context.
  *
- * \return   0 on success, error code on failure
+ *	OUT:	protp	- protection mode of created pages.
+ *		pl	- list of pages created.
+ *
+ *	RETURN:	0 on success, error code on failure.
  *
  * Timestamps:
- *	- vp - atime updated
+ *	vp - atime updated
  */
 /* ARGSUSED */
 static int
 zfs_getpage(vnode_t *vp, offset_t off, size_t len, uint_t *protp,
-    page_t *pl, size_t plsz, struct seg *seg, caddr_t addr,
+    page_t *pl[], size_t plsz, struct seg *seg, caddr_t addr,
     enum seg_rw rw, cred_t *cr, caller_context_t *ct)
 {
 	znode_t		*zp = VTOZ(vp);
@@ -4843,7 +4835,7 @@ out:
 	return (err);
 }
 
-/**
+/*
  * Request a memory map for a section of a file.  This code interacts
  * with common code and the VM system as follows:
  *	- common code calls mmap(), which ends up in smmap_common()
@@ -4939,20 +4931,21 @@ zfs_addmap(vnode_t *vp, offset_t off, struct as *as, caddr_t addr,
 	return (0);
 }
 
-/**
+/*
  * The reason we push dirty pages as part of zfs_delmap() is so that we get a
  * more accurate mtime for the associated file.  Since we don't have a way of
  * detecting when the data was actually modified, we have to resort to
  * heuristics.  If an explicit msync() is done, then we mark the mtime when the
  * last page is pushed.  The problem occurs when the msync() call is omitted,
  * which by far the most common case:
- * 	-# open()
- * 	-# mmap()
- * 	-# <modify memory>
- * 	-# munmap()
- * 	-# close()
- * 	-# <time lapse>
- * 	-# putpage() via fsflush
+ *
+ * 	open()
+ * 	mmap()
+ * 	<modify memory>
+ * 	munmap()
+ * 	close()
+ * 	<time lapse>
+ * 	putpage() via fsflush
  *
  * If we wait until fsflush to come along, we can have a modification time that
  * is some arbitrary point in the future.  In order to prevent this in the
@@ -4977,25 +4970,24 @@ zfs_delmap(vnode_t *vp, offset_t off, struct as *as, caddr_t addr,
 	return (0);
 }
 
-/**
+/*
  * Free or allocate space in a file.  Currently, this function only
  * supports the `F_FREESP' command.  However, this command is somewhat
  * misnamed, as its functionality includes the ability to allocate as
  * well as free space.
  *
- * \param[in,out]	vp	vnode of file to free data in.  On return,
- * 				ctime and mtime are updated
- * \param[in]		cmd	action to take (only F_FREESP supported).
- * \param[in]		bfp	section of file to free/alloc.
- * \param[in]		flag	current file open mode flags.
- * \param[in]		offset	current file offset.
- * \param[in]		cr	credentials of caller [UNUSED].
- * \param[in]		ct	caller context.
+ *	IN:	vp	- vnode of file to free data in.
+ *		cmd	- action to take (only F_FREESP supported).
+ *		bfp	- section of file to free/alloc.
+ *		flag	- current file open mode flags.
+ *		offset	- current file offset.
+ *		cr	- credentials of caller [UNUSED].
+ *		ct	- caller context.
  *
- * \return  0 on success, error code on failure
+ *	RETURN:	0 on success, error code on failure.
  *
  * Timestamps:
- *	- vp - ctime|mtime updated
+ *	vp - ctime|mtime updated
  */
 /* ARGSUSED */
 static int
@@ -5219,19 +5211,14 @@ zfs_setsecattr(vnode_t *vp, vsecattr_t *vsecp, int flag, cred_t *cr,
 }
 
 #ifdef sun
-/**
- * The smallest read we may consider to loan out an arcbuf
- *
- * \invariant  Must be a power of 2.
- * \ingroup tunables
+/*
+ * The smallest read we may consider to loan out an arcbuf.
+ * This must be a power of 2.
  */
 int zcr_blksz_min = (1 << 10);	/* 1K */
-/**
- * if set to less than the file block size, allow loaning out of an
- * arcbuf for a partial block read
- *
- * \invariant  Must be a power of 2
- * \ingroup tunables
+/*
+ * If set to less than the file block size, allow loaning out of an
+ * arcbuf for a partial block read.  This must be a power of 2.
  */
 int zcr_blksz_max = (1 << 17);	/* 128K */
 
@@ -5403,7 +5390,7 @@ zfs_isdir()
 {
 	return (EISDIR);
 }
-/**
+/*
  * Directory vnode operations template
  */
 vnodeops_t *zfs_dvnodeops;
@@ -5436,7 +5423,7 @@ const fs_operation_def_t zfs_dvnodeops_template[] = {
 	NULL,			NULL
 };
 
-/**
+/*
  * Regular file vnode operations template
  */
 vnodeops_t *zfs_fvnodeops;
@@ -5471,7 +5458,7 @@ const fs_operation_def_t zfs_fvnodeops_template[] = {
 	NULL,			NULL
 };
 
-/**
+/*
  * Symbolic link vnode operations template
  */
 vnodeops_t *zfs_symvnodeops;
@@ -5488,7 +5475,7 @@ const fs_operation_def_t zfs_symvnodeops_template[] = {
 	NULL,			NULL
 };
 
-/**
+/*
  * special share hidden files vnode operations template
  */
 vnodeops_t *zfs_sharevnodeops;
@@ -5504,17 +5491,17 @@ const fs_operation_def_t zfs_sharevnodeops_template[] = {
 	NULL,			NULL
 };
 
-/**
+/*
  * Extended attribute directory vnode operations template
  *
  * This template is identical to the directory vnodes operation
  * template except for restricted operations:
- *	- VOP_MKDIR()
- *	- VOP_SYMLINK()
+ *	VOP_MKDIR()
+ *	VOP_SYMLINK()
  * Note that there are other restrictions embedded in:
- *	- zfs_create()	- restrict type to VREG
- *	- zfs_link()	- no links into/out of attribute space
- *	- zfs_rename()	- no moves into/out of attribute space
+ *	zfs_create()	- restrict type to VREG
+ *	zfs_link()	- no links into/out of attribute space
+ *	zfs_rename()	- no moves into/out of attribute space
  */
 vnodeops_t *zfs_xdvnodeops;
 const fs_operation_def_t zfs_xdvnodeops_template[] = {
@@ -5544,7 +5531,7 @@ const fs_operation_def_t zfs_xdvnodeops_template[] = {
 	NULL,			NULL
 };
 
-/**
+/*
  * Error vnode operations template
  */
 vnodeops_t *zfs_evnodeops;
@@ -6393,7 +6380,7 @@ zfs_create_attrname(int attrnamespace, const char *name, char *attrname,
 	return (0);
 }
 
-/**
+/*
  * Vnode operating to retrieve a named extended attribute.
  */
 static int
@@ -6529,7 +6516,7 @@ vop_deleteextattr {
 	return (error);
 }
 
-/**
+/*
  * Vnode operation to set a named attribute.
  */
 static int
@@ -6596,7 +6583,7 @@ vop_setextattr {
 	return (error);
 }
 
-/**
+/*
  * Vnode operation to retrieve extended attributes on a vnode.
  */
 static int

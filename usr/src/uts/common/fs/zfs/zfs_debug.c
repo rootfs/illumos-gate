@@ -52,7 +52,7 @@ zfs_dbgmsg_fini(void)
 	ASSERT0(zfs_dbgmsg_size);
 }
 
-/**
+/*
  * Print these messages by running:
  * echo ::zfs_dbgmsg | mdb -k
  *

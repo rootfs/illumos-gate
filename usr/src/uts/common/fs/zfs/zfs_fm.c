@@ -39,16 +39,16 @@
 #include <sys/fm/util.h>
 #include <sys/sysevent.h>
 
-/**
+/*
  * This general routine is responsible for generating all the different ZFS
  * ereports.  The payload is dependent on the class, and which arguments are
  * supplied to the function:
  *
- *	EREPORT			POOL	VDEV	IO
- *	block			X	X	X
- *	data			X		X
- *	device			X	X
- *	pool			X
+ * 	EREPORT			POOL	VDEV	IO
+ * 	block			X	X	X
+ * 	data			X		X
+ * 	device			X	X
+ * 	pool			X
  *
  * If we are in a loading state, all errors are chained together by the same
  * SPA-wide ENA (Error Numeric Association).
@@ -60,18 +60,18 @@
  * layered diagram:
  *
  *      +---------------+
- *	| Aggregate I/O |	No associated logical data or device
- *	+---------------+
+ * 	| Aggregate I/O |	No associated logical data or device
+ * 	+---------------+
  *              |
  *              V
- *	+---------------+	Reads associated with a piece of logical data.
- *	|   Read I/O    |	This includes reads on behalf of RAID-Z,
- *	+---------------+	mirrors, gang blocks, retries, etc.
+ * 	+---------------+	Reads associated with a piece of logical data.
+ * 	|   Read I/O    |	This includes reads on behalf of RAID-Z,
+ * 	+---------------+       mirrors, gang blocks, retries, etc.
  *              |
  *              V
- *	+---------------+	Reads associated with a particular device, but
- *	| Physical I/O  |	no logical data.  Issued as part of vdev caching
- *	+---------------+	and I/O aggregation.
+ * 	+---------------+	Reads associated with a particular device, but
+ * 	| Physical I/O  |	no logical data.  Issued as part of vdev caching
+ * 	+---------------+	and I/O aggregation.
  *
  * Note that 'physical I/O' here is not the same terminology as used in the rest
  * of ZIO.  Typically, 'physical I/O' simply means that there is no attached
@@ -403,7 +403,7 @@ update_histogram(uint64_t value_arg, uint16_t *hist, uint32_t *count)
 	*count += bits;
 }
 
-/**
+/*
  * We've now filled up the range array, and need to increase "mingap" and
  * shrink the range list accordingly.  zei_mingap is always the smallest
  * distance between array entries, so we set the new_allowed_gap to be
@@ -835,7 +835,7 @@ zfs_post_common(spa_t *spa, vdev_t *vd, const char *name)
 #endif
 }
 
-/**
+/*
  * The 'resource.fs.zfs.removed' event is an internal signal that the given vdev
  * has been removed from the system.  This will cause the DE to ignore any
  * recent I/O errors, inferring that they are due to the asynchronous device
@@ -847,7 +847,7 @@ zfs_post_remove(spa_t *spa, vdev_t *vd)
 	zfs_post_common(spa, vd, FM_RESOURCE_REMOVED);
 }
 
-/**
+/*
  * The 'resource.fs.zfs.autoreplace' event is an internal signal that the pool
  * has the 'autoreplace' property set, and therefore any broken vdevs will be
  * handled by higher level logic, and no vdev fault should be generated.
@@ -858,7 +858,7 @@ zfs_post_autoreplace(spa_t *spa, vdev_t *vd)
 	zfs_post_common(spa, vd, FM_RESOURCE_AUTOREPLACE);
 }
 
-/**
+/*
  * The 'resource.fs.zfs.statechange' event is an internal signal that the
  * given vdev has transitioned its state to DEGRADED or HEALTHY.  This will
  * cause the retire agent to repair any outstanding fault management cases

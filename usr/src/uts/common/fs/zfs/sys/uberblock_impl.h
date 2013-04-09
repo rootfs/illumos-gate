@@ -31,29 +31,28 @@
 extern "C" {
 #endif
 
-#define	UBERBLOCK_MAGIC		0x00bab10c		/**< oo-ba-bloc!*/
-#define	UBERBLOCK_SHIFT		10			/**< up to 1K	*/
-
-/**
+/*
  * The uberblock version is incremented whenever an incompatible on-disk
  * format change is made to the SPA, DMU, or ZAP.
  *
- * \note  The first two fields should never be moved.  When a storage
- *	  pool is opened, the uberblock must be read off the disk before
- *	  the version can be checked.  If the ub_version field is moved,
- * 	  we may not detect version mismatch.  If the ub_magic field is
- *	  moved, applications that expect the magic number in the first
- *	  word won't work.
+ * Note: the first two fields should never be moved.  When a storage pool
+ * is opened, the uberblock must be read off the disk before the version
+ * can be checked.  If the ub_version field is moved, we may not detect
+ * version mismatch.  If the ub_magic field is moved, applications that
+ * expect the magic number in the first word won't work.
  */
-struct uberblock {
-	uint64_t	ub_magic;	/**< UBERBLOCK_MAGIC		*/
-	uint64_t	ub_version;	/**< SPA_VERSION		*/
-	uint64_t	ub_txg;		/**< txg of last sync		*/
-	uint64_t	ub_guid_sum;	/**< sum of all vdev guids	*/
-	uint64_t	ub_timestamp;	/**< UTC time of last sync	*/
-	blkptr_t	ub_rootbp;	/**< MOS objset_phys_t		*/
+#define	UBERBLOCK_MAGIC		0x00bab10c		/* oo-ba-bloc!	*/
+#define	UBERBLOCK_SHIFT		10			/* up to 1K	*/
 
-	/** highest SPA_VERSION supported by software that wrote this txg */
+struct uberblock {
+	uint64_t	ub_magic;	/* UBERBLOCK_MAGIC		*/
+	uint64_t	ub_version;	/* SPA_VERSION			*/
+	uint64_t	ub_txg;		/* txg of last sync		*/
+	uint64_t	ub_guid_sum;	/* sum of all vdev guids	*/
+	uint64_t	ub_timestamp;	/* UTC time of last sync	*/
+	blkptr_t	ub_rootbp;	/* MOS objset_phys_t		*/
+
+	/* highest SPA_VERSION supported by software that wrote this txg */
 	uint64_t	ub_software_version;
 };
 

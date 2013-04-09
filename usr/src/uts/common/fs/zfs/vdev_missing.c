@@ -27,10 +27,7 @@
  * Copyright (c) 2012 by Delphix. All rights reserved.
  */
 
-/**
- * \file vdev_missing.c
- * Routines for handling the special "missing" vdev
- *
+/*
  * The 'missing' vdev is a special vdev type used only during import.  It
  * signifies a placeholder in the root vdev for some vdev that we know is
  * missing.  We pass it down to the kernel to allow the rest of the

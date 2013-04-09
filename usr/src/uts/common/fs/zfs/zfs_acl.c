@@ -319,15 +319,12 @@ static acl_ops_t zfs_acl_fuid_ops = {
 	zfs_ace_fuid_data
 };
 
-/**
- * \name External ACL (Old ZPL Version) Compatibility
- *
- * Provided for compatibility with older ZPL versions in order to determine if
- * the file used to have an external ACL and what version of ACL previously
- * existed on the file.  Would really be nice to not need this, sigh.
- * \{
+/*
+ * The following three functions are provided for compatibility with
+ * older ZPL version in order to determine if the file use to have
+ * an external ACL and what version of ACL previously existed on the
+ * file.  Would really be nice to not need this, sigh.
  */
-
 uint64_t
 zfs_external_acl(znode_t *zp)
 {
@@ -359,7 +356,7 @@ zfs_external_acl(znode_t *zp)
 	}
 }
 
-/**
+/*
  * Determine size of ACL in bytes
  *
  * This is more complicated than it should be since we have to deal
@@ -432,7 +429,6 @@ zfs_znode_acl_version(znode_t *zp)
 		}
 	}
 }
-/** \} */
 
 static int
 zfs_acl_version(int version)
@@ -651,7 +647,7 @@ zfs_acl_curr_node(zfs_acl_t *aclp)
 	return (aclp->z_curr_node);
 }
 
-/**
+/*
  * Copy ACE to internal ZFS format.
  *
  * While processing the ACL each ACE will be validated for correctness.
@@ -775,7 +771,7 @@ zfs_freebsd_sid_ace_from_ace(zfsvfs_t *zfsvfs, struct sid_acl_entry **pentry,
 	return (0);
 }
 
-/**
+/*
  * Copy internal ZFS formated ACL into FreeBSD SID format.
  */
 static int
@@ -908,7 +904,7 @@ zfs_freebsd_copy_sidace_2_fuid(zfsvfs_t *zfsvfs, vtype_t obj_type,
 	return (0);
 }
 
-/**
+/*
  * Copy FreeBSD ACLs to internal ZFS format.
  *
  * While processing an ACL each ACE will be validated for correctness.
@@ -995,7 +991,7 @@ zfs_freebsd_sidacls_to_aclp(zfsvfs_t *zfsvfs, vtype_t obj_type,
 	return (0);
 }
 
-/**
+/*
  * Copy ZFS ACEs to fixed size ace_t layout
  */
 static void
@@ -1078,8 +1074,8 @@ zfs_copy_ace_2_oldace(vtype_t obj_type, zfs_acl_t *aclp, ace_t *acep,
 	return (0);
 }
 
-/**
- * Convert old ACL format to new
+/*
+ * convert old ACL format to new
  */
 void
 zfs_acl_xform(znode_t *zp, zfs_acl_t *aclp, cred_t *cr)
@@ -1134,7 +1130,7 @@ zfs_acl_xform(znode_t *zp, zfs_acl_t *aclp, cred_t *cr)
 
 }
 
-/**
+/*
  * Convert unix access mask to v4 access mask
  */
 static uint32_t
@@ -1165,7 +1161,7 @@ zfs_set_ace(zfs_acl_t *aclp, void *acep, uint32_t access_mask,
 		aclp->z_ops.ace_who_set(acep, fuid);
 }
 
-/**
+/*
  * Determine mode of file based on ACL.
  * Also, create FUIDs for any User/Group ACEs
  */
@@ -1336,7 +1332,7 @@ zfs_mode_compute(uint64_t fmode, zfs_acl_t *aclp,
 	return (mode);
 }
 
-/**
+/*
  * Read an external acl object.  If the intent is to modify, always
  * create a new acl and leave any cached acl in place.
  */
@@ -1453,8 +1449,8 @@ zfs_acl_chown_setattr(znode_t *zp)
 	return (error);
 }
 
-/**
- * Common code for setting ACLs.
+/*
+ * common code for setting ACLs.
  *
  * This function is called from zfs_mode_update, zfs_perm_init, and zfs_setacl.
  * zfs_setacl passes a non-NULL inherit pointer (ihp) to indicate that it's
@@ -1745,8 +1741,8 @@ zfs_acl_chmod_setattr(znode_t *zp, zfs_acl_t **aclp, uint64_t mode)
 	return (error);
 }
 
-/**
- * Strip off write_owner and write_acl
+/*
+ * strip off write_owner and write_acl
  */
 static void
 zfs_restricted_update(zfsvfs_t *zfsvfs, zfs_acl_t *aclp, void *acep)
@@ -1760,7 +1756,7 @@ zfs_restricted_update(zfsvfs_t *zfsvfs, zfs_acl_t *aclp, void *acep)
 	}
 }
 
-/**
+/*
  * Should ACE be inherited?
  */
 static int
@@ -1776,8 +1772,8 @@ zfs_ace_can_use(vtype_t vtype, uint16_t acep_flags)
 	return (0);
 }
 
-/**
- * Inherit inheritable ACEs from parent
+/*
+ * inherit inheritable ACEs from parent
  */
 static zfs_acl_t *
 zfs_acl_inherit(zfsvfs_t *zfsvfs, vtype_t vtype, zfs_acl_t *paclp,
@@ -1895,7 +1891,7 @@ zfs_acl_inherit(zfsvfs_t *zfsvfs, vtype_t vtype, zfs_acl_t *paclp,
 	return (aclp);
 }
 
-/**
+/*
  * Create file system object initial permissions
  * including inheritable ACEs.
  */
@@ -2046,7 +2042,7 @@ zfs_acl_ids_create(znode_t *dzp, int flag, vattr_t *vap, cred_t *cr,
 	return (0);
 }
 
-/**
+/*
  * Free ACL and fuid_infop, but not the acl_ids structure
  */
 void
@@ -2067,7 +2063,7 @@ zfs_acl_ids_overquota(zfsvfs_t *zfsvfs, zfs_acl_ids_t *acl_ids)
 	    zfs_fuid_overquota(zfsvfs, B_TRUE, acl_ids->z_fgid));
 }
 
-/**
+/*
  * Retrieve a files ACL
  */
 int
@@ -2224,7 +2220,7 @@ zfs_vsec_2_aclp(zfsvfs_t *zfsvfs, vtype_t obj_type,
 	return (0);
 }
 
-/**
+/*
  * Set a file's ACL
  */
 int
@@ -2329,12 +2325,10 @@ done:
 	return (error);
 }
 
-/**
+/*
  * Check accesses of interest (AoI) against attributes of the dataset
- * such as read-only.
- *
- * \return   zero if no AoI conflict with dataset attributes,
- *           otherwise an appropriate errno is returned.
+ * such as read-only.  Returns zero if no AoI conflict with dataset
+ * attributes, otherwise an appropriate errno is returned.
  */
 static int
 zfs_zaccess_dataset_check(znode_t *zp, uint32_t v4_mode)
@@ -2382,7 +2376,7 @@ zfs_zaccess_dataset_check(znode_t *zp, uint32_t v4_mode)
 	return (0);
 }
 
-/**
+/*
  * The primary usage of this function is to loop through all of the
  * ACEs in the znode, determining what accesses of interest (AoI) to
  * the caller are allowed or denied.  The AoI are expressed as bits in
@@ -2526,7 +2520,7 @@ zfs_zaccess_aces_check(znode_t *zp, uint32_t *working_mode,
 	return (0);
 }
 
-/**
+/*
  * Return true if any access whatsoever granted, we don't actually
  * care what access is granted.
  */
@@ -2658,7 +2652,7 @@ slow:
 	return (error);
 }
 
-/**
+/*
  * Determine whether Access should be granted/denied.
  *
  * The least priv subsytem is always consulted as a basic privilege
@@ -2823,7 +2817,7 @@ zfs_zaccess(znode_t *zp, int mode, int flags, boolean_t skipaclchk, cred_t *cr)
 	return (error);
 }
 
-/**
+/*
  * Translate traditional unix VREAD/VWRITE/VEXEC mode into
  * native ACL format and call zfs_zaccess()
  */
@@ -2833,7 +2827,7 @@ zfs_zaccess_rwx(znode_t *zp, mode_t mode, int flags, cred_t *cr)
 	return (zfs_zaccess(zp, zfs_unix_to_v4(mode >> 6), flags, B_FALSE, cr));
 }
 
-/**
+/*
  * Access function for secpolicy_vnode_setattr
  */
 int
@@ -2862,44 +2856,41 @@ zfs_delete_final_check(znode_t *zp, znode_t *dzp,
 	return (error);
 }
 
-/**
+/*
  * Determine whether Access should be granted/deny, without
  * consulting least priv subsystem.
- *
  *
  * The following chart is the recommended NFSv4 enforcement for
  * ability to delete an object.
  *
- * \verbatim
-        -------------------------------------------------------
-        |   Parent Dir  |           Target Object Permissions |
-        |  permissions  |                                     |
-        -------------------------------------------------------
-        |               | ACL Allows | ACL Denies| Delete     |
-        |               |  Delete    |  Delete   | unspecified|
-        -------------------------------------------------------
-        |  ACL Allows   | Permit     | Permit    | Permit     |
-        |  DELETE_CHILD |                                     |
-        -------------------------------------------------------
-        |  ACL Denies   | Permit     | Deny      | Deny       |
-        |  DELETE_CHILD |            |           |            |
-        -------------------------------------------------------
-        | ACL specifies |            |           |            |
-        | only allow    | Permit     | Permit    | Permit     |
-        | write and     |            |           |            |
-        | execute       |            |           |            |
-        -------------------------------------------------------
-        | ACL denies    |            |           |            |
-        | write and     | Permit     | Deny      | Deny       |
-        | execute       |            |           |            |
-        -------------------------------------------------------
-           ^
-           |
-           No search privilege, can't even look up file?
-   \endverbatim
+ *      -------------------------------------------------------
+ *      |   Parent Dir  |           Target Object Permissions |
+ *      |  permissions  |                                     |
+ *      -------------------------------------------------------
+ *      |               | ACL Allows | ACL Denies| Delete     |
+ *      |               |  Delete    |  Delete   | unspecified|
+ *      -------------------------------------------------------
+ *      |  ACL Allows   | Permit     | Permit    | Permit     |
+ *      |  DELETE_CHILD |                                     |
+ *      -------------------------------------------------------
+ *      |  ACL Denies   | Permit     | Deny      | Deny       |
+ *      |  DELETE_CHILD |            |           |            |
+ *      -------------------------------------------------------
+ *      | ACL specifies |            |           |            |
+ *      | only allow    | Permit     | Permit    | Permit     |
+ *      | write and     |            |           |            |
+ *      | execute       |            |           |            |
+ *      -------------------------------------------------------
+ *      | ACL denies    |            |           |            |
+ *      | write and     | Permit     | Deny      | Deny       |
+ *      | execute       |            |           |            |
+ *      -------------------------------------------------------
+ *         ^
+ *         |
+ *         No search privilege, can't even look up file?
  *
- * \note  If the parent dir's ACL denies write and execute permissions,
- *        then it may be impossible to even lookup the file
+ * NOTE: If the parent dir's ACL denies write and execute permissions,
+ *       then it may be impossible to even lookup the file.
  */
 int
 zfs_zaccess_delete(znode_t *dzp, znode_t *zp, cred_t *cr)
@@ -3036,7 +3027,7 @@ zfs_zaccess_rename(znode_t *sdzp, znode_t *szp, znode_t *tdzp,
 	return (error);
 }
 
-/**
+/*
  * Retrieve a file's ACL in SID format.
  */
 int

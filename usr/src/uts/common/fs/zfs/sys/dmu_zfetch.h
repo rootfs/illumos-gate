@@ -34,31 +34,31 @@ extern "C" {
 
 extern uint64_t	zfetch_array_rd_sz;
 
-struct dnode;				/**< so we can reference dnode */
+struct dnode;				/* so we can reference dnode */
 
 typedef enum zfetch_dirn {
-	ZFETCH_FORWARD = 1,		/**< prefetch increasing block numbers */
-	ZFETCH_BACKWARD	= -1		/**< prefetch decreasing block numbers */
+	ZFETCH_FORWARD = 1,		/* prefetch increasing block numbers */
+	ZFETCH_BACKWARD	= -1		/* prefetch decreasing block numbers */
 } zfetch_dirn_t;
 
 typedef struct zstream {
-	uint64_t	zst_offset;	/**< offset of starting block in range */
-	uint64_t	zst_len;	/**< length of range, in blocks */
-	zfetch_dirn_t	zst_direction;	/**< direction of prefetch */
-	uint64_t	zst_stride;	/**< length of stride, in blocks */
-	uint64_t	zst_ph_offset;	/**< prefetch offset, in blocks */
-	uint64_t	zst_cap;	/**< prefetch limit (cap), in blocks */
-	kmutex_t	zst_lock;	/**< protects stream */
-	clock_t		zst_last;	/**< lbolt of last prefetch */
-	avl_node_t	zst_node;	/**< embed avl node here */
+	uint64_t	zst_offset;	/* offset of starting block in range */
+	uint64_t	zst_len;	/* length of range, in blocks */
+	zfetch_dirn_t	zst_direction;	/* direction of prefetch */
+	uint64_t	zst_stride;	/* length of stride, in blocks */
+	uint64_t	zst_ph_offset;	/* prefetch offset, in blocks */
+	uint64_t	zst_cap;	/* prefetch limit (cap), in blocks */
+	kmutex_t	zst_lock;	/* protects stream */
+	clock_t		zst_last;	/* lbolt of last prefetch */
+	avl_node_t	zst_node;	/* embed avl node here */
 } zstream_t;
 
 typedef struct zfetch {
-	krwlock_t	zf_rwlock;	/**< protects zfetch structure */
-	list_t		zf_stream;	/**< AVL tree of zstream_t's */
-	struct dnode	*zf_dnode;	/**< dnode that owns this zfetch */
-	uint32_t	zf_stream_cnt;	/**< # of active streams */
-	uint64_t	zf_alloc_fail;	/**< # of failed attempts to alloc strm */
+	krwlock_t	zf_rwlock;	/* protects zfetch structure */
+	list_t		zf_stream;	/* AVL tree of zstream_t's */
+	struct dnode	*zf_dnode;	/* dnode that owns this zfetch */
+	uint32_t	zf_stream_cnt;	/* # of active streams */
+	uint64_t	zf_alloc_fail;	/* # of failed attempts to alloc strm */
 } zfetch_t;
 
 void		zfetch_init(void);

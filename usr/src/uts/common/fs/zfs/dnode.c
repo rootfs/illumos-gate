@@ -40,7 +40,7 @@
 static int free_range_compar(const void *node1, const void *node2);
 
 static kmem_cache_t *dnode_cache;
-/**
+/*
  * Define DNODE_STATS to turn on statistic gathering. By default, it is only
  * turned on when DEBUG is also defined.
  */
@@ -430,7 +430,7 @@ dnode_create(objset_t *os, dnode_phys_t *dnp, dmu_buf_impl_t *db,
 	return (dn);
 }
 
-/**
+/*
  * Caller must be holding the dnode handle, which is released upon return.
  */
 static void
@@ -994,13 +994,14 @@ dnode_buf_pageout(dmu_buf_user_t *dbu)
 	    (children_dnodes->dnc_count - 1) * sizeof (dnode_handle_t));
 }
 
-/**
+/*
  * Succeeds even for free dnodes.
- * 
- * \retval 0       Success
- * \retval EINVAL  invalid object number
- * \retval EIO	   I/O error
- * \retval other   Other errors
+ *
+ * returns:
+ * 0 - success.
+ * EINVAL - invalid object number.
+ * EIO - i/o error.
+ * others: other errors.
  */
 int
 dnode_hold_impl(objset_t *os, uint64_t object, int flag,
@@ -1139,8 +1140,8 @@ dnode_hold_impl(objset_t *os, uint64_t object, int flag,
 	return (0);
 }
 
-/**
- * \return  held dnode if the object is allocated, NULL if not.
+/*
+ * Return held dnode if the object is allocated, NULL if not.
  */
 int
 dnode_hold(objset_t *os, uint64_t object, void *tag, dnode_t **dnp)
@@ -1148,11 +1149,10 @@ dnode_hold(objset_t *os, uint64_t object, void *tag, dnode_t **dnp)
 	return (dnode_hold_impl(os, object, DNODE_MUST_BE_ALLOCATED, tag, dnp));
 }
 
-/**
+/*
  * Can only add a reference if there is already at least one
- * reference on the dnode.
- *
- * \return  FALSE if unable to add a new reference, TRUE otherwise
+ * reference on the dnode.  Returns FALSE if unable to add a
+ * new reference, TRUE otherwise.
  */
 boolean_t
 dnode_add_ref(dnode_t *dn, void *tag)
@@ -1307,7 +1307,7 @@ dnode_free(dnode_t *dn, dmu_tx_t *tx)
 	}
 }
 
-/**
+/*
  * Try to change the block size for the indicated dnode.  This can only
  * succeed if there are no blocks allocated or dirty beyond first block
  */
@@ -1377,7 +1377,7 @@ fail:
 	return (ENOTSUP);
 }
 
-/** read-holding callers must not rely on the lock being continuously held */
+/* read-holding callers must not rely on the lock being continuously held */
 void
 dnode_new_blkid(dnode_t *dn, uint64_t blkid, dmu_tx_t *tx, boolean_t have_read)
 {
@@ -1460,12 +1460,9 @@ out:
 		rw_downgrade(&dn->dn_struct_rwlock);
 }
 
-/**
- * Mark a dnode as dirty if it is not already.
- *
- * \param dn	Dnode to mark dirty.
- * \param tx	Transaction the dnode is being dirtied in.
- * \param tag	Tag to track the first dirty of this dnode.
+/*
+ * Mark a dnode as dirty if it is not already, using the tag to track the
+ * first dirty of the dnode.
  */
 void
 dnode_set_dirtyctx(dnode_t *dn, dmu_tx_t *tx, void *tag)
@@ -1741,10 +1738,7 @@ dnode_spill_freed(dnode_t *dn)
 	return (i < TXG_SIZE);
 }
 
-/**
- * \retval TRUE   This blkid was freed in a recent txg
- * \retval FALSE  This blkid was not freed in a recent txg
- */
+/* return TRUE if this blkid was freed in a recent txg, or FALSE if it wasn't */
 uint64_t
 dnode_block_freed(dnode_t *dn, uint64_t blkid)
 {
@@ -1788,9 +1782,7 @@ dnode_block_freed(dnode_t *dn, uint64_t blkid)
 	return (i < TXG_SIZE);
 }
 
-/**
- * call from syncing context when we actually write/free space for this dnode
- */
+/* call from syncing context when we actually write/free space for this dnode */
 void
 dnode_diduse_space(dnode_t *dn, int64_t delta)
 {
@@ -1819,7 +1811,7 @@ dnode_diduse_space(dnode_t *dn, int64_t delta)
 	mutex_exit(&dn->dn_mtx);
 }
 
-/**
+/*
  * Call when we think we're going to write/free space in open context.
  * Be conservative (ie. OK to write less than this or free more than
  * this, but don't write more or free less).
@@ -1839,16 +1831,17 @@ dnode_willuse_space(dnode_t *dn, int64_t space, dmu_tx_t *tx)
 	dmu_tx_willuse_space(tx, space);
 }
 
-/**
+/*
  * Scans a block at the indicated "level" looking for
  * a hole or data (depending on 'flags').
  *
  * If level > 0, then we are scanning an indirect block looking at its
  * pointers.  If level == 0, then we are looking at a block of dnodes.
- * If we don't find what we are looking for in the block, we return
- * ESRCH.  Otherwise, return with *offset pointing to the beginning
- * (if searching forwards) or end (if searching backwards) of the range
- * covered by the block pointer we matched on (or dnode).
+ *
+ * If we don't find what we are looking for in the block, we return ESRCH.
+ * Otherwise, return with *offset pointing to the beginning (if searching
+ * forwards) or end (if searching backwards) of the range covered by the
+ * block pointer we matched on (or dnode).
  *
  * The basic search algorithm used below by dnode_next_offset() is to
  * use this function to search up the block tree (widen the search) until
@@ -1965,7 +1958,7 @@ dnode_next_offset_level(dnode_t *dn, int flags, uint64_t *offset,
 	return (error);
 }
 
-/**
+/*
  * Find the next hole, data, or sparse region at or after *offset.
  * The value 'blkfill' tells us how many items we expect to find
  * in an L0 data block; this value is 1 for normal objects,

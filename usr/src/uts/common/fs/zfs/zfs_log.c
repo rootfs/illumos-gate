@@ -43,8 +43,7 @@
 #include <sys/zfs_fuid.h>
 #include <sys/dsl_dataset.h>
 
-/**
- * \file zfs_log.c
+/*
  * Routines to manage intent log entries
  *
  * These zfs_log_* functions must be called within a dmu tx, in one
@@ -104,7 +103,7 @@ zfs_log_create_txtype(zil_create_t type, vsecattr_t *vsecp, vattr_t *vap)
 	return (TX_MAX_TYPE);
 }
 
-/**
+/*
  * build up the log data necessary for logging xvattr_t
  * First lr_attr_t is initialized.  following the lr_attr_t
  * is the mapsize and attribute bitmap copied from the xvattr_t.
@@ -218,7 +217,7 @@ zfs_log_fuid_domains(zfs_fuid_info_t *fuidp, void *start)
 	return (start);
 }
 
-/**
+/*
  * Handles TX_CREATE, TX_CREATE_ATTR, TX_MKDIR, TX_MKDIR_ATTR and 
  * TX_MKXATTR transactions.
  *
@@ -347,7 +346,7 @@ zfs_log_create(zilog_t *zilog, dmu_tx_t *tx, uint64_t txtype,
 	zil_itx_assign(zilog, itx, tx);
 }
 
-/**
+/*
  * handles both TX_REMOVE and TX_RMDIR transactions.
  */
 void
@@ -371,7 +370,7 @@ zfs_log_remove(zilog_t *zilog, dmu_tx_t *tx, uint64_t txtype,
 	zil_itx_assign(zilog, itx, tx);
 }
 
-/**
+/*
  * handles TX_LINK transactions.
  */
 void
@@ -394,7 +393,7 @@ zfs_log_link(zilog_t *zilog, dmu_tx_t *tx, uint64_t txtype,
 	zil_itx_assign(zilog, itx, tx);
 }
 
-/**
+/*
  * handles TX_SYMLINK transactions.
  */
 void
@@ -426,7 +425,7 @@ zfs_log_symlink(zilog_t *zilog, dmu_tx_t *tx, uint64_t txtype,
 	zil_itx_assign(zilog, itx, tx);
 }
 
-/**
+/*
  * handles TX_RENAME transactions.
  */
 void
@@ -452,7 +451,7 @@ zfs_log_rename(zilog_t *zilog, dmu_tx_t *tx, uint64_t txtype,
 	zil_itx_assign(zilog, itx, tx);
 }
 
-/**
+/*
  * handles TX_WRITE transactions.
  */
 ssize_t zfs_immediate_write_sz = 32768;
@@ -531,7 +530,7 @@ zfs_log_write(zilog_t *zilog, dmu_tx_t *tx, int txtype,
 	}
 }
 
-/**
+/*
  * handles TX_TRUNCATE transactions.
  */
 void
@@ -554,7 +553,7 @@ zfs_log_truncate(zilog_t *zilog, dmu_tx_t *tx, int txtype,
 	zil_itx_assign(zilog, itx, tx);
 }
 
-/**
+/*
  * handles TX_SETATTR transactions.
  */
 void
@@ -616,7 +615,7 @@ zfs_log_setattr(zilog_t *zilog, dmu_tx_t *tx, int txtype,
 	zil_itx_assign(zilog, itx, tx);
 }
 
-/**
+/*
  * handles TX_SETATTR transactions caused by security descriptor based updates.
  */
 void
@@ -666,7 +665,7 @@ zfs_log_sd_setattr(zilog_t *zilog, dmu_tx_t *tx, int txtype,
 	zil_itx_assign(zilog, itx, tx);
 }
 
-/**
+/*
  * handles TX_ACL transactions.
  */
 void

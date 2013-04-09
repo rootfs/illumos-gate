@@ -41,10 +41,9 @@
 extern "C" {
 #endif
 
-/**
- * \name Additional file level attributes
- * Stored in the upper half of zp_flags
- * \{
+/*
+ * Additional file level attributes, that are stored
+ * in the upper half of zp_flags
  */
 #define	ZFS_READONLY		0x0000000100000000
 #define	ZFS_HIDDEN		0x0000000200000000
@@ -60,7 +59,6 @@ extern "C" {
 #define	ZFS_REPARSE		0x0000080000000000
 #define	ZFS_OFFLINE		0x0000100000000000
 #define	ZFS_SPARSE		0x0000200000000000
-/** \} */
 
 #define	ZFS_ATTR_SET(zp, attr, value, pflags, tx) \
 { \
@@ -72,20 +70,18 @@ extern "C" {
 	    &pflags, sizeof (pflags), tx)); \
 }
 
-/**
- * \name Special zfs pflags
- * \{
+/*
+ * Define special zfs pflags
  */
-#define	ZFS_XATTR		0x1	/**< is an extended attribute */
-#define	ZFS_INHERIT_ACE		0x2	/**< ace has inheritable ACEs */
-#define	ZFS_ACL_TRIVIAL 	0x4	/**< files ACL is trivial */
-#define	ZFS_ACL_OBJ_ACE 	0x8	/**< ACL has CMPLX Object ACE */
-#define	ZFS_ACL_PROTECTED	0x10	/**< ACL protected */
-#define	ZFS_ACL_DEFAULTED	0x20	/**< ACL should be defaulted */
-#define	ZFS_ACL_AUTO_INHERIT	0x40	/**< ACL should be inherited */
-#define	ZFS_BONUS_SCANSTAMP	0x80	/**< Scanstamp in bonus area */
-#define	ZFS_NO_EXECS_DENIED	0x100	/**< exec was given to everyone */
-/* \} */
+#define	ZFS_XATTR		0x1		/* is an extended attribute */
+#define	ZFS_INHERIT_ACE		0x2		/* ace has inheritable ACEs */
+#define	ZFS_ACL_TRIVIAL 	0x4		/* files ACL is trivial */
+#define	ZFS_ACL_OBJ_ACE 	0x8		/* ACL has CMPLX Object ACE */
+#define	ZFS_ACL_PROTECTED	0x10		/* ACL protected */
+#define	ZFS_ACL_DEFAULTED	0x20		/* ACL should be defaulted */
+#define	ZFS_ACL_AUTO_INHERIT	0x40		/* ACL should be inherited */
+#define	ZFS_BONUS_SCANSTAMP	0x80		/* Scanstamp in bonus area */
+#define	ZFS_NO_EXECS_DENIED	0x100		/* exec was given to everyone */
 
 #define	SA_ZPL_ATIME(z)		z->z_attr_table[ZPL_ATIME]
 #define	SA_ZPL_MTIME(z)		z->z_attr_table[ZPL_MTIME]
@@ -108,12 +104,12 @@ extern "C" {
 #define	SA_ZPL_ZNODE_ACL(z)	z->z_attr_table[ZPL_ZNODE_ACL]
 #define	SA_ZPL_PAD(z)		z->z_attr_table[ZPL_PAD]
 
-/**
+/*
  * Is ID ephemeral?
  */
 #define	IS_EPHEMERAL(x)		(x > MAXUID)
 
-/**
+/*
  * Should we use FUIDs?
  */
 #define	USE_FUIDS(version, os)	(version >= ZPL_VERSION_FUID && \
@@ -123,11 +119,10 @@ extern "C" {
 
 #define	MASTER_NODE_OBJ	1
 
-/**
- * \name Special attributes for master node.
+/*
+ * Special attributes for master node.
  * "userquota@" and "groupquota@" are also valid (from
  * zfs_userquota_prop_prefixes[]).
- * \{ 
  */
 #define	ZFS_FSID		"FSID"
 #define	ZFS_UNLINKED_SET	"DELETE_QUEUE"
@@ -136,10 +131,10 @@ extern "C" {
 #define	ZFS_FUID_TABLES		"FUID"
 #define	ZFS_SHARES_DIR		"SHARES"
 #define	ZFS_SA_ATTRS		"SA_ATTRS"
-/** \} */
+
 #define	ZFS_MAX_BLOCKSIZE	(SPA_MAXBLOCKSIZE)
 
-/**
+/*
  * Path component length 
  *
  * The generic fs code uses MAXNAMELEN to represent
@@ -150,7 +145,7 @@ extern "C" {
  */
 #define	ZFS_MAXNAMELEN	(MAXNAMELEN - 1)
 
-/**
+/*
  * Convert mode bits (zp_mode) to BSD-style DT_* values for storing in
  * the directory entries.
  */
@@ -158,34 +153,28 @@ extern "C" {
 #define	IFTODT(mode) (((mode) & S_IFMT) >> 12)
 #endif
 
-/**
- * \name Directory Entries
- *
+/*
  * The directory entry has the type (currently unused on Solaris) in the
  * top 4 bits, and the object number in the low 48 bits.  The "middle"
  * 12 bits are unused.
- * /{
  */
 #define	ZFS_DIRENT_TYPE(de) BF64_GET(de, 60, 4)
 #define	ZFS_DIRENT_OBJ(de) BF64_GET(de, 0, 48)
-/** \} */
 
 #ifdef _KERNEL
-/**
- * Directory Entry Locks
- *
+/*
  * Directory entry locks control access to directory entries.
  * They are used to protect creates, deletes, and renames.
  * Each directory znode has a mutex and a list of locked names.
  */
 typedef struct zfs_dirlock {
-	char		*dl_name;	/**< directory entry being locked */
-	uint32_t	dl_sharecnt;	/**< 0 if exclusive, > 0 if shared */
-	uint8_t		dl_namelock;	/**< 1 if z_name_lock is NOT held */
-	uint16_t	dl_namesize;	/**< set if dl_name was allocated */
-	kcondvar_t	dl_cv;		/**< wait for entry to be unlocked */
-	struct znode	*dl_dzp;	/**< directory znode */
-	struct zfs_dirlock *dl_next;	/**< next in z_dirlocks list */
+	char		*dl_name;	/* directory entry being locked */
+	uint32_t	dl_sharecnt;	/* 0 if exclusive, > 0 if shared */
+	uint8_t		dl_namelock;	/* 1 if z_name_lock is NOT held */
+	uint16_t	dl_namesize;	/* set if dl_name was allocated */
+	kcondvar_t	dl_cv;		/* wait for entry to be unlocked */
+	struct znode	*dl_dzp;	/* directory znode */
+	struct zfs_dirlock *dl_next;	/* next in z_dirlocks list */
 } zfs_dirlock_t;
 
 typedef struct znode {
@@ -223,19 +212,18 @@ typedef struct znode {
 
 #define	z_reclaim_td z_task.ta_context
 
-/**
- * \file zfs_znode.h
- *
- * <H2>Range locking rules</H2>
- * -# When truncating a file (zfs_create, zfs_setattr, zfs_space) the whole
+/*
+ * Range locking rules
+ * --------------------
+ * 1. When truncating a file (zfs_create, zfs_setattr, zfs_space) the whole
  *    file range needs to be locked as RL_WRITER. Only then can the pages be
  *    freed etc and zp_size reset. zp_size must be set within range lock.
- * -# For writes and punching holes (zfs_write & zfs_space) just the range
+ * 2. For writes and punching holes (zfs_write & zfs_space) just the range
  *    being written or freed needs to be locked as RL_WRITER.
  *    Multiple writes at the end of the file must coordinate zp_size updates
  *    to ensure data isn't lost. A compare and swap loop is currently used
  *    to ensure the file size is at least the offset last written.
- * -# For reads (zfs_read, zfs_get_data & zfs_putapage) just the range being
+ * 3. For reads (zfs_read, zfs_get_data & zfs_putapage) just the range being
  *    read needs to be locked as RL_READER. A check against zp_size can then
  *    be made for reading beyond end of file.
  */
@@ -265,7 +253,7 @@ VTOZ(vnode_t *vp)
 #define	VTOZ(VP)	((znode_t *)(VP)->v_data)
 #endif
 
-/** Called on entry to each ZFS vnode and vfs operation  */
+/* Called on entry to each ZFS vnode and vfs operation  */
 #define	ZFS_ENTER(zfsvfs) \
 	{ \
 		rrw_enter(&(zfsvfs)->z_teardown_lock, RW_READER, FTAG); \
@@ -275,23 +263,22 @@ VTOZ(vnode_t *vp)
 		} \
 	}
 
-/** Called when we can't return EIO. */
+/* Called when we can't return EIO. */
 #define	ZFS_ENTER_NOERROR(zfsvfs) \
 	rrw_enter(&(zfsvfs)->z_teardown_lock, RW_READER, FTAG)
 
-/** Must be called before exitting the vop */
+/* Must be called before exitting the vop */
 #define	ZFS_EXIT(zfsvfs) rrw_exit(&(zfsvfs)->z_teardown_lock, FTAG)
 
-/** Verifies the znode is valid */
+/* Verifies the znode is valid */
 #define	ZFS_VERIFY_ZP(zp) \
 	if ((zp)->z_sa_hdl == NULL) { \
 		ZFS_EXIT((zp)->z_zfsvfs); \
 		return (EIO); \
 	} \
 
-/**
- * \name Macros for dealing with dmu_buf_hold
- * \{
+/*
+ * Macros for dealing with dmu_buf_hold
  */
 #define	ZFS_OBJ_HASH(obj_num)	((obj_num) & (ZFS_OBJ_MTX_SZ - 1))
 #define	ZFS_OBJ_MUTEX(zfsvfs, obj_num)	\
@@ -302,34 +289,27 @@ VTOZ(vnode_t *vp)
 	mutex_tryenter(ZFS_OBJ_MUTEX((zfsvfs), (obj_num)))
 #define	ZFS_OBJ_HOLD_EXIT(zfsvfs, obj_num) \
 	mutex_exit(ZFS_OBJ_MUTEX((zfsvfs), (obj_num)))
-/** \} */
 
-/**
- * Encode ZFS stored time value from a struct timespec 
- */
+/* Encode ZFS stored time value from a struct timespec */
 #define	ZFS_TIME_ENCODE(tp, stmp)		\
 {						\
 	(stmp)[0] = (uint64_t)(tp)->tv_sec;	\
 	(stmp)[1] = (uint64_t)(tp)->tv_nsec;	\
 }
 
-/**
- * Decode ZFS stored time value to a struct timespec 
- */
+/* Decode ZFS stored time value to a struct timespec */
 #define	ZFS_TIME_DECODE(tp, stmp)		\
 {						\
 	(tp)->tv_sec = (time_t)(stmp)[0];		\
 	(tp)->tv_nsec = (long)(stmp)[1];		\
 }
 
-/**
- * \name Timestamp defines
- * \{
+/*
+ * Timestamp defines
  */
 #define	ACCESSED		(AT_ATIME)
 #define	STATE_CHANGED		(AT_CTIME)
 #define	CONTENT_MODIFIED	(AT_MTIME | AT_CTIME)
-/** \} */
 
 #define	ZFS_ACCESSTIME_STAMP(zfsvfs, zp) \
 	if ((zfsvfs)->z_atime && !((zfsvfs)->z_vfs->vfs_flag & VFS_RDONLY)) \
@@ -364,7 +344,7 @@ extern int zfs_log_create_txtype(zil_create_t, vsecattr_t *vsecp,
     vattr_t *vap);
 extern void zfs_log_remove(zilog_t *zilog, dmu_tx_t *tx, uint64_t txtype,
     znode_t *dzp, char *name, uint64_t foid);
-#define	ZFS_NO_OBJECT	0	/**< no object id */
+#define	ZFS_NO_OBJECT	0	/* no object id */
 extern void zfs_log_link(zilog_t *zilog, dmu_tx_t *tx, uint64_t txtype,
     znode_t *dzp, znode_t *zp, char *name);
 extern void zfs_log_symlink(zilog_t *zilog, dmu_tx_t *tx, uint64_t txtype,

@@ -724,7 +724,7 @@ zap_count(objset_t *os, uint64_t zapobj, uint64_t *count)
 	return (err);
 }
 
-/**
+/*
  * zn may be NULL; if not specified, it will be computed if needed.
  * See also the comment above zap_entry_normalization_conflict().
  */
@@ -765,7 +765,7 @@ again:
 	return (B_FALSE);
 }
 
-/**
+/*
  * Routines for manipulating attributes.
  */
 

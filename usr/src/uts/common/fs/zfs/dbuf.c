@@ -55,7 +55,7 @@ static arc_evict_func_t dbuf_do_evict;
 
 #define	tmpprintf(args...) do { } while (0)
 
-/**
+/*
  * Global data structures and functions for the dbuf cache.
  */
 static kmem_cache_t *dbuf_cache;
@@ -83,7 +83,7 @@ dbuf_dest(void *vdb, void *unused)
 	refcount_destroy(&db->db_holds);
 }
 
-/**
+/*
  * dbuf hash table routines
  */
 static dbuf_hash_table_t dbuf_hash_table;
@@ -189,7 +189,7 @@ dbuf_find(dnode_t *dn, uint8_t level, uint64_t blkid)
 	return (NULL);
 }
 
-/**
+/*
  * Insert an entry into the hash table.  If there is already an element
  * equal to elem in the hash table, then the already existing element
  * will be returned and the new element will not be inserted.
@@ -228,7 +228,7 @@ dbuf_hash_insert(dmu_buf_impl_t *db)
 	return (NULL);
 }
 
-/**
+/*
  * Remove an entry from the hash table.  This operation will
  * fail if there are any existing holds on the db.
  */
@@ -292,16 +292,14 @@ dbuf_verify_user(dmu_buf_impl_t *db, boolean_t evicting)
 #endif
 }
 
-/**
+/*
  * Evict the dbuf's user, either immediately, or use a provided queue.
  *
- * \param db		Dbuf whose user needs to be evicted.
- * \param evict_list_p	List to place a queued user on for eviction.
+ * Call dmu_buf_process_user_evicts or dmu_buf_destroy_user_evict_list
+ * on the list when finished generating it.
  *
- * \note  Call dmu_buf_process_user_evicts or dmu_buf_destroy_user_evict_list
- *	  on the list when finished generating the list.
- * \note  If db->db_immediate_evict is FALSE, evict_list_p must be provided.
- * \note  See dmu_buf_user_t about how this process works.
+ * NOTE: If db->db_immediate_evict is FALSE, evict_list_p must be provided.
+ * NOTE: See dmu_buf_user_t about how this process works.
  */
 static void
 dbuf_evict_user(dmu_buf_impl_t *db, list_t *evict_list_p)
@@ -319,14 +317,10 @@ dbuf_evict_user(dmu_buf_impl_t *db, list_t *evict_list_p)
 	db->db_user = NULL;
 }
 
-/**
- * Replace the current user of the dbuf.
- *
- * \param db_fake	DMU buffer whose user is being replaced.
- * \param old_user	Old user, for verification purposes
- * \param new_user	New user to be installed
- *
- * \return  The old user, which may not necessarily be +old_user+.
+/*
+ * Replace the current user of the dbuf.  Requires that the caller knows who
+ * the old user is.  Returns the old user, which may not necessarily be
+ * the same old_user provided by the caller.
  */
 dmu_buf_user_t *
 dmu_buf_replace_user(dmu_buf_t *db_fake, dmu_buf_user_t *old_user,
@@ -346,14 +340,9 @@ dmu_buf_replace_user(dmu_buf_t *db_fake, dmu_buf_user_t *old_user,
 	return (old_user);
 }
 
-/**
- * Set the user eviction data for the DMU buffer.
- *
- * \param db_fake		The DMU buffer to set the data for.
- * \param user			The user's eviction data pointer.
- *
- * \return  NULL on success, or the existing user pointer if it
- *	    is already set.
+/*
+ * Set the user eviction data for the DMU buffer.  Returns NULL on success,
+ * or the existing user if another user currently owns the buffer.
  */
 dmu_buf_user_t *
 dmu_buf_set_user(dmu_buf_t *db_fake, dmu_buf_user_t *user)
@@ -361,11 +350,10 @@ dmu_buf_set_user(dmu_buf_t *db_fake, dmu_buf_user_t *user)
 	return (dmu_buf_replace_user(db_fake, NULL, user));
 }
 
-/**
- * Remove the user eviction data for the DMU buffer.
- *
- * \param db_fake	The DMU buffer to remove the user data for.
- * \param user		The user that should be removed.
+/*
+ * Remove the user eviction data for the DMU buffer.  Returns the provided
+ * user on success; otherwise returns NULL if no user owned the buffer, or
+ * some other user.
  */
 dmu_buf_user_t *
 dmu_buf_remove_user(dmu_buf_t *db_fake, dmu_buf_user_t *user)
@@ -382,8 +370,8 @@ dmu_buf_set_user_ie(dmu_buf_t *db_fake, dmu_buf_user_t *user)
 	return (dmu_buf_set_user(db_fake, user));
 }
 
-/**
- * \return  The db_user set with dmu_buf_update_user(), or NULL if not set.
+/*
+ * Returns the db_user set with dmu_buf_update_user(), or NULL if not set.
  */
 dmu_buf_user_t *
 dmu_buf_get_user(dmu_buf_t *db_fake)
@@ -394,7 +382,7 @@ dmu_buf_get_user(dmu_buf_t *db_fake)
 	return (db->db_user);
 }
 
-/**
+/*
  * Clear the dbuf's ARC buffer.
  */
 static void
@@ -409,7 +397,7 @@ dbuf_clear_data(dmu_buf_impl_t *db, list_t *evict_list_p)
 		DBUF_STATE_CHANGE(db, =, DB_UNCACHED, "clear data");
 }
 
-/**
+/*
  * Set the dbuf's buffer to the ARC buffer, including any associated state,
  * such as db_data.
  */
@@ -639,7 +627,7 @@ dbuf_verify(dmu_buf_impl_t *db)
 	ASSERT(db->db_blkid != DMU_BONUS_BLKID ||
 	    list_is_empty(&db->db_dmu_buf_sets));
 
-	/*** Dbuf state checks. */
+	/** Dbuf state checks. */
 	/* If a dbuf is partial, it can only have one dirty record. */
 	ASSERT((db->db_state & DB_PARTIAL) == 0 || db->db_dirtycnt == 1);
 
@@ -677,10 +665,8 @@ dbuf_alloc_arcbuf(dmu_buf_impl_t *db)
 	return (buf);
 }
 
-/**
- * Loan out an arc_buf for read.
- *
- * \return  The loaned arc_buf.
+/*
+ * Loan out an arc_buf for read.  Return the loaned arc_buf.
  */
 arc_buf_t *
 dbuf_loan_arcbuf(dmu_buf_impl_t *db)
@@ -738,12 +724,9 @@ typedef struct dbuf_dirty_record_hole_itr {
 	dbuf_dirty_record_hole_t hole;
 } dbuf_dirty_record_hole_itr_t;
 
-/**
- * Initialize a dirty record hole iterator.
- *
- * \param itr		Iterator context to initialize.
- * \param dl		Dirty leaf to merge.
- * \param src_buf	ARC buffer containing initial data.
+/*
+ * Initialize a dirty record hole iterator for the given dirty leaf dbuf.
+ * src_buf must be the initial buffer.
  */
 static inline void
 dbuf_dirty_record_hole_itr_init(dbuf_dirty_record_hole_itr_t *itr,
@@ -768,17 +751,15 @@ dbuf_dirty_record_hole_itr_init(dbuf_dirty_record_hole_itr_t *itr,
 		itr->hole_start = 0;
 }
 
-/**
+/*
  * Iterate a dirty record, providing the next hole.
- *
- * \param itr	Dirty record hole iterator context.
  *
  * The hole returned provides direct pointers to the source, destination,
  * and the target size.  A hole is a portion of the dirty record's ARC
  * buffer that does not contain valid data and must be filled in using the
  * initial ARC buffer, which should be entirely valid.
  *
- * \return  NULL If there are no more holes.
+ * Returns NULL If there are no more holes.
  */
 static inline dbuf_dirty_record_hole_t *
 dbuf_dirty_record_hole_itr_next(dbuf_dirty_record_hole_itr_t *itr)
@@ -803,12 +784,9 @@ dbuf_dirty_record_hole_itr_next(dbuf_dirty_record_hole_itr_t *itr)
 
 /*
  * Perform any dbuf arc buffer splits required to guarantee
- * the syncer operates on a stable buffer.
- *
- * \param  db              The dbuf to potentially split.
- * \param  syncer_dr       The dirty record being processed by the syncer.
- * \param  deferred_split  True if this check is being performed after a
- *                         resolving read.
+ * the syncer operates on a stable buffer.  The buffer is provided
+ * through its dirty record, syncer_dr.  If this operation is
+ * occurring after a resolving read, deferred_split must be TRUE.
  *
  * If the syncer's buffer is currently "in use" in the
  * open transaction group (i.e., there are active holds
@@ -816,9 +794,8 @@ dbuf_dirty_record_hole_itr_next(dbuf_dirty_record_hole_itr_t *itr)
  * before we start the write, so that any modifications
  * from the open txg will not leak into this write.
  *
- * \note  This copy does not need to be made for objects
- *        only modified in the syncing context (e.g.
- *        DNONE_DNODE blocks).
+ * NOTE: This copy does not need to be made for objects only modified
+ * in the syncing context (e.g. DNODE_DNODE blocks).
  */
 static void
 dbuf_syncer_split(dmu_buf_impl_t *db, dbuf_dirty_record_t *syncer_dr,
@@ -859,11 +836,8 @@ dbuf_syncer_split(dmu_buf_impl_t *db, dbuf_dirty_record_t *syncer_dr,
 	}
 }
 
-/**
- * Merge write ranges for a dirty record.
- *
- * \param dl	Dirty leaf record to merge the old buffer to.
- * \param buf	The old ARC buffer to use for missing data.
+/*
+ * Merge write ranges for a dirty record, using buf to fill any holes.
  *
  * This function performs an inverse merge.  The write ranges provided
  * indicate valid data in the dirty leaf's buffer, which means the old
@@ -892,11 +866,8 @@ dbuf_merge_write_ranges(dbuf_dirty_leaf_record_t *dl, arc_buf_t *old_buf)
 		memcpy(hole->dst, hole->src, hole->size);
 }
 
-/**
+/*
  * Resolve a dbuf using its ranges and the filled ARC buffer provided.
- *
- * \param db	Dbuf to resolve.
- * \param buf	ARC buffer to use to resolve.
  *
  * This routine is called after a read completes.  The results of the read
  * are stored in the ARC buffer.  It will then merge writes in the order
@@ -979,15 +950,15 @@ dbuf_read_complete(dmu_buf_impl_t *db, arc_buf_t *buf, boolean_t is_hole_read)
 		 * Fill any holes in the dbuf's dirty records with the
 		 * original block we read from disk.
 		 *
-		 * \note  A resolving read can be outstanding for older
-		 *	  TXGs at the same time a read completes to satisfy
-		 *	  a foreground reader or writer calling
-		 *	  dbuf_read_cached().  This only happens when the
-		 *	  dbuf has transitioned to DB_UNCACHED via
-		 *	  dbuf_free_range().  These foreground operations are
-		 *	  always satisfied via dbuf_read_hole(), which sets
-		 *	  is_hole_read to prevent foreground operations from
-		 *	  mistakenly filling holes in older TXGs.
+		 * NOTE: A resolving read can be outstanding for older
+		 *	 TXGs at the same time a read completes to satisfy
+		 *	 a foreground reader or writer calling
+		 *	 dbuf_read_cached().  This only happens when the
+		 *	 dbuf has transitioned to DB_UNCACHED via
+		 *	 dbuf_free_range().  These foreground operations are
+		 *	 always satisfied via dbuf_read_hole(), which sets
+		 *	 is_hole_read to prevent foreground operations from
+		 *	 mistakenly filling holes in older TXGs.
 		 */
 
 		dbuf_resolve_ranges(db, buf);
@@ -1082,13 +1053,9 @@ dbuf_read_done(zio_t *zio, arc_buf_t *buf, void *vdb)
 	dbuf_rele_and_unlock(db, NULL);
 }
 
-/**
- * Shortcut for performing reads on bonus dbufs.
- *
- * \param db   Dbuf to perform the read for.
- * \param dn   Dnode for the dbuf.
- *
- * \return  B_TRUE if any action was taken.  Otherwise B_FALSE.
+/*
+ * Shortcut for performing reads on bonus dbufs.  Returns whether any action
+ * was taken.
  */
 static boolean_t
 dbuf_read_bonus(dmu_buf_impl_t *db, dnode_t *dn, uint32_t *flags)
@@ -1111,17 +1078,10 @@ dbuf_read_bonus(dmu_buf_impl_t *db, dnode_t *dn, uint32_t *flags)
 	return (B_TRUE);
 }
 
-/**
- * Handle reads on dbufs that are holes, if necessary.
- *
- * \param db	Dbuf to check.
- * \param dn	Dnode for the dbuf.
- * \param flags	Dbuf read flags pointer.
- *
- * \invariant	The dbuf's mutex must be held.
- * \note	If any action was taken, this function drops db_mtx.
- *
- * \return  B_TRUE if any action was taken.  Otherwise B_FALSE.
+/*
+ * Handle reads on dbufs that are holes, if necessary.  This function
+ * requires that the dbuf's mutex is held, and if it performs any action, it
+ * drops the mutex.  Returns whether any action was taken.
  */
 static boolean_t
 dbuf_read_hole(dmu_buf_impl_t *db, dnode_t *dn, uint32_t *flags)
@@ -1176,19 +1136,14 @@ dbuf_read_cached_done(zio_t *zio, arc_buf_t *buf, void *priv)
 	}
 }
 
-/**
+/*
  * Actually read (or issue I/O for) a dbuf's block.
  *
- * \param db	The dbuf to read.
- * \param zio	The parent zio to associate with.
- * \param flags	Pointer to the read flags.
+ * Flags will be modified to include DB_RF_CACHED if the call returns with
+ * the dbuf cached.
  *
- * \note	Flags will be modified to include DB_RF_CACHED if the call
- *		returns with the dbuf cached.
- * \note	The dbuf mutex will be dropped in all cases except if the
- *		DB_RF_CACHED flag is set.
- * \note	The DB_RF_CACHED flag has the effect of performing a
- *		cached-only read.
+ * The DB_RF_CACHED_ONLY flag has the effect of performing a cached-only
+ * read.  Only in this case will the dbuf mutex be retained.
  */
 static void
 dbuf_read_impl(dmu_buf_impl_t *db, zio_t *zio, uint32_t *flags)
@@ -1266,18 +1221,12 @@ dbuf_read_impl(dmu_buf_impl_t *db, zio_t *zio, uint32_t *flags)
 		*flags |= DB_RF_CACHED;
 }
 
-/**
- * Find a dbuf's block in the ARC, if it's there.
+/*
+ * Find a dbuf's block in the ARC, if it's there.  Calling this is equivalent
+ * to calling dbuf_read, but only if the block is already in the cache.
  *
- * \param db	Dbuf to find the block for.
- * \param dn	Dnode for the dbuf.
- *
- * \note	Calling this function is equivalent to calling dbuf_read,
- *		but only if the block is already in the cache.
- * \note	This function only applies to level 0 blocks.
- * \invariant	The dbuf's mutex must be held.
- *
- * \return  B_TRUE for an ARC hit.  Otherwise B_FALSE.
+ * This function only applies to level 0 blocks, and requires the dbuf mutex.
+ * Returns whether an ARC hit occurred.
  */
 static boolean_t
 dbuf_read_cached(dmu_buf_impl_t *db, dnode_t *dn)
@@ -1384,7 +1333,7 @@ dbuf_read(dmu_buf_impl_t *db, zio_t *zio, uint32_t flags)
 	return (err);
 }
 
-/**
+/*
  * Signal that the dirty record is about to be re-dirtied after sync.
  *
  * This function is used to notify, if necessary, that a dbuf is about
@@ -1428,17 +1377,11 @@ dbuf_unoverride(dbuf_dirty_record_t *dr)
 	arc_release(dr->dt.dl.dr_data, db);
 }
 
-/**
+/*
  * Disassociate the frontend for any older transaction groups of a
- * dbuf that is inside a range being freed.
- *
- * \param db	Dbuf whose dirty records should be handled.
- * \param dn	Dnode for the dbuf.
- * \param tx	Transaction that the free range operation applies to.
- * \param evict_list_p	Dbuf user eviction list (see dmu_buf_user_t).
- *
- * This function's primary purpose is to ensure that the state of any dirty
- * records affected by the operation remain consistent.
+ * dbuf that is inside a range being freed.  The primary purpose is to
+ * ensure that the state of any dirty records affected by the operation
+ * remain consistent.
  */
 static void
 dbuf_free_range_disassociate_frontend(dmu_buf_impl_t *db, dnode_t *dn,
@@ -1527,10 +1470,9 @@ dbuf_free_range_disassociate_frontend(dmu_buf_impl_t *db, dnode_t *dn,
 	}
 }
 
-/**
- * Dirty level 1 blocks for a free_range operation.
- *
- * \return  B_TRUE if an indirect block is processed.
+/*
+ * Dirty level 1 blocks for a free_range operation.  Returns whether an
+ * indirect block is processed.
  */
 static boolean_t
 dbuf_free_range_indirects(dnode_t *dn, dmu_buf_impl_t *db, uint64_t start,
@@ -1589,10 +1531,8 @@ dbuf_free_range_filler_will_free(dmu_buf_impl_t *db)
 	return (B_FALSE);
 }
 
-/**
- * If a dbuf has no users, clear it.
- *
- * \return  B_TRUE if the dbuf was cleared.
+/*
+ * If a dbuf has no users, clear it.  Returns whether it was cleared.
  */
 static boolean_t
 dbuf_clear_successful(dmu_buf_impl_t *db, list_t *evict_list_p)
@@ -1607,17 +1547,12 @@ dbuf_clear_successful(dmu_buf_impl_t *db, list_t *evict_list_p)
 	return (B_FALSE);
 }
 
-/**
- * Free a range of data blocks in a dnode.
+/*
+ * Free a range of data blocks in a dnode.  The start and end are inclusive.
  *
- * \param dn	Dnode which the range applies to.
- * \param start	Starting block id of the range, inclusive.
- * \param end	Ending block id of the range, inclusive.
- * \param tx	Transaction to apply the free operation too.
- *
- * Evict (if its unreferenced) or clear (if its referenced) any level-0
+ * Evict (if it's unreferenced) or clear (if it's referenced) any level-0
  * data blocks in the free range, so that any future readers will find
- * empty blocks.  Also, if we happen accross any level-1 dbufs in the
+ * empty blocks.  Also, if we happen across any level-1 dbufs in the
  * range that have not already been marked dirty, mark them dirty so
  * they stay in memory.
  */
@@ -1833,19 +1768,19 @@ dbuf_release_bp(dmu_buf_impl_t *db)
  * of state available, so using a struct to access it keeps the code sane.
  */
 typedef struct dbuf_dirty_state {
-	dmu_buf_impl_t *db;		/**< Dbuf being dirtied. */
-	dmu_tx_t *tx;			/**< Transaction to dirty. */
-	dnode_t *dn;			/**< The dbuf's dnode. */
-	dbuf_dirty_record_t *insert_pt;	/**< DR to insert new DR after. */
-	dbuf_dirty_record_t *txg_dr;	/**< Dirty record for this txg. */
-	boolean_t txg_already_dirty;	/**< This txg already dirty? */
-	boolean_t do_free_accounting;	/**< Free accounting needed? */
-	list_t evict_list;		/**< Dbuf user eviction list. */
+	dmu_buf_impl_t *db;		/* Dbuf being dirtied. */
+	dmu_tx_t *tx;			/* Transaction to dirty. */
+	dnode_t *dn;			/* The dbuf's dnode. */
+	dbuf_dirty_record_t *insert_pt;	/* DR to insert new DR after. */
+	dbuf_dirty_record_t *txg_dr;	/* Dirty record for this txg. */
+	boolean_t txg_already_dirty;	/* This txg already dirty? */
+	boolean_t do_free_accounting;	/* Free accounting needed? */
+	list_t evict_list;		/* Dbuf user eviction list. */
 
 	/* The below only apply to leaf blocks. */
-	arc_buf_t *fill_buf;		/**< Already-filled optional buffer. */
-	int offset;			/**< Offset of the upcoming write. */
-	int size;			/**< Size of the upcoming write. */
+	arc_buf_t *fill_buf;		/* Already-filled optional buffer. */
+	int offset;			/* Offset of the upcoming write. */
+	int size;			/* Size of the upcoming write. */
 } dbuf_dirty_state_t;
 
 static void
@@ -2005,10 +1940,9 @@ dbuf_dirty_verify(dmu_buf_impl_t *db, dmu_tx_t *tx)
 #endif
 }
 
-/**
- * Enter a dbuf-dirtying function.
- *
- * \note  This function should only be called once in a dbuf-dirtying function.
+/*
+ * Enter a dbuf-dirtying function.  This function should only be called once
+ * per dirty.
  *
  * This function's primary purpose is to compute state that only needs to be
  * computed once per dirty call.  Call dbuf_dirty_compute_state if the
@@ -2030,15 +1964,12 @@ dbuf_dirty_enter(dbuf_dirty_state_t *dds, dmu_buf_impl_t *db, dmu_tx_t *tx)
 	mutex_enter(&db->db_mtx);
 }
 
-/**
- * Compute the current dbuf dirty state.
- *
- * \note  See dbuf_dirty for more information.
- * \note  The dbuf mutex must be held before this function is called, and
- *        afterwards, must not be dropped except by dbuf_dirty_exit().
- *        If this is not possible, the intention was to allow a dbuf_dirty
- *        function to re-invoke this function after an action that might drop
- *        the mutex, and before continuing.  Additional work may be needed.
+/*
+ * Compute the current dbuf dirty state.  The dbuf mutex must be held before
+ * this function is called, and afterwards, must not be dropped except by
+ * dbuf_dirty_exit().  If this is not possible, the intention was to allow a
+ * dbuf_dirty function to re-invoke this function after an action that might
+ * drop the mutex, and before continuing.  Additional work may be needed.
  */
 static void
 dbuf_dirty_compute_state(dbuf_dirty_state_t *dds)
@@ -2082,14 +2013,14 @@ dbuf_dirty_compute_state(dbuf_dirty_state_t *dds)
 
 static void dbuf_dirty_parent(dbuf_dirty_state_t *dds);
 
-/**
- * Exit a dbuf-dirtying function.  See dbuf_dirty.
+/*
+ * Exit a dbuf-dirtying function.  See dbuf_dirty.  The primary purpose is
+ * to verify a consistent state upon completing a dirty operation, then drop
+ * the mutex and dirty parent dbufs.
  *
- * \note  This function should only be called once in a dbuf-dirtying function.
- *
- * This function's primary purpose is to verify a consistent state upon
- * completing a dirty operation, then drop the mutex and dirty parent dbufs.
  * It is also a good time to update free accounting.
+ *
+ * NOTE: This should only be called once in a dbuf-dirtying function.
  */
 static void
 dbuf_dirty_exit(dbuf_dirty_state_t *dds)
@@ -2128,7 +2059,7 @@ dbuf_dirty_exit(dbuf_dirty_state_t *dds)
 	DB_DNODE_EXIT(db);
 }
 
-/**
+/*
  * Dirty a nofill buffer.  See dbuf_dirty.
  *
  * NOFILL buffers are similar to regular leaf buffers only in the sense that
@@ -2162,7 +2093,7 @@ dbuf_dirty_nofill(dmu_buf_impl_t *db, dmu_tx_t *tx)
 	return (dds.txg_dr);
 }
 
-/**
+/*
  * Dirty an indirect block.  See dbuf_dirty.
  *
  * Indirect blocks are always completely rewritten, so they don't need any
@@ -2183,13 +2114,11 @@ dbuf_dirty_indirect(dmu_buf_impl_t *db, dmu_tx_t *tx)
 	return (dds.txg_dr);
 }
 
-/**
+/*
  * Dirty the dbuf's parent.
  *
- * \param dds	Dbuf dirty state.
- *
- * \note  If the dnode's struct_rwlock is not held, it will be grabbed and
- *        dropped within this function.
+ * NOTE: If the dnode's struct_rwlock is not held, it will be grabbed and
+ *       dropped within this function.
  */
 static void
 dbuf_dirty_parent(dbuf_dirty_state_t *dds)
@@ -2306,12 +2235,8 @@ dbuf_dirty_record_check_ranges(dbuf_dirty_record_t *dr)
 #endif
 }
 
-/**
+/*
  * Record a write range for the associated dirty record.
- *
- * \param dr		The dirty record to record the write range for.
- * \param offset	The offset of the new write range.
- * \param size		The size of the new write range.
  */
 static void
 dbuf_dirty_record_add_range(dbuf_dirty_record_t *dr, int offset, int size)
@@ -2513,7 +2438,7 @@ dbuf_dirty_record_create_bonus(dbuf_dirty_state_t *dds)
 	return (dr);
 }
 
-/**
+/*
  * Dirty a dbuf belonging to a meta-dnode.  See dbuf_dirty.
  *
  * Dbufs belonging to the meta-dnode object are allowed to dirty in older
@@ -2544,7 +2469,7 @@ dbuf_dirty_mdn_object(dmu_buf_impl_t *db, dmu_tx_t *tx)
 	return (dds.txg_dr);
 }
 
-/**
+/*
  * Dirty a bonus dbuf.  See dbuf_dirty.
  *
  * Bonus buffers are special in the sense that they do not use ARC buffers,
@@ -2571,7 +2496,7 @@ dbuf_dirty_bonus(dmu_buf_impl_t *db, dmu_tx_t *tx)
 	return (dds.txg_dr);
 }
 
-/**
+/*
  * Handle potential Copy-On-Write (COW) faults.
  *
  * This function's primary purpose is to optimize dirtying behavior that are
@@ -2618,7 +2543,7 @@ dbuf_dirty_handle_fault(dbuf_dirty_state_t *dds)
 	}
 }
 
-/**
+/*
  * Common dbuf_dirty_enter() replacement for leaf blocks.
  */
 void
@@ -2637,7 +2562,7 @@ dbuf_dirty_leaf_enter(dbuf_dirty_state_t *dds,
 	dbuf_dirty_compute_state(dds);
 }
 
-/**
+/*
  * Dirty a regular leaf block.  See dbuf_dirty.
  *
  * This function handles dirtying all user data blocks.
@@ -2665,7 +2590,7 @@ dbuf_dirty_leaf(dmu_buf_impl_t *db, dmu_tx_t *tx, int offset, int size)
 	return (dds.txg_dr);
 }
 
-/**
+/*
  * Dirty a regular leaf block with a filled ARC buffer.  See dbuf_dirty.
  *
  * This function is identical to dbuf_dirty_leaf, except that it doesn't
@@ -2690,11 +2615,8 @@ dbuf_dirty_with_arcbuf(dmu_buf_impl_t *db, dmu_tx_t *tx, arc_buf_t *fill_buf)
 	return (dds.txg_dr);
 }
 
-/**
+/*
  * Dirty a DMU buffer.
- *
- * \param db	Dbuf to dirty.
- * \param tx	Transaction to dirty the dbuf in.
  *
  * This function is merely a dispatcher.  Different types of dbufs require
  * different actions in different scenarios.  However, each dbuf_dirty
@@ -2710,8 +2632,8 @@ dbuf_dirty_with_arcbuf(dmu_buf_impl_t *db, dmu_tx_t *tx, arc_buf_t *fill_buf)
  * 7. dbuf_dirty_exit, which triggers dirtying parent dbufs if this dbuf was
  *    not already dirty in this txg.
  *
- * \note  The point of having separate functions is to reduce the difficulty
- *        of understanding what happens to each type of dbuf in a dirty.
+ * NOTE: The point of having separate functions is to reduce the difficulty
+ *       of understanding what happens to each type of dbuf in a dirty.
  */
 dbuf_dirty_record_t *
 dbuf_dirty(dmu_buf_impl_t *db, dmu_tx_t *tx)
@@ -2728,11 +2650,11 @@ dbuf_dirty(dmu_buf_impl_t *db, dmu_tx_t *tx)
 	}
 }
 
-/**
+/*
  * Cleanup a dirty record's write ranges as necessary.
  *
- * \todo  This should be replaced with a larger dbuf_dirty_record_destroy()
- *        that cleans up an entire dirty record.
+ * XXX: This should be replaced with a larger dbuf_dirty_record_destroy()
+ *      that cleans up an entire dirty record.
  */
 void
 dbuf_dirty_record_cleanup_ranges(dbuf_dirty_record_t *dr)
@@ -2752,7 +2674,7 @@ dbuf_dirty_record_cleanup_ranges(dbuf_dirty_record_t *dr)
 	}
 }
 
-/** \todo refactor dbuf_undirty_*() into dbuf_undirty(). */
+/* XXX: refactor dbuf_undirty_*() into dbuf_undirty(). */
 static void
 dbuf_undirty_bonus(dbuf_dirty_record_t *dr)
 {
@@ -2865,7 +2787,7 @@ dbuf_undirty_write(dbuf_dirty_record_t *dr, uint64_t txg)
 	db->db_data_pending = NULL;
 }
 
-/**
+/*
  * Undirty a buffer in the transaction group referenced by
  * the given transaction.
  */
@@ -3008,21 +2930,17 @@ dbuf_will_dirty(dmu_buf_impl_t *db, dmu_tx_t *tx)
 	(void) dbuf_dirty(db, tx);
 }
 
-/**
+/*
  * Issue an async read that will eventually transition a dbuf into the
- * CACHED state.
- *
- * \param db   Dbuf to transition
- *
- * \invariant  The dbuf's mutex must be held.
+ * CACHED state.  The dbuf's mutex must be held.
  *
  * Upon return, the dbuf will either be in the READ (async READ
  * pending), or CACHED (read satisfied by a cache hit or zero fill for
  * an object hole) state.
  *
- * \note  The dbuf's mutex is dropped temporarilly while the read is
- *        scheduled.  Caller's must reverify if necessary any state
- *        protected by the dbuf mutex.
+ * NOTE: The dbuf's mutex is dropped temporarilly while the read is
+ *       scheduled.  Caller's must reverify if necessary any state
+ *       protected by the dbuf mutex.
  */
 void
 dbuf_transition_to_read(dmu_buf_impl_t *db)
@@ -3049,15 +2967,10 @@ dbuf_transition_to_read(dmu_buf_impl_t *db)
 }
 
 #pragma weak dmu_buf_will_dirty_range = dbuf_will_dirty_range
-/**
+/*
  * Signal intent to dirty a subset of the buffer.
  *
- * \param db		The dbuf that will be dirtied
- * \param tx		The transaction the dirty will occur in
- * \param offset	The starting offset of the intended dirty
- * \param size		The length of the intended dirty
- *
- * \todo  This needs to be merged into dbuf_will_dirty().
+ * XXX: This needs to be merged into dbuf_will_dirty().
  */
 void
 dbuf_will_dirty_range(dmu_buf_impl_t *db, dmu_tx_t *tx, int offset, int size)
@@ -3160,7 +3073,7 @@ dbuf_fill_done(dmu_buf_impl_t *db, dmu_tx_t *tx)
 	mutex_exit(&db->db_mtx);
 }
 
-/**
+/*
  * Directly assign a provided arc buf to a given dbuf if it's not referenced
  * by anybody except our caller. Otherwise copy arcbuf's contents to dbuf.
  */
@@ -3183,7 +3096,7 @@ dbuf_assign_arcbuf(dmu_buf_impl_t *db, arc_buf_t *buf, dmu_tx_t *tx)
 	dbuf_fill_done(db, tx);
 }
 
-/**
+/*
  * "Clear" the contents of this dbuf.  This will mark the dbuf
  * EVICTING and clear *most* of its references.  Unfortunately,
  * when we are not holding the dn_dbufs_mtx, we can't clear the
@@ -3191,14 +3104,14 @@ dbuf_assign_arcbuf(dmu_buf_impl_t *db, arc_buf_t *buf, dmu_tx_t *tx)
  * in this case.
  *
  * For callers from the DMU we will usually see:
- *    - <tt>dbuf_clear()->arc_buf_evict()->dbuf_do_evict()->dbuf_destroy()</tt>
+ *	dbuf_clear()->arc_buf_evict()->dbuf_do_evict()->dbuf_destroy()
  *
  * For the arc callback, we will usually see:
- *    - <tt>dbuf_do_evict()->dbuf_clear();dbuf_destroy()</tt>
+ *	dbuf_do_evict()->dbuf_clear();dbuf_destroy()
  *
  * Sometimes, though, we will get a mix of these two:
- *    - DMU: <tt>dbuf_clear()->arc_buf_evict()</tt>
- *    - ARC: <tt>dbuf_do_evict()->dbuf_destroy()</tt>
+ *	DMU: dbuf_clear()->arc_buf_evict()
+ *	ARC: dbuf_do_evict()->dbuf_destroy()
  */
 void
 dbuf_clear(dmu_buf_impl_t *db, list_t *evict_list_p)
@@ -3543,12 +3456,12 @@ dbuf_prefetch(dnode_t *dn, uint64_t blkid)
 	}
 }
 
-/**
+/*
  * Returns with db_holds incremented, and db_mtx not held.
+ * Note: dn_struct_rwlock must be held.
  *
- * \note  buf_set may be NULL.
- *
- * \invariant  On entry, dn_struct_rwlock must be held.
+ * If buf_set is not NULL, the dbuf must notify the buffer set once a read
+ * is completed.
  */
 int
 dbuf_hold_impl(dnode_t *dn, uint8_t level, uint64_t blkid, int fail_sparse,
@@ -3712,14 +3625,12 @@ dbuf_add_ref(dmu_buf_impl_t *db, void *tag)
 	ASSERT(holds > 1);
 }
 
-/**
- * \note  If you call dbuf_rele() you had better not be referencing
- *        the dnode handle unless you have some other direct or
- *        indirect hold on the dnode. (An indirect hold is a hold
- *        on one of the dnode's dbufs, including the bonus buffer.)
- *        Without that, the dbuf_rele() could lead to a dnode_rele()
- *        followed by the dnode's parent dbuf evicting its dnode
- *        handles.
+/*
+ * If you call dbuf_rele() you had better not be referencing the dnode handle
+ * unless you have some other direct or indirect hold on the dnode. (An indirect
+ * hold is a hold on one of the dnode's dbufs, including the bonus buffer.)
+ * Without that, the dbuf_rele() could lead to a dnode_rele() followed by the
+ * dnode's parent dbuf evicting its dnode handles.
  */
 #pragma weak dmu_buf_rele = dbuf_rele
 void
@@ -3729,7 +3640,7 @@ dbuf_rele(dmu_buf_impl_t *db, void *tag)
 	dbuf_rele_and_unlock(db, tag);
 }
 
-/**
+/*
  * dbuf_rele() for an already-locked dbuf.  This is necessary to allow
  * db_dirtycnt and db_holds to be updated atomically.
  */
@@ -4298,9 +4209,7 @@ dbuf_write_override_done(zio_t *zio, arc_buf_t *buf, void *dr_private)
 	dbuf_write_done(zio, NULL, db);
 }
 
-/**
- * Commit a dirty buffer to disk.
- */
+/* Commit a dirty buffer to disk. */
 static zio_t *
 dbuf_write(dbuf_dirty_record_t *dr, arc_buf_t *data, dmu_tx_t *tx)
 {

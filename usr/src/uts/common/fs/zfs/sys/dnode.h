@@ -40,53 +40,44 @@
 extern "C" {
 #endif
 
-/**
- * \name dnode_hold() flags
- * \{ 
+/*
+ * dnode_hold() flags.
  */
 #define	DNODE_MUST_BE_ALLOCATED	1
 #define	DNODE_MUST_BE_FREE	2
 
-/**
- * \}
- * \name dnode_next_offset() flags
- * \{
+/*
+ * dnode_next_offset() flags.
  */
 #define	DNODE_FIND_HOLE		1
 #define	DNODE_FIND_BACKWARDS	2
 #define	DNODE_FIND_HAVELOCK	4
 
-/**
- * \}
- * \name Fixed constants
- * \{
+/*
+ * Fixed constants.
  */
-#define	DNODE_SHIFT		9	/**< 512 bytes */
-#define	DN_MIN_INDBLKSHIFT	10	/**< 1k */
-#define	DN_MAX_INDBLKSHIFT	14	/**< 16k */
-#define	DNODE_BLOCK_SHIFT	14	/**< 16k */
-#define	DNODE_CORE_SIZE		64	/**< 64 bytes for dnode sans blkptrs */
-#define	DN_MAX_OBJECT_SHIFT	48	/**< 256 trillion (zfs_fid_t limit) */
-#define	DN_MAX_OFFSET_SHIFT	64	/**< 2^64 bytes in a dnode */
+#define	DNODE_SHIFT		9	/* 512 bytes */
+#define	DN_MIN_INDBLKSHIFT	10	/* 1k */
+#define	DN_MAX_INDBLKSHIFT	14	/* 16k */
+#define	DNODE_BLOCK_SHIFT	14	/* 16k */
+#define	DNODE_CORE_SIZE		64	/* 64 bytes for dnode sans blkptrs */
+#define	DN_MAX_OBJECT_SHIFT	48	/* 256 trillion (zfs_fid_t limit) */
+#define	DN_MAX_OFFSET_SHIFT	64	/* 2^64 bytes in a dnode */
 
-/**
- * \}
- * \name dnode id flags
+/*
+ * dnode id flags
  *
- * \note a file will never ever have its
+ * Note: a file will never ever have its
  * ids moved from bonus->spill
  * and only in a crypto environment would it be on spill
- * \{
  */
 #define	DN_ID_CHKED_BONUS	0x1
 #define	DN_ID_CHKED_SPILL	0x2
 #define	DN_ID_OLD_EXIST		0x4
 #define	DN_ID_NEW_EXIST		0x8
 
-/**
- * \}
- * \name Derived constants
- * \{
+/*
+ * Derived constants.
  */
 #define	DNODE_SIZE	(1 << DNODE_SHIFT)
 #define	DN_MAX_NBLKPTR	((DNODE_SIZE - DNODE_CORE_SIZE) >> SPA_BLKPTRSHIFT)
@@ -99,7 +90,6 @@ extern "C" {
 #define	DNODES_PER_BLOCK	(1ULL << DNODES_PER_BLOCK_SHIFT)
 #define	DNODES_PER_LEVEL_SHIFT	(DN_MAX_INDBLKSHIFT - SPA_BLKPTRSHIFT)
 #define	DNODES_PER_LEVEL	(1ULL << DNODES_PER_LEVEL_SHIFT)
-/** \} */
 
 /* Next level for a given dnode and txg */
 #define	DN_NEXT_LEVEL(dn, txg) \
@@ -127,29 +117,29 @@ enum dnode_dirtycontext {
 	DN_DIRTY_SYNC
 };
 
-/** Is dn_used in bytes?  if not, it's in multiples of SPA_MINBLOCKSIZE */
+/* Is dn_used in bytes?  if not, it's in multiples of SPA_MINBLOCKSIZE */
 #define	DNODE_FLAG_USED_BYTES		(1<<0)
 #define	DNODE_FLAG_USERUSED_ACCOUNTED	(1<<1)
 
-/** Does dnode have a SA spill blkptr in bonus? */
+/* Does dnode have a SA spill blkptr in bonus? */
 #define	DNODE_FLAG_SPILL_BLKPTR	(1<<2)
 
 typedef struct dnode_phys {
-	uint8_t dn_type;		/**< dmu_object_type_t */
-	uint8_t dn_indblkshift;		/**< ln2(indirect block size) */
-	uint8_t dn_nlevels;		/**< 1=dn_blkptr->data blocks */
-	uint8_t dn_nblkptr;		/**< length of dn_blkptr */
-	uint8_t dn_bonustype;		/**< type of data in bonus buffer */
-	uint8_t	dn_checksum;		/**< ZIO_CHECKSUM type */
-	uint8_t	dn_compress;		/**< ZIO_COMPRESS type */
-	uint8_t dn_flags;		/**< DNODE_FLAG_* */
-	uint16_t dn_datablkszsec;	/**< data block size in 512b sectors */
-	uint16_t dn_bonuslen;		/**< length of dn_bonus */
+	uint8_t dn_type;		/* dmu_object_type_t */
+	uint8_t dn_indblkshift;		/* ln2(indirect block size) */
+	uint8_t dn_nlevels;		/* 1=dn_blkptr->data blocks */
+	uint8_t dn_nblkptr;		/* length of dn_blkptr */
+	uint8_t dn_bonustype;		/* type of data in bonus buffer */
+	uint8_t	dn_checksum;		/* ZIO_CHECKSUM type */
+	uint8_t	dn_compress;		/* ZIO_COMPRESS type */
+	uint8_t dn_flags;		/* DNODE_FLAG_* */
+	uint16_t dn_datablkszsec;	/* data block size in 512b sectors */
+	uint16_t dn_bonuslen;		/* length of dn_bonus */
 	uint8_t dn_pad2[4];
 
 	/* accounting is protected by dn_dirty_mtx */
-	uint64_t dn_maxblkid;		/**< largest allocated block ID */
-	uint64_t dn_used;		/**< bytes (or sectors) of disk space */
+	uint64_t dn_maxblkid;		/* largest allocated block ID */
+	uint64_t dn_used;		/* bytes (or sectors) of disk space */
 
 	uint64_t dn_pad3[4];
 
@@ -159,70 +149,55 @@ typedef struct dnode_phys {
 } dnode_phys_t;
 
 typedef struct dnode {
-	/**
+	/*
 	 * Protects the structure of the dnode, including the number of levels
 	 * of indirection (dn_nlevels), dn_maxblkid, and dn_next_*
 	 */
 	krwlock_t dn_struct_rwlock;
 
-	/** Our link on dn_objset->os_dnodes list; protected by os_lock.  */
+	/* Our link on dn_objset->os_dnodes list; protected by os_lock.  */
 	list_node_t dn_link;
 
-	/**
-	 * \name Immutable
-	 * \{ */
+	/* immutable: */
 	struct objset *dn_objset;
 	uint64_t dn_object;
 	struct dmu_buf_impl *dn_dbuf;
 	struct dnode_handle *dn_handle;
-	dnode_phys_t *dn_phys; /**< pointer into dn->dn_dbuf->db.db_data */
-	/** \} */
+	dnode_phys_t *dn_phys; /* pointer into dn->dn_dbuf->db.db_data */
 
-	/**
-	 * \name Copies of stuff in dn_phys
-	 * They're valid in the open context (eg. even before the dnode is
-	 * first synced).  Where necessary, these are protected by
-	 * dn_struct_rwlock.
-	 * \{
+	/*
+	 * Copies of stuff in dn_phys.  They're valid in the open
+	 * context (eg. even before the dnode is first synced).
+	 * Where necessary, these are protected by dn_struct_rwlock.
 	 */
-	dmu_object_type_t dn_type;	/**< object type */
-	uint16_t dn_bonuslen;		/**< bonus length */
-	uint8_t dn_bonustype;		/**< bonus type */
-	uint8_t dn_nblkptr;		/**< number of blkptrs (immutable) */
-	uint8_t dn_checksum;		/**< ZIO_CHECKSUM type */
-	uint8_t dn_compress;		/**< ZIO_COMPRESS type */
+	dmu_object_type_t dn_type;	/* object type */
+	uint16_t dn_bonuslen;		/* bonus length */
+	uint8_t dn_bonustype;		/* bonus type */
+	uint8_t dn_nblkptr;		/* number of blkptrs (immutable) */
+	uint8_t dn_checksum;		/* ZIO_CHECKSUM type */
+	uint8_t dn_compress;		/* ZIO_COMPRESS type */
 	uint8_t dn_nlevels;
 	uint8_t dn_indblkshift;
-	uint8_t dn_datablkshift;	/**< zero if blksz not power of 2! */
-	uint8_t dn_moved;		/**< Has this dnode been moved? */
-	uint16_t dn_datablkszsec;	/**< in 512b sectors */
-	uint32_t dn_datablksz;		/**< in bytes */
+	uint8_t dn_datablkshift;	/* zero if blksz not power of 2! */
+	uint8_t dn_moved;		/* Has this dnode been moved? */
+	uint16_t dn_datablkszsec;	/* in 512b sectors */
+	uint32_t dn_datablksz;		/* in bytes */
 	uint64_t dn_maxblkid;
 	uint8_t dn_next_nblkptr[TXG_SIZE];
 	uint8_t dn_next_nlevels[TXG_SIZE];
 	uint8_t dn_next_indblkshift[TXG_SIZE];
 	uint8_t dn_next_bonustype[TXG_SIZE];
-	uint8_t dn_rm_spillblk[TXG_SIZE];	/**< for removing spill blk */
+	uint8_t dn_rm_spillblk[TXG_SIZE];	/* for removing spill blk */
 	uint16_t dn_next_bonuslen[TXG_SIZE];
-	uint32_t dn_next_blksz[TXG_SIZE];	/**< next block size in bytes */
-	/** \} */
+	uint32_t dn_next_blksz[TXG_SIZE];	/* next block size in bytes */
 
-	/**
-	 * \name Protected by dn_dbufs_mtx
-	 * declared here to fill 32-bit hole
-	 * \{ */
-	uint32_t dn_dbufs_count;	/**< count of dn_dbufs */
-	/** \} */
+	/* protected by dn_dbufs_mtx; declared here to fill 32-bit hole */
+	uint32_t dn_dbufs_count;	/* count of dn_dbufs */
 
-	/**
-	 * \name Protected by os_lock
-	 * \{ */
-	list_node_t dn_dirty_link[TXG_SIZE];	/**< next on dataset's dirty */
-	/** \} */
+	/* protected by os_lock: */
+	list_node_t dn_dirty_link[TXG_SIZE];	/* next on dataset's dirty */
 
-	/**
-	 * \name Protected by dn_mtx
-	 * \{ */
+	/* protected by dn_mtx: */
 	kmutex_t dn_mtx;
 	list_t dn_dirty_records[TXG_SIZE];
 	avl_tree_t dn_ranges[TXG_SIZE];
@@ -231,63 +206,50 @@ typedef struct dnode {
 	uint64_t dn_assigned_txg;
 	kcondvar_t dn_notxholds;
 	enum dnode_dirtycontext dn_dirtyctx;
-	uint8_t *dn_dirtyctx_firstset;	/**< dbg: contents meaningless */
-	/** \} */
+	uint8_t *dn_dirtyctx_firstset;		/* dbg: contents meaningless */
 
-	/**
-	 * \name Protected by own devices 
-	 * \{ */
+	/* protected by own devices */
 	refcount_t dn_tx_holds;
 	refcount_t dn_holds;
-	/** \} */
 
 	kmutex_t dn_dbufs_mtx;
-	list_t dn_dbufs;		/**< descendent dbufs */
+	list_t dn_dbufs;		/* descendent dbufs */
 
-	/**
-	 * \name Protected by dn_struct_rwlock 
-	 * \{*/
-	struct dmu_buf_impl *dn_bonus;	/**< bonus buffer dbuf */
-	/** \} */
+	/* protected by dn_struct_rwlock */
+	struct dmu_buf_impl *dn_bonus;	/* bonus buffer dbuf */
 
-	boolean_t dn_have_spill;	/**< have spill or are spilling */
+	boolean_t dn_have_spill;	/* have spill or are spilling */
 
-	/**
-	 * \name Parent IO for current sync write 
-	 * \{*/
+	/* parent IO for current sync write */
 	zio_t *dn_zio;
-	/** \} */
 
-	/**
-	 * \name Used in syncing context 
-	 * \{*/
-	uint64_t dn_oldused;	/**< old phys used bytes */
-	uint64_t dn_oldflags;	/**< old phys dn_flags */
+	/* used in syncing context */
+	uint64_t dn_oldused;	/* old phys used bytes */
+	uint64_t dn_oldflags;	/* old phys dn_flags */
 	uint64_t dn_olduid, dn_oldgid;
 	uint64_t dn_newuid, dn_newgid;
 	int dn_id_flags;
-	/** \} */
 
-	/** holds prefetch structure */
+	/* holds prefetch structure */
 	struct zfetch	dn_zfetch;
 } dnode_t;
 
-/**
+/*
  * Adds a level of indirection between the dbuf and the dnode to avoid
  * iterating descendent dbufs in dnode_move(). Handles are not allocated
  * individually, but as an array of child dnodes in dnode_hold_impl().
  */
 typedef struct dnode_handle {
-	/** Protects dnh_dnode from modification by dnode_move(). */
+	/* Protects dnh_dnode from modification by dnode_move(). */
 	zrlock_t dnh_zrlock;
 	dnode_t *dnh_dnode;
 } dnode_handle_t;
 
 typedef struct dnode_children {
-	/** Dbuf user eviction data for this instance. */
+	/* Dbuf user eviction data for this instance. */
 	dmu_buf_user_t db_evict;
-	size_t dnc_count;		/**< number of children */
-	dnode_handle_t dnc_children[1];	/**< sized dynamically */
+	size_t dnc_count;		/* number of children */
+	dnode_handle_t dnc_children[1];	/* sized dynamically */
 } dnode_children_t;
 
 typedef struct free_range {

@@ -302,9 +302,9 @@ free_children(dmu_buf_impl_t *db, uint64_t blkid, uint64_t nblks, int trunc,
 	return (all ? ALL : blocks_freed);
 }
 
-/**
- * Traverses the indicated range of the provided file
- * and "free"s all the blocks contained there.
+/*
+ * Traverse the indicated range of the provided file
+ * and "free" all the blocks contained there.
  */
 static void
 dnode_sync_free_range(dnode_t *dn, uint64_t blkid, uint64_t nblks, dmu_tx_t *tx)
@@ -371,8 +371,8 @@ dnode_sync_free_range(dnode_t *dn, uint64_t blkid, uint64_t nblks, dmu_tx_t *tx)
 	}
 }
 
-/**
- * Tries to kick all the dnode's dbufs out of the cache...
+/*
+ * Try to kick all the dnode's dbufs out of the cache...
  */
 void
 dnode_evict_dbufs(dnode_t *dn)
@@ -533,8 +533,8 @@ dnode_sync_free(dnode_t *dn, dmu_tx_t *tx)
 	 */
 }
 
-/**
- * Writes out the dnode's dirty buffers.
+/*
+ * Write out the dnode's dirty buffers.
  */
 void
 dnode_sync(dnode_t *dn, dmu_tx_t *tx)

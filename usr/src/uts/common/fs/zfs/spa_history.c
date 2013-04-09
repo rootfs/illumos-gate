@@ -38,8 +38,7 @@
 #include <sys/zone.h>
 #endif
 
-/**
- * \file spa_history.c
+/*
  * Routines to manage the on-disk history log.
  *
  * The history log is stored as a dmu object containing
@@ -68,9 +67,7 @@
  * and permanently lost.
  */
 
-/**
- * convert a logical offset to physical 
- */
+/* convert a logical offset to physical */
 static uint64_t
 spa_history_log_to_phys(uint64_t log_off, spa_history_phys_t *shpp)
 {
@@ -115,7 +112,7 @@ spa_history_create_obj(spa_t *spa, dmu_tx_t *tx)
 	dmu_buf_rele(dbp, FTAG);
 }
 
-/**
+/*
  * Change 'sh_bof' to the beginning of the next record.
  */
 static int
@@ -189,7 +186,7 @@ spa_history_zone()
 	return ("global");
 }
 
-/**
+/*
  * Write out a history event.
  */
 /*ARGSUSED*/
@@ -297,7 +294,7 @@ spa_history_log_sync(void *arg1, void *arg2, dmu_tx_t *tx)
 	kmem_free(hap, sizeof (history_arg_t));
 }
 
-/**
+/*
  * Write out a history event.
  */
 int
@@ -334,7 +331,7 @@ spa_history_log(spa_t *spa, const char *history_str, history_log_type_t what)
 	return (err);
 }
 
-/**
+/*
  * Read out the command history.
  */
 int

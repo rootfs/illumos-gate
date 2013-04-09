@@ -53,9 +53,8 @@ typedef struct ddt ddt_t;
 typedef struct ddt_entry ddt_entry_t;
 struct dsl_pool;
 
-/**
- * \name General-purpose 32-bit and 64-bit bitfield encodings.
- * \{
+/*
+ * General-purpose 32-bit and 64-bit bitfield encodings.
  */
 #define	BF32_DECODE(x, low, len)	P2PHASE((x) >> (low), 1U << (len))
 #define	BF64_DECODE(x, low, len)	P2PHASE((x) >> (low), 1ULL << (len))
@@ -79,8 +78,12 @@ struct dsl_pool;
 	BF32_SET(x, low, len, ((val) >> (shift)) - (bias))
 #define	BF64_SET_SB(x, low, len, shift, bias, val)	\
 	BF64_SET(x, low, len, ((val) >> (shift)) - (bias))
-/** \} */
 
+/*
+ * We currently support nine block sizes, from 512 bytes to 128K.
+ * We could go higher, but the benefits are near-zero and the cost
+ * of COWing a giant block to modify one byte would become excessive.
+ */
 #define	SPA_MINBLOCKSHIFT	9
 #define	SPA_MAXBLOCKSHIFT	17
 #define	SPA_MINBLOCKSIZE	(1ULL << SPA_MINBLOCKSHIFT)
@@ -93,30 +96,25 @@ struct dsl_pool;
  */
 #define	SPA_MAXAUTOASHIFT	13
 
-/**
- * We currently support nine block sizes, from 512 bytes to 128K.
- * We could go higher, but the benefits are near-zero and the cost
- * of COWing a giant block to modify one byte would become excessive.
- */
 #define	SPA_BLOCKSIZES		(SPA_MAXBLOCKSHIFT - SPA_MINBLOCKSHIFT + 1)
 
-/**
+/*
  * Size of block to hold the configuration data (a packed nvlist)
  */
 #define	SPA_CONFIG_BLOCKSIZE	(1ULL << 14)
 
-#define	SPA_LSIZEBITS		16	/* LSIZE up to 32M (2^16 * 512)	*/
-#define	SPA_PSIZEBITS		16	/* PSIZE up to 32M (2^16 * 512)	*/
-/**
+/*
  * The DVA size encodings for LSIZE and PSIZE support blocks up to 32MB.
  * The ASIZE encoding should be at least 64 times larger (6 more bits)
  * to support up to 4-way RAID-Z mirror mode with worst-case gang block
  * overhead, three DVAs per bp, plus one more bit in case we do anything
  * else that expands the ASIZE.
  */
+#define	SPA_LSIZEBITS		16	/* LSIZE up to 32M (2^16 * 512)	*/
+#define	SPA_PSIZEBITS		16	/* PSIZE up to 32M (2^16 * 512)	*/
 #define	SPA_ASIZEBITS		24	/* ASIZE up to 64 times larger	*/
 
-/**
+/*
  * All SPA data is represented by 128-bit data virtual addresses (DVAs).
  * The members of the dva_t should be considered opaque outside the SPA.
  */
@@ -124,89 +122,88 @@ typedef struct dva {
 	uint64_t	dva_word[2];
 } dva_t;
 
-/**
+/*
  * Each block has a 256-bit checksum -- strong enough for cryptographic hashes.
  */
 typedef struct zio_cksum {
 	uint64_t	zc_word[4];
 } zio_cksum_t;
 
-#define	SPA_BLKPTRSHIFT	7		/**< blkptr_t is 128 bytes	*/
-#define	SPA_DVAS_PER_BP	3		/**< Number of DVAs in a bp	*/
-/**
+/*
  * Each block is described by its DVAs, time of birth, checksum, etc.
  * The word-by-word, bit-by-bit layout of the blkptr is as follows:
- \verbatim
-	64	56	48	40	32	24	16	8	0
-	+-------+-------+-------+-------+-------+-------+-------+-------+
-   0	|		vdev1		| GRID  |	  ASIZE		|
-	+-------+-------+-------+-------+-------+-------+-------+-------+
-   1	|G|			 offset1				|
-	+-------+-------+-------+-------+-------+-------+-------+-------+
-   2	|		vdev2		| GRID  |	  ASIZE		|
-	+-------+-------+-------+-------+-------+-------+-------+-------+
-   3	|G|			 offset2				|
-	+-------+-------+-------+-------+-------+-------+-------+-------+
-   4	|		vdev3		| GRID  |	  ASIZE		|
-	+-------+-------+-------+-------+-------+-------+-------+-------+
-   5	|G|			 offset3				|
-	+-------+-------+-------+-------+-------+-------+-------+-------+
-   6	|BDX|lvl| type	| cksum | comp	|     PSIZE	|     LSIZE	|
-	+-------+-------+-------+-------+-------+-------+-------+-------+
-   7	|			padding					|
-	+-------+-------+-------+-------+-------+-------+-------+-------+
-   8	|			padding					|
-	+-------+-------+-------+-------+-------+-------+-------+-------+
-   9	|			physical birth txg			|
-	+-------+-------+-------+-------+-------+-------+-------+-------+
-   a	|			logical birth txg			|
-	+-------+-------+-------+-------+-------+-------+-------+-------+
-   b	|			fill count				|
-	+-------+-------+-------+-------+-------+-------+-------+-------+
-   c	|			checksum[0]				|
-	+-------+-------+-------+-------+-------+-------+-------+-------+
-   d	|			checksum[1]				|
-	+-------+-------+-------+-------+-------+-------+-------+-------+
-   e	|			checksum[2]				|
-	+-------+-------+-------+-------+-------+-------+-------+-------+
-   f	|			checksum[3]				|
-	+-------+-------+-------+-------+-------+-------+-------+-------+
- \endverbatim
+ *
+ *	64	56	48	40	32	24	16	8	0
+ *	+-------+-------+-------+-------+-------+-------+-------+-------+
+ * 0	|		vdev1		| GRID  |	  ASIZE		|
+ *	+-------+-------+-------+-------+-------+-------+-------+-------+
+ * 1	|G|			 offset1				|
+ *	+-------+-------+-------+-------+-------+-------+-------+-------+
+ * 2	|		vdev2		| GRID  |	  ASIZE		|
+ *	+-------+-------+-------+-------+-------+-------+-------+-------+
+ * 3	|G|			 offset2				|
+ *	+-------+-------+-------+-------+-------+-------+-------+-------+
+ * 4	|		vdev3		| GRID  |	  ASIZE		|
+ *	+-------+-------+-------+-------+-------+-------+-------+-------+
+ * 5	|G|			 offset3				|
+ *	+-------+-------+-------+-------+-------+-------+-------+-------+
+ * 6	|BDX|lvl| type	| cksum | comp	|     PSIZE	|     LSIZE	|
+ *	+-------+-------+-------+-------+-------+-------+-------+-------+
+ * 7	|			padding					|
+ *	+-------+-------+-------+-------+-------+-------+-------+-------+
+ * 8	|			padding					|
+ *	+-------+-------+-------+-------+-------+-------+-------+-------+
+ * 9	|			physical birth txg			|
+ *	+-------+-------+-------+-------+-------+-------+-------+-------+
+ * a	|			logical birth txg			|
+ *	+-------+-------+-------+-------+-------+-------+-------+-------+
+ * b	|			fill count				|
+ *	+-------+-------+-------+-------+-------+-------+-------+-------+
+ * c	|			checksum[0]				|
+ *	+-------+-------+-------+-------+-------+-------+-------+-------+
+ * d	|			checksum[1]				|
+ *	+-------+-------+-------+-------+-------+-------+-------+-------+
+ * e	|			checksum[2]				|
+ *	+-------+-------+-------+-------+-------+-------+-------+-------+
+ * f	|			checksum[3]				|
+ *	+-------+-------+-------+-------+-------+-------+-------+-------+
+ *
  * Legend:
- * - <b>vdev</b>	virtual device ID
- * - <b>offset</b>	offset into virtual device
- * - <b>LSIZE</b>	logical size
- * - <b>PSIZE</b>	physical size (after compression)
- * - <b>ASIZE</b>	allocated size (including RAID-Z parity and gang block 
- *   			headers)
- * - <b>GRID</b>	RAID-Z layout information (reserved for future use)
- * - <b>cksum</b>	checksum function
- * - <b>comp</b>	compression function
- * - <b>G</b>		gang block indicator
- * - <b>B</b>		byteorder (endianness)
- * - <b>D</b>		dedup
- * - <b>X</b>		unused
- * - <b>lvl</b>		level of indirection
- * - <b>type</b>	DMU object type
- * - <b>phys birth</b>	txg of block allocation; zero if same as logical birth 
- *   			txg
- * - <b>log. birth</b>	transaction group in which the block was logically born
- * - <b>fill count</b>	number of non-zero blocks under this bp
- * - <b>checksum[4]</b>	256-bit checksum of the data this bp describes
+ *
+ * vdev		virtual device ID
+ * offset	offset into virtual device
+ * LSIZE	logical size
+ * PSIZE	physical size (after compression)
+ * ASIZE	allocated size (including RAID-Z parity and gang block headers)
+ * GRID		RAID-Z layout information (reserved for future use)
+ * cksum	checksum function
+ * comp		compression function
+ * G		gang block indicator
+ * B		byteorder (endianness)
+ * D		dedup
+ * X		unused
+ * lvl		level of indirection
+ * type		DMU object type
+ * phys birth	txg of block allocation; zero if same as logical birth txg
+ * log. birth	transaction group in which the block was logically born
+ * fill count	number of non-zero blocks under this bp
+ * checksum[4]	256-bit checksum of the data this bp describes
  */
+#define	SPA_BLKPTRSHIFT	7		/* blkptr_t is 128 bytes	*/
+#define	SPA_DVAS_PER_BP	3		/* Number of DVAs in a bp	*/
+
 typedef struct blkptr {
-	dva_t		blk_dva[SPA_DVAS_PER_BP]; /**< Data Virtual Addresses */
-	uint64_t	blk_prop;	/**< size, compression, type, etc    */
-	uint64_t	blk_pad[2];	/**< Extra space for the future	    */
-	uint64_t	blk_phys_birth;	/**< txg when block was allocated	    */
-	uint64_t	blk_birth;	/**< transaction group at birth	    */
-	uint64_t	blk_fill;	/**< fill count			    */
-	zio_cksum_t	blk_cksum;	/**< 256-bit checksum		    */
+	dva_t		blk_dva[SPA_DVAS_PER_BP]; /* Data Virtual Addresses */
+	uint64_t	blk_prop;	/* size, compression, type, etc	    */
+	uint64_t	blk_pad[2];	/* Extra space for the future	    */
+	uint64_t	blk_phys_birth;	/* txg when block was allocated	    */
+	uint64_t	blk_birth;	/* transaction group at birth	    */
+	uint64_t	blk_fill;	/* fill count			    */
+	zio_cksum_t	blk_cksum;	/* 256-bit checksum		    */
 } blkptr_t;
 
-/**
- * \name Macros to get and set fields in a bp or DVA.
- * \{
+/*
+ * Macros to get and set fields in a bp or DVA.
  */
 #define	DVA_GET_ASIZE(dva)	\
 	BF64_GET_SB((dva)->dva_word[0], 0, 24, SPA_MINBLOCKSHIFT, 0)
@@ -314,9 +311,8 @@ typedef struct blkptr {
 #define	BP_IDENTITY(bp)		(&(bp)->blk_dva[0])
 #define	BP_IS_GANG(bp)		DVA_GET_GANG(BP_IDENTITY(bp))
 #define	BP_IS_HOLE(bp)		((bp)->blk_birth == 0)
-/** \} */
 
-/** BP_IS_RAIDZ(bp) assumes no block compression */
+/* BP_IS_RAIDZ(bp) assumes no block compression */
 #define	BP_IS_RAIDZ(bp)		(DVA_GET_ASIZE(&(bp)->blk_dva[0]) > \
 				BP_GET_PSIZE(bp))
 
@@ -337,9 +333,9 @@ typedef struct blkptr {
 	ZIO_SET_CHECKSUM(&(bp)->blk_cksum, 0, 0, 0, 0);	\
 }
 
-/**
- * \note  The byteorder is either 0 or -1, both of which are palindromes.
- *	  This simplifies the endianness handling a bit.
+/*
+ * Note: the byteorder is either 0 or -1, both of which are palindromes.
+ * This simplifies the endianness handling a bit.
  */
 #if BYTE_ORDER == _BIG_ENDIAN
 #define	ZFS_HOST_BYTEORDER	(0ULL)
@@ -351,7 +347,7 @@ typedef struct blkptr {
 
 #define	BP_SPRINTF_LEN	320
 
-/**
+/*
  * This macro allows code sharing between zfs, libzpool, and mdb.
  * 'func' is either snprintf() or mdb_snprintf().
  * 'ws' (whitespace) can be ' ' for single-line format, '\n' for multi-line.
@@ -462,13 +458,11 @@ extern int spa_scan_get_stats(spa_t *spa, pool_scan_stat_t *ps);
 #define	SPA_ASYNC_REMOVE_DONE	0x40
 #define	SPA_ASYNC_REMOVE_STOP	0x80
 
-/**
- * \name Controls the behavior of spa_vdev_remove().
- * \{
+/*
+ * Controls the behavior of spa_vdev_remove().
  */
 #define	SPA_REMOVE_UNSPARE	0x01
 #define	SPA_REMOVE_DONE		0x02
-/** \} */
 
 /* device manipulation */
 extern int spa_vdev_add(spa_t *spa, nvlist_t *nvroot);
@@ -501,10 +495,10 @@ extern int spa_scan(spa_t *spa, pool_scan_func_t func);
 extern int spa_scan_stop(spa_t *spa);
 
 /* spa syncing */
-extern void spa_sync(spa_t *spa, uint64_t txg);
+extern void spa_sync(spa_t *spa, uint64_t txg); /* only for DMU use */
 extern void spa_sync_allpools(void);
 
-/** spa namespace global mutex */
+/* spa namespace global mutex */
 extern kmutex_t spa_namespace_lock;
 
 /*
@@ -540,7 +534,7 @@ extern boolean_t spa_refcount_zero(spa_t *spa);
 #define	SCL_NONE	0x00
 #define	SCL_CONFIG	0x01
 #define	SCL_STATE	0x02
-#define	SCL_L2ARC	0x04		/**< hack until L2ARC 2.0 */
+#define	SCL_L2ARC	0x04		/* hack until L2ARC 2.0 */
 #define	SCL_ALLOC	0x08
 #define	SCL_ZIO		0x10
 #define	SCL_FREE	0x20
@@ -566,18 +560,19 @@ extern int spa_vdev_exit(spa_t *spa, vdev_t *vd, uint64_t txg, int error);
 extern void spa_vdev_state_enter(spa_t *spa, int oplock);
 extern int spa_vdev_state_exit(spa_t *spa, vdev_t *vd, int error);
 
-/** Log state */
+/* Log state */
 typedef enum spa_log_state {
-	SPA_LOG_UNKNOWN = 0,	/**< unknown log state */
-	SPA_LOG_MISSING,	/**< missing log(s) */
-	SPA_LOG_CLEAR,		/**< clear the log(s) */
-	SPA_LOG_GOOD,		/**< log(s) are good */
+	SPA_LOG_UNKNOWN = 0,	/* unknown log state */
+	SPA_LOG_MISSING,	/* missing log(s) */
+	SPA_LOG_CLEAR,		/* clear the log(s) */
+	SPA_LOG_GOOD,		/* log(s) are good */
 } spa_log_state_t;
 
 extern spa_log_state_t spa_get_log_state(spa_t *spa);
 extern void spa_set_log_state(spa_t *spa, spa_log_state_t state);
 extern int spa_offline_log(spa_t *spa);
 
+/* Log claim callback */
 extern void spa_claim_notify(zio_t *zio);
 
 /* Accessor functions */
@@ -643,7 +638,7 @@ extern int spa_mode(spa_t *spa);
 extern uint64_t zfs_strtonum(const char *str, char **nptr);
 #define	strtonum(str, nptr)	zfs_strtonum((str), (nptr))
 
-/** History logging */
+/* history logging */
 typedef enum history_log_type {
 	LOG_CMD_POOL_CREATE,
 	LOG_CMD_NORMAL,
@@ -722,8 +717,7 @@ extern boolean_t spa_debug_enabled(spa_t *spa);
 		zfs_dbgmsg(__VA_ARGS__);	\
 }
 
-/** mode, e.g. FREAD | FWRITE */
-extern int spa_mode_global;
+extern int spa_mode_global;			/* mode, e.g. FREAD | FWRITE */
 
 #ifdef	__cplusplus
 }

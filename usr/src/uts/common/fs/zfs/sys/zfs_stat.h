@@ -34,7 +34,7 @@
 extern "C" {
 #endif
 
-/**
+/*
  * A limited number of zpl level stats are retrievable
  * with an ioctl.  zfs diff is the current consumer.
  */

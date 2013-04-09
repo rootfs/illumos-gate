@@ -44,7 +44,7 @@
 #include <sys/sa.h>
 #include <sys/zfs_onexit.h>
 
-/**
+/*
  * Needed to close a window in dnode_move() that allows the objset to be freed
  * before it can be safely accessed.
  */
@@ -1289,7 +1289,7 @@ dmu_objset_do_userquota_updates(objset_t *os, dmu_tx_t *tx)
 	}
 }
 
-/**
+/*
  * Returns a pointer to data to find uid/gid from
  *
  * If a dirty record for transaction group that is syncing can't
@@ -1631,10 +1631,9 @@ findfunc(spa_t *spa, uint64_t dsobj, const char *dsname, void *arg)
 	return (fa->func(dsname, fa->arg));
 }
 
-/**
+/*
  * Find all objsets under name, and for each, call 'func(child_name, arg)'.
- * 
- * \todo  Perhaps change all callers to use dmu_objset_find_spa()?
+ * Perhaps change all callers to use dmu_objset_find_spa()?
  */
 int
 dmu_objset_find(const char *name, int func(const char *, void *), void *arg,
@@ -1646,7 +1645,7 @@ dmu_objset_find(const char *name, int func(const char *, void *), void *arg,
 	return (dmu_objset_find_spa(NULL, name, findfunc, &fa, flags));
 }
 
-/**
+/*
  * Find all objsets under name, call func on each
  */
 int

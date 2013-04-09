@@ -35,22 +35,17 @@
  * I'm against tune-ables, but these should probably exist as tweakable globals
  * until we can get this working the way we want it to.
  */
-/**
- * \addtogroup tunables 
- * \{
- */
 
 int zfs_prefetch_disable = 0;
 
-/** max # of streams per zfetch */
+/* max # of streams per zfetch */
 uint32_t	zfetch_max_streams = 8;
-/** min time before stream reclaim */
+/* min time before stream reclaim */
 uint32_t	zfetch_min_sec_reap = 2;
-/** max number of blocks to fetch at a time */
+/* max number of blocks to fetch at a time */
 uint32_t	zfetch_block_cap = 256;
-/** number of bytes in a array_read at which we stop prefetching (1Mb) */
+/* number of bytes in a array_read at which we stop prefetching (1Mb) */
 uint64_t	zfetch_array_rd_sz = 1024 * 1024;
-/* \} */
 
 SYSCTL_DECL(_vfs_zfs);
 SYSCTL_INT(_vfs_zfs, OID_AUTO, prefetch_disable, CTLFLAG_RW,
@@ -116,7 +111,7 @@ static zfetch_stats_t zfetch_stats = {
 
 kstat_t		*zfetch_ksp;
 
-/**
+/*
  * Given a zfetch structure and a zstream structure, determine whether the
  * blocks to be read are part of a co-linear pair of existing prefetch
  * streams.  If a set is found, coalesce the streams, removing one, and
@@ -127,7 +122,7 @@ kstat_t		*zfetch_ksp;
  * last stream, then we are probably in a strided access pattern.  So
  * combine the two sequential streams into a single strided stream.
  *
- * \return  NULL if no co-linear streams are found, 1 otherwise
+ * If co-linear streams are found, returns 1, otherwise 0.
  */
 static int
 dmu_zfetch_colinear(zfetch_t *zf, zstream_t *zh)
@@ -196,7 +191,7 @@ dmu_zfetch_colinear(zfetch_t *zf, zstream_t *zh)
 	return (0);
 }
 
-/**
+/*
  * Given a zstream_t, determine the bounds of the prefetch.  Then call the
  * routine that actually prefetches the individual blocks.
  */
@@ -275,9 +270,7 @@ zfetch_fini(void)
 	}
 }
 
-/**
- * Sets up a zfetch data based on an associated dnode.
- *
+/*
  * This takes a pointer to a zfetch structure and a dnode.  It performs the
  * necessary setup for the zfetch structure, grokking data from the
  * associated dnode.
@@ -299,7 +292,7 @@ dmu_zfetch_init(zfetch_t *zf, dnode_t *dno)
 	rw_init(&zf->zf_rwlock, NULL, RW_DEFAULT, NULL);
 }
 
-/**
+/*
  * This function computes the actual size, in blocks, that can be prefetched,
  * and fetches it.
  */
@@ -318,8 +311,8 @@ dmu_zfetch_fetch(dnode_t *dn, uint64_t blkid, uint64_t nblks)
 	return (fetchsz);
 }
 
-/**
- * This function returns the number of blocks that would be prefetched, based
+/*
+ * this function returns the number of blocks that would be prefetched, based
  * upon the supplied dnode, blockid, and nblks.  This is used so that we can
  * update streams in place, and then prefetch with their old value after the
  * fact.  This way, we can delay the prefetch, but subsequent accesses to the
@@ -346,8 +339,8 @@ dmu_zfetch_fetchsz(dnode_t *dn, uint64_t blkid, uint64_t nblks)
 	return (fetchsz);
 }
 
-/**
- * Given a zfetch and a zstream structure, see if there is an associated zstream
+/*
+ * given a zfetch and a zstream structure, see if there is an associated zstream
  * for this block read.  If so, it starts a prefetch for the stream it
  * located and returns true, otherwise it returns false
  */
@@ -543,7 +536,7 @@ out:
 	return (rc);
 }
 
-/**
+/*
  * Clean-up state associated with a zfetch structure.  This frees allocated
  * structure members, empties the zf_stream tree, and generally makes things
  * nice.  This doesn't free the zfetch_t itself, that's left to the caller.
@@ -569,7 +562,7 @@ dmu_zfetch_rele(zfetch_t *zf)
 	zf->zf_dnode = NULL;
 }
 
-/**
+/*
  * Given a zfetch and zstream structure, insert the zstream structure into the
  * AVL tree contained within the zfetch structure.  Peform the appropriate
  * book-keeping.  It is possible that another thread has inserted a stream which
@@ -599,7 +592,7 @@ dmu_zfetch_stream_insert(zfetch_t *zf, zstream_t *zs)
 }
 
 
-/**
+/*
  * Walk the list of zstreams in the given zfetch, find an old one (by time), and
  * reclaim it for use by the caller.
  */
@@ -630,7 +623,7 @@ dmu_zfetch_stream_reclaim(zfetch_t *zf)
 	return (zs);
 }
 
-/**
+/*
  * Given a zfetch and zstream structure, remove the zstream structure from its
  * container in the zfetch structure.  Perform the appropriate book-keeping.
  */
@@ -667,7 +660,7 @@ dmu_zfetch_streams_equal(zstream_t *zs1, zstream_t *zs2)
 	return (1);
 }
 
-/**
+/*
  * This is the prefetch entry point.  It calls all of the other dmu_zfetch
  * routines to create, delete, find, or operate upon prefetch streams.
  */

@@ -35,55 +35,55 @@
 extern "C" {
 #endif
 
-/**
+/*
  * Log write buffer.
  */
 typedef struct lwb {
-	zilog_t		*lwb_zilog;	/**< back pointer to log struct */
-	blkptr_t	lwb_blk;	/**< on disk address of this log blk */
-	int		lwb_nused;	/**< # used bytes in buffer */
-	int		lwb_sz;		/**< size of block and buffer */
-	char		*lwb_buf;	/**< log write buffer */
-	zio_t		*lwb_zio;	/**< zio for this buffer */
-	dmu_tx_t	*lwb_tx;	/**< tx for log block allocation */
-	uint64_t	lwb_max_txg;	/**< highest txg in this lwb */
-	list_node_t	lwb_node;	/**< zilog->zl_lwb_list linkage */
+	zilog_t		*lwb_zilog;	/* back pointer to log struct */
+	blkptr_t	lwb_blk;	/* on disk address of this log blk */
+	int		lwb_nused;	/* # used bytes in buffer */
+	int		lwb_sz;		/* size of block and buffer */
+	char		*lwb_buf;	/* log write buffer */
+	zio_t		*lwb_zio;	/* zio for this buffer */
+	dmu_tx_t	*lwb_tx;	/* tx for log block allocation */
+	uint64_t	lwb_max_txg;	/* highest txg in this lwb */
+	list_node_t	lwb_node;	/* zilog->zl_lwb_list linkage */
 } lwb_t;
 
-/**
+/*
  * Intent log transaction lists
  */
 typedef struct itxs {
-	list_t		i_sync_list;	/**< list of synchronous itxs */
-	avl_tree_t	i_async_tree;	/**< tree of foids for async itxs */
+	list_t		i_sync_list;	/* list of synchronous itxs */
+	avl_tree_t	i_async_tree;	/* tree of foids for async itxs */
 } itxs_t;
 
 typedef struct itxg {
-	kmutex_t	itxg_lock;	/**< lock for this structure */
-	uint64_t	itxg_txg;	/**< txg for this chain */
-	uint64_t	itxg_sod;	/**< total size on disk for this txg */
-	itxs_t		*itxg_itxs;	/**< sync and async itxs */
+	kmutex_t	itxg_lock;	/* lock for this structure */
+	uint64_t	itxg_txg;	/* txg for this chain */
+	uint64_t	itxg_sod;	/* total size on disk for this txg */
+	itxs_t		*itxg_itxs;	/* sync and async itxs */
 } itxg_t;
 
-/** for async nodes we build up an AVL tree of lists of async itxs per file */
+/* for async nodes we build up an AVL tree of lists of async itxs per file */
 typedef struct itx_async_node {
-	uint64_t	ia_foid;	/**< file object id */
-	list_t		ia_list;	/**< list of async itxs for this foid */
-	avl_node_t	ia_node;	/**< AVL tree linkage */
+	uint64_t	ia_foid;	/* file object id */
+	list_t		ia_list;	/* list of async itxs for this foid */
+	avl_node_t	ia_node;	/* AVL tree linkage */
 } itx_async_node_t;
 
-/**
+/*
  * Vdev flushing: during a zil_commit(), we build up an AVL tree of the vdevs
  * we've touched so we know which ones need a write cache flush at the end.
  */
 typedef struct zil_vdev_node {
-	uint64_t	zv_vdev;	/**< vdev to be flushed */
-	avl_node_t	zv_node;	/**< AVL tree linkage */
+	uint64_t	zv_vdev;	/* vdev to be flushed */
+	avl_node_t	zv_node;	/* AVL tree linkage */
 } zil_vdev_node_t;
 
 #define	ZIL_PREV_BLKS 16
 
-/**
+/*
  * Stable storage intent log management structure.  One per dataset.
  */
 struct zilog {

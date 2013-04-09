@@ -105,14 +105,14 @@ extern "C" {
  * zio pipeline stage definitions
  */
 enum zio_stage {
-	ZIO_STAGE_OPEN			= 1 << 0,	/**< RWFCI */
+	ZIO_STAGE_OPEN			= 1 << 0,	/* RWFCI */
 
-	ZIO_STAGE_READ_BP_INIT		= 1 << 1,	/**< R---- */
-	ZIO_STAGE_FREE_BP_INIT		= 1 << 2,	/**< --F-- */
-	ZIO_STAGE_ISSUE_ASYNC		= 1 << 3,	/**< RWF-- */
-	ZIO_STAGE_WRITE_BP_INIT		= 1 << 4,	/**< -W--- */
+	ZIO_STAGE_READ_BP_INIT		= 1 << 1,	/* R---- */
+	ZIO_STAGE_FREE_BP_INIT		= 1 << 2,	/* --F-- */
+	ZIO_STAGE_ISSUE_ASYNC		= 1 << 3,	/* RWF-- */
+	ZIO_STAGE_WRITE_BP_INIT		= 1 << 4,	/* -W--- */
 
-	ZIO_STAGE_CHECKSUM_GENERATE	= 1 << 5,	/**< -W--- */
+	ZIO_STAGE_CHECKSUM_GENERATE	= 1 << 5,	/* -W--- */
 
 	ZIO_STAGE_NOP_WRITE		= 1 << 6,	/* -W--- */
 

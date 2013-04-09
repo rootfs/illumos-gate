@@ -218,12 +218,12 @@ dsl_prop_get_ds(dsl_dataset_t *ds, const char *propname,
 	    intsz, numints, buf, setpoint, snapshot));
 }
 
-/**
+/*
  * Register interest in the named property.  We'll call the callback
  * once to notify it of the current property value, and again each time
  * the property changes, until this callback is unregistered.
  *
- * \return  0 on success or errno if the prop is not an integer value.
+ * Return 0 on success or errno if the prop is not an integer value.
  */
 int
 dsl_prop_register(dsl_dataset_t *ds, const char *propname,
@@ -283,13 +283,13 @@ dsl_prop_get(const char *dsname, const char *propname,
 	return (err);
 }
 
-/**
+/*
  * Get the current property value.  It may have changed by the time this
  * function returns, so it is NOT safe to follow up with
  * dsl_prop_register() and assume that the value has not changed in
  * between.
  *
- * \return  0 on success or ENOENT if ddname is invalid.
+ * Return 0 on success or ENOENT if ddname is invalid.
  */
 int
 dsl_prop_get_integer(const char *ddname, const char *propname,
@@ -311,15 +311,15 @@ dsl_prop_setarg_init_uint64(dsl_prop_setarg_t *psa, const char *propname,
 	psa->psa_effective_value = -1ULL;
 }
 
-/**
+/*
  * Predict the effective value of the given special property if it were set with
  * the given value and source. This is not a general purpose function. It exists
  * only to handle the special requirements of the quota and reservation
  * properties. The fact that these properties are non-inheritable greatly
  * simplifies the prediction logic.
  *
- * \return  0 on success, a positive error code on failure, or -1 if called
- *          with a property not handled by this function.
+ * Return 0 on success, a positive error code on failure, or -1 if called with
+ * a property not handled by this function.
  */
 int
 dsl_prop_predict_sync(dsl_dir_t *dd, dsl_prop_setarg_t *psa)
@@ -429,11 +429,9 @@ dsl_prop_check_prediction(dsl_dir_t *dd, dsl_prop_setarg_t *psa)
 }
 #endif
 
-/**
- * Unregister this callback.  
- *
- * \return 0 on success, ENOENT if ddname is invalid, or ENOMSG if no matching 
- *         callback registered.
+/*
+ * Unregister this callback.  Return 0 on success, ENOENT if ddname is invalid,
+ * or ENOMSG if no matching callback registered.
  */
 int
 dsl_prop_unregister(dsl_dataset_t *ds, const char *propname,
@@ -465,7 +463,7 @@ dsl_prop_unregister(dsl_dataset_t *ds, const char *propname,
 	return (0);
 }
 
-/**
+/*
  * Return the number of callbacks that are registered for this dataset.
  */
 int
@@ -998,7 +996,7 @@ dsl_prop_get_all_impl(objset_t *mos, uint64_t propobj,
 	return (err);
 }
 
-/**
+/*
  * Iterate over all properties for this dataset and return them in an nvlist.
  */
 static int
@@ -1075,7 +1073,7 @@ dsl_prop_set_hasrecvd_impl(objset_t *os, zprop_source_t source)
 	    dsl_prop_set_sync, ds, &psa, 2);
 }
 
-/**
+/*
  * Call after successfully receiving properties to ensure that only the first
  * receive on or after SPA_VERSION_RECVD_PROPS blows away local properties.
  */

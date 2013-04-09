@@ -39,7 +39,7 @@ typedef struct dsl_deadlist_phys {
 	uint64_t dl_used;
 	uint64_t dl_comp;
 	uint64_t dl_uncomp;
-	uint64_t dl_pad[37]; /**< pad out to 320b for future expansion */
+	uint64_t dl_pad[37]; /* pad out to 320b for future expansion */
 } dsl_deadlist_phys_t;
 
 typedef struct dsl_deadlist {
@@ -51,7 +51,7 @@ typedef struct dsl_deadlist {
 	dsl_deadlist_phys_t *dl_phys;
 	kmutex_t dl_lock;
 
-	/** if it's the old on-disk format: */
+	/* if it's the old on-disk format: */
 	bpobj_t dl_bpobj;
 	boolean_t dl_oldfmt;
 } dsl_deadlist_t;

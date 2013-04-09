@@ -58,21 +58,21 @@ struct arc_buf {
 };
 
 typedef enum arc_buf_contents {
-	ARC_BUFC_DATA,				/**< buffer contains data */
-	ARC_BUFC_METADATA,			/**< buffer contains metadata */
+	ARC_BUFC_DATA,				/* buffer contains data */
+	ARC_BUFC_METADATA,			/* buffer contains metadata */
 	ARC_BUFC_NUMTYPES
 } arc_buf_contents_t;
 /*
  * These are the flags we pass into calls to the arc
  */
-#define	ARC_WAIT	(1 << 1)	/**< perform I/O synchronously */
-#define	ARC_NOWAIT	(1 << 2)	/**< perform I/O asynchronously */
-#define	ARC_PREFETCH	(1 << 3)	/**< I/O is a prefetch */
-#define	ARC_CACHED	(1 << 4)	/**< I/O was already in cache */
-#define	ARC_L2CACHE	(1 << 5)	/**< cache in L2ARC */
-#define	ARC_CACHED_ONLY	(1 << 6)	/**< cache lookup only */
+#define	ARC_WAIT	(1 << 1)	/* perform I/O synchronously */
+#define	ARC_NOWAIT	(1 << 2)	/* perform I/O asynchronously */
+#define	ARC_PREFETCH	(1 << 3)	/* I/O is a prefetch */
+#define	ARC_CACHED	(1 << 4)	/* I/O was already in cache */
+#define	ARC_L2CACHE	(1 << 5)	/* cache in L2ARC */
+#define	ARC_CACHED_ONLY	(1 << 6)	/* cache lookup only */
 
-/**
+/*
  * The following breakdows of arc_size exist for kstat only.
  */
 typedef enum arc_space_type {

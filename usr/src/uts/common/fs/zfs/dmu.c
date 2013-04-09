@@ -253,6 +253,9 @@ dmu_rm_spill(objset_t *os, uint64_t object, dmu_tx_t *tx)
 	return (error);
 }
 
+/*
+ * returns ENOENT, EIO, or 0.
+ */
 int
 dmu_bonus_hold(objset_t *os, uint64_t object, void *tag, dmu_buf_t **dbp)
 {
@@ -294,14 +297,14 @@ dmu_bonus_hold(objset_t *os, uint64_t object, void *tag, dmu_buf_t **dbp)
 	return (0);
 }
 
-/**
+/*
+ * returns ENOENT, EIO, or 0.
+ *
  * This interface will allocate a blank spill dbuf when a spill blk
  * doesn't already exist on the dnode.
  *
  * if you only want to find an already existing spill db, then
  * dmu_spill_hold_existing() should be used.
- *
- * \return  ENOENT, EIO, or 0.
  */
 int
 dmu_spill_hold_by_dnode(dnode_t *dn, uint32_t flags, void *tag, dmu_buf_t **dbp)
@@ -422,7 +425,7 @@ dmu_prefetch(objset_t *os, uint64_t object, uint64_t offset, uint64_t len)
 	dnode_rele(dn, FTAG);
 }
 
-/**
+/*
  * Get the next "chunk" of file data to free.  We traverse the file from
  * the end so that the file gets shorter over time (if we crashes in the
  * middle, this will leave us in a better state).  We find allocated file
@@ -777,10 +780,8 @@ dmu_buf_set_transfer_write_tx(dmu_buf_set_t *buf_set)
 	dmu_tx_commit(buf_set->tx);
 }
 
-/**
+/*
  * Release a DMU context hold, cleaning up if no holds remain.
- *
- * \param dmu_ctx	DMU context to release.
  */
 void
 dmu_context_rele(dmu_context_t *dmu_ctx)
@@ -800,10 +801,8 @@ dmu_context_rele(dmu_context_t *dmu_ctx)
 		dmu_ctx->context_cb(dmu_ctx);
 }
 
-/**
+/*
  * Handle a completed buffer set, and its DMU context if necessary.
- *
- * \param buf_set	Buffer set to handle.
  */
 static void
 dmu_buf_set_complete(dmu_buf_set_t *buf_set)
@@ -903,13 +902,8 @@ dmu_thread_context_process(void)
 	}
 }
 
-/**
- * Release a buffer set for a given dbuf.
- *
- * \param buf_set	Buffer set to release.
- * \param err		Whether an error occurred.
- *
- * \invariant		If specified, the dbuf's mutex must be held.
+/*
+ * Release a buffer set for a given dbuf.  The dbuf's mutex must be held.
  */
 void
 dmu_buf_set_rele(dmu_buf_set_t *buf_set, boolean_t err)
@@ -938,13 +932,10 @@ dmu_buf_set_rele(dmu_buf_set_t *buf_set, boolean_t err)
 	}
 }
 
-/**
+/*
  * Set up the buffers for a given set.
  *
- * \param buf_set	Buffer set to set up buffers for.
- *
- * \retval errno	If any buffer could not be held for this buffer set.
- * \retval 0		Success.
+ * Returns 0 on success, error code on failure.
  */
 static int
 dmu_buf_set_setup_buffers(dmu_buf_set_t *buf_set)
@@ -1001,12 +992,8 @@ dmu_buf_set_setup_buffers(dmu_buf_set_t *buf_set)
 	return (0);
 }
 
-/**
+/*
  * Set up a new transaction for the DMU context.
- *
- * \param dmu_ctx	DMU context to set up new transaction for.
- * \param txp		Address to store dmu_tx_t pointer.
- * \param dnp		Address to store dnode_t pointer for new dnode.
  */
 static int
 dmu_context_setup_tx(dmu_context_t *dmu_ctx, dmu_tx_t **txp, dnode_t **dnp,
@@ -1041,16 +1028,11 @@ out:
 	return (err);
 }
 
-/**
+/*
  * Initialize a buffer set of a certain size.
  *
- * \param dmu_ctx	DMU context to associate the buffer set with.
- * \param buf_set_p	Pointer to set to the new buffer set's address.
- * \param size		Requested size of the buffer set.
- *
- * \retval 0		Success.
- * \retval EIO		I/O error: tried to access past the end of the dnode,
- * 			or dmu_buf_set_setup_buffers() failed.
+ * Returns 0 on success, EIO if the caller tried to access past the end of
+ * the dnode or dmu_buf_set_setup_buffers() failed.
  */
 static int
 dmu_buf_set_init(dmu_context_t *dmu_ctx, dmu_buf_set_t **buf_set_p,
@@ -1134,13 +1116,11 @@ out:
 	return (err);
 }
 
-/**
+/*
  * Process the I/Os queued for a given buffer set.
  *
- * \param buf_set	Buffer set to process I/Os for.
- *
- * \retval errno	Errors from zio_wait or a buffer went UNCACHED.
- * \retval 0		Success.
+ * Returns 0 on success, or error code from zio_wait or if a buffer in the
+ * set changed state to DB_UNCACHED.
  */
 static int
 dmu_buf_set_process_io(dmu_buf_set_t *buf_set)
@@ -1191,15 +1171,15 @@ dmu_buf_set_process_io(dmu_buf_set_t *buf_set)
 	return (0);
 }
 
-/**
+/*
  * Issue the I/O specified in the given DMU context.
  *
- * \param dmu_ctx	The DMU context.
+ * If a DMU callback is specified, it receives any errors.  In this case,
+ * the caller only receives errors that occur during setup.
  *
- * \retval errno	Errors executing I/O chunks.
- * \retval 0		If a DMU callback is specified; the callback
- *			receives any errors.
- * \retval 0		If no DMU callback is specified: Success.
+ * If no DMU callback is specified, the caller receives all errors.
+ *
+ * Returns 0 on success, error code on failure.
  */
 int
 dmu_issue(dmu_context_t *dmu_ctx)
@@ -1259,22 +1239,13 @@ dmu_issue(dmu_context_t *dmu_ctx)
 	return (err);
 }
 
-/**
+/*
  * Set up a DMU context.
  *
- * \param dmu_ctx	The DMU context.
- * \param dn		A held dnode to associate with the context, or NULL.
- * \param os		The object set associated with the context.
- * \param object	The object ID associated with the context.
- * \param size		Size of the I/O to be performed.
- * \param offset	Offset into the dnode to perform the I/O.
- * \param data_buf	Data buffer to perform I/O transfers with.
- * \param tag		Hold tag to use.
- * \param flags		DMU context flags.
+ * A dnode does not have to be provided if a write is being performed.
+ * The dnode will be looked up using <os, object> only as needed.
  *
- * \note	The dnode must not be NULL, unless this is a writer.
- * \note	The dnode, if specified, must be held, unless the
- *		DMU_CTX_FLAG_NO_HOLD flag is specified.
+ * See dmu_context_t in sys/dmu.h for more details on the flags.
  */
 int
 dmu_context_init(dmu_context_t *dmu_ctx, struct dnode *dn, objset_t *os,
@@ -1353,13 +1324,8 @@ dmu_context_init(dmu_context_t *dmu_ctx, struct dnode *dn, objset_t *os,
 	return (0);
 }
 
-/**
+/*
  * Update a DMU context for the next call.
- *
- * \param dmu_ctx	The DMU context.
- * \param data_buf	The updated destination data buffer.
- * \param offset	The offset into the dnode.
- * \param size		The size of the next call.
  */
 void
 dmu_context_seek(dmu_context_t *dmu_ctx, uint64_t offset, uint64_t size,
@@ -1457,7 +1423,7 @@ dmu_prealloc(objset_t *os, uint64_t object, uint64_t offset, uint64_t size,
 	return (err);
 }
 
-/**
+/*
  * DMU support for xuio
  */
 kstat_t *xuio_ksp = NULL;
@@ -1501,7 +1467,7 @@ dmu_xuio_fini(xuio_t *xuio)
 		XUIOSTAT_INCR(xuiostat_onloan_wbuf, -nblk);
 }
 
-/**
+/*
  * Initialize iov[priv->next] and priv->bufs[priv->next] with { off, n, abuf }
  * and increase priv->next by 1.
  */
@@ -1672,7 +1638,7 @@ dmu_write_pages(objset_t *os, uint64_t object, uint64_t offset, uint64_t size,
 #endif	/* sun */
 #endif
 
-/**
+/*
  * Allocate a loaned anonymous arc buffer.
  */
 arc_buf_t *
@@ -1685,7 +1651,7 @@ dmu_request_arcbuf(dmu_buf_t *handle, int size)
 	return (arc_loan_buf(spa, size));
 }
 
-/**
+/*
  * Free a loaned arc buffer.
  */
 void
@@ -1695,7 +1661,7 @@ dmu_return_arcbuf(arc_buf_t *buf)
 	VERIFY(arc_buf_remove_ref(buf, FTAG) == 1);
 }
 
-/**
+/*
  * When possible directly assign passed loaned arc buffer to a dbuf.
  * If this is not possible copy the contents of passed arc buf via
  * dmu_write().
@@ -2208,6 +2174,10 @@ dmu_object_info_from_dnode(dnode_t *dn, dmu_object_info_t *doi)
 	rw_exit(&dn->dn_struct_rwlock);
 }
 
+/*
+ * Get information on a DMU object.
+ * If doi is NULL, just indicates whether the object exists.
+ */
 int
 dmu_object_info(objset_t *os, uint64_t object, dmu_object_info_t *doi)
 {
@@ -2224,6 +2194,9 @@ dmu_object_info(objset_t *os, uint64_t object, dmu_object_info_t *doi)
 	return (0);
 }
 
+/*
+ * As above, but faster; can be used when you have a held dbuf in hand.
+ */
 void
 dmu_object_info_from_db(dmu_buf_t *db_fake, dmu_object_info_t *doi)
 {
@@ -2234,6 +2207,10 @@ dmu_object_info_from_db(dmu_buf_t *db_fake, dmu_object_info_t *doi)
 	DB_DNODE_EXIT(db);
 }
 
+/*
+ * Faster still when you only care about the size.
+ * This is specifically optimized for zfs_getattr().
+ */
 void
 dmu_object_size_from_db(dmu_buf_t *db_fake, uint32_t *blksize,
     u_longlong_t *nblk512)
@@ -2306,6 +2283,7 @@ dmu_init(void)
 	dnode_init();
 	dbuf_init();
 	zfetch_init();
+	zio_compress_init();
 	l2arc_init();
 	arc_init();
 }
@@ -2316,6 +2294,7 @@ dmu_fini(void)
 	arc_fini(); /* arc depends on l2arc */
 	l2arc_fini();
 	zfetch_fini();
+	zio_compress_fini();
 	dbuf_fini();
 	dnode_fini();
 	dmu_objset_fini();

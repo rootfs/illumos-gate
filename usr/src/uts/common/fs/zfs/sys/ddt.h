@@ -35,7 +35,7 @@
 extern "C" {
 #endif
 
-/**
+/*
  * On-disk DDT formats, in the desired search order (newest version first).
  */
 enum ddt_type {
@@ -43,7 +43,7 @@ enum ddt_type {
 	DDT_TYPES
 };
 
-/**
+/*
  * DDT classes, in the desired search order (highest replication level first).
  */
 enum ddt_class {
@@ -58,22 +58,18 @@ enum ddt_class {
 #define	DDT_COMPRESS_BYTEORDER_MASK	0x80
 #define	DDT_COMPRESS_FUNCTION_MASK	0x7f
 
-/**
+/*
  * On-disk ddt entry:  key (name) and physical storage (value).
  */
 typedef struct ddt_key {
-	zio_cksum_t	ddk_cksum;	/**< 256-bit block checksum */
-	/**
-	 * LSIZE, PSIZE, compression
-	 *
-	 * layout:
-	 \verbatim
-	     +-------+-------+-------+-------+-------+-------+-------+-------+
-	     |   0   |   0   |   0   | comp  |     PSIZE     |     LSIZE     |
-	     +-------+-------+-------+-------+-------+-------+-------+-------+
-	 \endverbatim
+	zio_cksum_t	ddk_cksum;	/* 256-bit block checksum */
+	/*
+	 * ddk_prop layout:
+	 *   +-------+-------+-------+-------+-------+-------+-------+-------+
+	 *   |   0   |   0   |   0   | comp  |     PSIZE     |     LSIZE     |
+	 *   +-------+-------+-------+-------+-------+-------+-------+-------+
 	 */
-	uint64_t	ddk_prop;	/**< LSIZE, PSIZE, compression */
+	uint64_t	ddk_prop;	/* LSIZE, PSIZE, compression */
 } ddt_key_t;
 
 #define	DDK_GET_LSIZE(ddk)	\
@@ -105,7 +101,7 @@ enum ddt_phys_type {
 	DDT_PHYS_TYPES
 };
 
-/**
+/*
  * In-core ddt entry
  */
 struct ddt_entry {
@@ -121,7 +117,7 @@ struct ddt_entry {
 	avl_node_t	dde_node;
 };
 
-/**
+/*
  * In-core ddt
  */
 struct ddt {
@@ -139,7 +135,7 @@ struct ddt {
 	avl_node_t	ddt_node;
 };
 
-/**
+/*
  * In-core and on-disk bookmark for DDT walks
  */
 typedef struct ddt_bookmark {
@@ -149,7 +145,7 @@ typedef struct ddt_bookmark {
 	uint64_t	ddb_cursor;
 } ddt_bookmark_t;
 
-/**
+/*
  * Ops vector to access a specific DDT object type.
  */
 typedef struct ddt_ops {

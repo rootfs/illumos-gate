@@ -31,8 +31,7 @@
 #include <sys/fs/zfs.h>
 #include <sys/fm/fs/zfs.h>
 
-/**
- * \file vdev_file.c
+/*
  * Virtual device vector for files.
  */
 

@@ -37,11 +37,11 @@ extern "C" {
 struct dsl_dataset;
 struct dsl_dir;
 
-/** The callback func may not call into the DMU or DSL! */
+/* The callback func may not call into the DMU or DSL! */
 typedef void (dsl_prop_changed_cb_t)(void *arg, uint64_t newval);
 
 typedef struct dsl_prop_cb_record {
-	list_node_t cbr_node; /**< link on dd_prop_cbs */
+	list_node_t cbr_node; /* link on dd_prop_cbs */
 	struct dsl_dataset *cbr_ds;
 	const char *cbr_propname;
 	dsl_prop_changed_cb_t *cbr_func;
@@ -60,7 +60,7 @@ typedef struct dsl_prop_set_arg {
 	int psa_numints;
 	const void *psa_value;
 
-	/**
+	/*
 	 * Used to handle the special requirements of the quota and reservation
 	 * properties.
 	 */

@@ -49,17 +49,17 @@ extern int fzap_default_block_shift;
 typedef struct mzap_ent_phys {
 	uint64_t mze_value;
 	uint32_t mze_cd;
-	uint16_t mze_pad;	/**< in case we want to chain them someday */
+	uint16_t mze_pad;	/* in case we want to chain them someday */
 	char mze_name[MZAP_NAME_LEN];
 } mzap_ent_phys_t;
 
 typedef struct mzap_phys {
-	uint64_t mz_block_type;	/**< ZBT_MICRO */
+	uint64_t mz_block_type;	/* ZBT_MICRO */
 	uint64_t mz_salt;
 	uint64_t mz_normflags;
 	uint64_t mz_pad[5];
-	/** actually variable size depending on block size */
 	mzap_ent_phys_t mz_chunk[1];
+	/* actually variable size depending on block size */
 } mzap_phys_t;
 
 typedef struct mzap_dbuf {
@@ -71,7 +71,7 @@ typedef struct mzap_ent {
 	avl_node_t mze_node;
 	int mze_chunkid;
 	uint64_t mze_hash;
-	uint32_t mze_cd; /**< copy from mze_phys->mze_cd */
+	uint32_t mze_cd; /* copy from mze_phys->mze_cd */
 } mzap_ent_t;
 
 #define	MZE_PHYS(zap, mze) \
@@ -97,13 +97,13 @@ struct zap_leaf;
 #define	ZBT_MICRO		((1ULL << 63) + 3)
 /* any other values are ptrtbl blocks */
 
-/**
+/*
  * the embedded pointer table takes up half a block:
  * block size / entry size (2^3) / 2
  */
 #define	ZAP_EMBEDDED_PTRTBL_SHIFT(zap) (FZAP_BLOCK_SHIFT(zap) - 3 - 1)
 
-/**
+/*
  * The embedded pointer table starts half-way through the block.  Since
  * the pointer table itself is half the block, it starts at (64-bit)
  * word number (1<<ZAP_EMBEDDED_PTRTBL_SHIFT(zap)).
@@ -112,32 +112,34 @@ struct zap_leaf;
 	((uint64_t *)(zap)->zap_f_phys) \
 	[(idx) + (1<<ZAP_EMBEDDED_PTRTBL_SHIFT(zap))]
 
-/**
- * This structure is followed by padding, and then the embedded
- * pointer table.  The embedded pointer table takes up second
- * half of the block.  It is accessed using the
- * ZAP_EMBEDDED_PTRTBL_ENT() macro.
- *
- * \note  If zap_phys_t is modified, zap_byteswap() must be modified.
+/*
+ * TAKE NOTE:
+ * If zap_phys_t is modified, zap_byteswap() must be modified.
  */
 typedef struct zap_phys {
-	uint64_t zap_block_type;	/**< ZBT_HEADER */
-	uint64_t zap_magic;		/**< ZAP_MAGIC */
+	uint64_t zap_block_type;	/* ZBT_HEADER */
+	uint64_t zap_magic;		/* ZAP_MAGIC */
 
 	struct zap_table_phys {
-		uint64_t zt_blk;	/**< starting block number */
-		uint64_t zt_numblks;	/**< number of blocks */
-		uint64_t zt_shift;	/**< bits to index it */
-		uint64_t zt_nextblk;	/**< next (larger) copy start block */
-		uint64_t zt_blks_copied; /**< number source blocks copied */
+		uint64_t zt_blk;	/* starting block number */
+		uint64_t zt_numblks;	/* number of blocks */
+		uint64_t zt_shift;	/* bits to index it */
+		uint64_t zt_nextblk;	/* next (larger) copy start block */
+		uint64_t zt_blks_copied; /* number source blocks copied */
 	} zap_ptrtbl;
 
-	uint64_t zap_freeblk;		/**< the next free block */
-	uint64_t zap_num_leafs;		/**< number of leafs */
-	uint64_t zap_num_entries;	/**< number of entries */
-	uint64_t zap_salt;		/**< salt to stir into hash function */
-	uint64_t zap_normflags;		/**< flags for u8_textprep_str() */
-	uint64_t zap_flags;		/**< zap_flags_t */
+	uint64_t zap_freeblk;		/* the next free block */
+	uint64_t zap_num_leafs;		/* number of leafs */
+	uint64_t zap_num_entries;	/* number of entries */
+	uint64_t zap_salt;		/* salt to stir into hash function */
+	uint64_t zap_normflags;		/* flags for u8_textprep_str() */
+	uint64_t zap_flags;		/* zap_flags_t */
+	/*
+	 * This structure is followed by padding, and then the embedded
+	 * pointer table.  The embedded pointer table takes up second
+	 * half of the block.  It is accessed using the
+	 * ZAP_EMBEDDED_PTRTBL_ENT() macro.
+	 */
 } zap_phys_t;
 
 typedef struct fzap_dbuf {
@@ -148,7 +150,7 @@ typedef struct fzap_dbuf {
 typedef struct zap_table_phys zap_table_phys_t;
 
 typedef struct zap {
-	/** Dbuf user eviction data for this instance. */
+	/* Dbuf user eviction data for this instance. */
 	dmu_buf_user_t db_evict;
 	objset_t *zap_objset;
 	uint64_t zap_object;
@@ -163,7 +165,7 @@ typedef struct zap {
 	uint64_t zap_salt;
 	union {
 		struct {
-			/** protects zap_num_entries */
+			/* protects zap_num_entries */
 			kmutex_t zap_num_entries_mtx;
 			int zap_block_shift;
 		} zap_fat;

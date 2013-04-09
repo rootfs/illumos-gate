@@ -22,8 +22,7 @@
  * Copyright (c) 2005, 2010, Oracle and/or its affiliates. All rights reserved.
  */
 
-/**
- * \file zio_inject.c
+/*
  * ZFS fault injection
  *
  * To handle fault injection, we keep track of a series of zinject_record_t
@@ -60,7 +59,7 @@ static list_t inject_handlers;
 static krwlock_t inject_lock;
 static int inject_next_id = 1;
 
-/**
+/*
  * Returns true if the given record matches the I/O in progress.
  */
 static boolean_t
@@ -96,7 +95,7 @@ zio_match_handler(zbookmark_t *zb, uint64_t type,
 	return (B_FALSE);
 }
 
-/**
+/*
  * Panic the system when a config change happens in the function
  * specified by tag.
  */
@@ -121,7 +120,7 @@ zio_handle_panic_injection(spa_t *spa, char *tag, uint64_t type)
 	rw_exit(&inject_lock);
 }
 
-/**
+/*
  * Determine if the I/O in question should return failure.  Returns the errno
  * to be returned to the caller.
  */
@@ -172,7 +171,7 @@ zio_handle_fault_injection(zio_t *zio, int error)
 	return (ret);
 }
 
-/**
+/*
  * Determine if the zio is part of a label update and has an injection
  * handler associated with that portion of the label. Currently, we
  * allow error injection in either the nvlist or the uberblock region of
@@ -302,7 +301,7 @@ zio_handle_device_injection(vdev_t *vd, zio_t *zio, int error)
 	return (ret);
 }
 
-/**
+/*
  * Simulate hardware that ignores cache flushes.  For requested number
  * of seconds nix the actual writing to disk.
  */
@@ -380,7 +379,7 @@ spa_handle_ignored_writes(spa_t *spa)
 	rw_exit(&inject_lock);
 }
 
-/**
+/*
  * Create a new handler for the given record.  We add it to the list, adding
  * a reference to the spa_t in the process.  We increment zio_injection_enabled,
  * which is the switch to trigger all fault injection.
@@ -435,7 +434,7 @@ zio_inject_fault(char *name, int flags, int *id, zinject_record_t *record)
 	return (0);
 }
 
-/**
+/*
  * Returns the next record with an ID greater than that supplied to the
  * function.  Used to iterate over all handlers in the system.
  */
@@ -469,7 +468,7 @@ zio_inject_list_next(int *id, char *name, size_t buflen,
 	return (ret);
 }
 
-/**
+/*
  * Clear the fault handler with the given identifier, or return ENOENT if none
  * exists.
  */

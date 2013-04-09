@@ -702,7 +702,7 @@ typedef struct vdev_stat {
 	uint64_t	vs_self_healed;		/* self-healed bytes	*/
 	uint64_t	vs_scan_removing;	/* removing?	*/
 	uint64_t	vs_scan_processed;	/* scan processed bytes	*/
-	hrtime_t	vs_zio_time[ZIO_TYPES];	/**< time executing zios */
+	hrtime_t	vs_zio_time[ZIO_TYPES];	/* time executing zios */
 } vdev_stat_t;
 
 /*

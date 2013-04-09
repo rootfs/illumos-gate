@@ -51,28 +51,28 @@ typedef enum dd_used {
 #define	DD_FLAG_USED_BREAKDOWN (1<<0)
 
 typedef struct dsl_dir_phys {
-	uint64_t dd_creation_time; /**< not actually used */
+	uint64_t dd_creation_time; /* not actually used */
 	uint64_t dd_head_dataset_obj;
 	uint64_t dd_parent_obj;
 	uint64_t dd_origin_obj;
 	uint64_t dd_child_dir_zapobj;
-	/**
+	/*
 	 * how much space our children are accounting for; for leaf
 	 * datasets, == physical space used by fs + snaps
 	 */
 	uint64_t dd_used_bytes;
 	uint64_t dd_compressed_bytes;
 	uint64_t dd_uncompressed_bytes;
-	/** Administrative quota setting */
+	/* Administrative quota setting */
 	uint64_t dd_quota;
-	/** Administrative reservation setting */
+	/* Administrative reservation setting */
 	uint64_t dd_reserved;
 	uint64_t dd_props_zapobj;
-	uint64_t dd_deleg_zapobj; /**< dataset delegation permissions */
+	uint64_t dd_deleg_zapobj; /* dataset delegation permissions */
 	uint64_t dd_flags;
 	uint64_t dd_used_breakdown[DD_USED_NUM];
-	uint64_t dd_clones; /**< dsl_dir objects */
-	uint64_t dd_pad[13]; /**< pad out to 256 bytes for good measure */
+	uint64_t dd_clones; /* dsl_dir objects */
+	uint64_t dd_pad[13]; /* pad out to 256 bytes for good measure */
 } dsl_dir_phys_t;
 
 typedef struct dsl_dir_dbuf {
@@ -81,12 +81,10 @@ typedef struct dsl_dir_dbuf {
 } dsl_dir_dbuf_t;
 
 struct dsl_dir {
-	/** Dbuf user eviction data for this instance. */
+	/* Dbuf user eviction data for this instance. */
 	dmu_buf_user_t db_evict;
 
-	/**
-	 * \name These are immutable; no lock needed
-	 * \{ */
+	/* These are immutable; no lock needed: */
 	uint64_t dd_object;
 	union {
 		dmu_buf_t *dd_dmu_db;
@@ -94,34 +92,24 @@ struct dsl_dir {
 	} dd_db_u;
 	dsl_pool_t *dd_pool;
 
-	/**
-	 * \}
-	 * \name Protected by lock on pool's dp_dirty_dirs list 
-	 * \{*/
+	/* protected by lock on pool's dp_dirty_dirs list */
 	txg_node_t dd_dirty_link;
 
-	/**
-	 * \}
-	 * \name protected by dp_config_rwlock 
-	 * \{ */
+	/* protected by dp_config_rwlock */
 	dsl_dir_t *dd_parent;
 
-	/**
-	 * \}
-	 * \name Protected by dd_lock 
-	 * \{*/
+	/* Protected by dd_lock */
 	kmutex_t dd_lock;
-	list_t dd_prop_cbs; /**< list of dsl_prop_cb_record_t's */
-	timestruc_t dd_snap_cmtime; /**< last time snapshot namespace changed */
+	list_t dd_prop_cbs; /* list of dsl_prop_cb_record_t's */
+	timestruc_t dd_snap_cmtime; /* last time snapshot namespace changed */
 	uint64_t dd_origin_txg;
-	/** \} */
 
-	/** gross estimate of space used by in-flight tx's */
+	/* gross estimate of space used by in-flight tx's */
 	uint64_t dd_tempreserved[TXG_SIZE];
-	/** amount of space we expect to write; == amount of dirty data */
+	/* amount of space we expect to write; == amount of dirty data */
 	int64_t dd_space_towrite[TXG_SIZE];
 
-	/** protected by dd_lock; keep at end of struct for better locality */
+	/* protected by dd_lock; keep at end of struct for better locality */
 	char dd_myname[MAXNAMELEN];
 };
 

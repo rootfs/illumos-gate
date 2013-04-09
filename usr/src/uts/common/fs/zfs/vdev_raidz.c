@@ -32,11 +32,8 @@
 #include <sys/fs/zfs.h>
 #include <sys/fm/fs/zfs.h>
 
-/**
- * \file vdev_raidz.c
+/*
  * Virtual device vector for RAID-Z.
- *
- * <H2>Encoding</H2>
  *
  * This vdev supports single, double, and triple parity. For single parity,
  * we use a simple XOR of all the data columns. For double or triple parity,
@@ -59,20 +56,19 @@
  * integers mod 2^N. In our case we choose N=8 for GF(8) so that all elements
  * can be expressed with a single byte. Briefly, the operations on the
  * field are defined as follows:
- *   - addition (+) is represented by a bitwise XOR
- *   - subtraction (-) is therefore identical to addition: A + B = A - B
- *   - multiplication of A by 2 is defined by the following bitwise expression:
  *
- * \verbatim
-  	(A * 2)_7 = A_6
-  	(A * 2)_6 = A_5
-  	(A * 2)_5 = A_4
-  	(A * 2)_4 = A_3 + A_7
-  	(A * 2)_3 = A_2 + A_7
-  	(A * 2)_2 = A_1 + A_7
-  	(A * 2)_1 = A_0
-  	(A * 2)_0 = A_7
-   \endverbatim 
+ *   o addition (+) is represented by a bitwise XOR
+ *   o subtraction (-) is therefore identical to addition: A + B = A - B
+ *   o multiplication of A by 2 is defined by the following bitwise expression:
+ *
+ *	(A * 2)_7 = A_6
+ *	(A * 2)_6 = A_5
+ *	(A * 2)_5 = A_4
+ *	(A * 2)_4 = A_3 + A_7
+ *	(A * 2)_3 = A_2 + A_7
+ *	(A * 2)_2 = A_1 + A_7
+ *	(A * 2)_1 = A_0
+ *	(A * 2)_0 = A_7
  *
  * In C, multiplying by 2 is therefore ((a << 1) ^ ((a & 0x80) ? 0x1d : 0)).
  * As an aside, this multiplication is derived from the error correcting
@@ -88,13 +84,11 @@
  * The up-to-three parity columns, P, Q, R over several data columns,
  * D_0, ... D_n-1, can be expressed by field operations:
  *
- * \verbatim
-  	P = D_0 + D_1 + ... + D_n-2 + D_n-1
-  	Q = 2^n-1 * D_0 + 2^n-2 * D_1 + ... + 2^1 * D_n-2 + 2^0 * D_n-1
-  	  = ((...((D_0) * 2 + D_1) * 2 + ...) * 2 + D_n-2) * 2 + D_n-1
-  	R = 4^n-1 * D_0 + 4^n-2 * D_1 + ... + 4^1 * D_n-2 + 4^0 * D_n-1
-  	  = ((...((D_0) * 4 + D_1) * 4 + ...) * 4 + D_n-2) * 4 + D_n-1
-   \endverbatim
+ *	P = D_0 + D_1 + ... + D_n-2 + D_n-1
+ *	Q = 2^n-1 * D_0 + 2^n-2 * D_1 + ... + 2^1 * D_n-2 + 2^0 * D_n-1
+ *	  = ((...((D_0) * 2 + D_1) * 2 + ...) * 2 + D_n-2) * 2 + D_n-1
+ *	R = 4^n-1 * D_0 + 4^n-2 * D_1 + ... + 4^1 * D_n-2 + 4^0 * D_n-1
+ *	  = ((...((D_0) * 4 + D_1) * 4 + ...) * 4 + D_n-2) * 4 + D_n-1
  *
  * We chose 1, 2, and 4 as our generators because 1 corresponds to the trival
  * XOR operation, and 2 and 4 can be computed quickly and generate linearly-
@@ -106,31 +100,31 @@
  */
 
 typedef struct raidz_col {
-	uint64_t rc_devidx;		/**< child device index for I/O */
-	uint64_t rc_offset;		/**< device offset */
-	uint64_t rc_size;		/**< I/O size */
-	void *rc_data;			/**< I/O data */
-	void *rc_gdata;			/**< used to store the "good" version */
-	int rc_error;			/**< I/O error for this device */
-	uint8_t rc_tried;		/**< Did we attempt this I/O column? */
-	uint8_t rc_skipped;		/**< Did we skip this I/O column? */
+	uint64_t rc_devidx;		/* child device index for I/O */
+	uint64_t rc_offset;		/* device offset */
+	uint64_t rc_size;		/* I/O size */
+	void *rc_data;			/* I/O data */
+	void *rc_gdata;			/* used to store the "good" version */
+	int rc_error;			/* I/O error for this device */
+	uint8_t rc_tried;		/* Did we attempt this I/O column? */
+	uint8_t rc_skipped;		/* Did we skip this I/O column? */
 } raidz_col_t;
 
 typedef struct raidz_map {
-	uint64_t rm_cols;		/**< Regular column count */
-	uint64_t rm_scols;		/**< Count including skipped columns */
-	uint64_t rm_bigcols;		/**< Number of oversized columns */
-	uint64_t rm_asize;		/**< Actual total I/O size */
-	uint64_t rm_missingdata;	/**< Count of missing data devices */
-	uint64_t rm_missingparity;	/**< Count of missing parity devices */
-	uint64_t rm_firstdatacol;	/**< First data column/parity count */
-	uint64_t rm_nskip;		/**< Skipped sectors for padding */
-	uint64_t rm_skipstart;		/**< Column index of padding start */
-	void *rm_datacopy;		/**< rm_asize-buffer of copied data */
-	uintptr_t rm_reports;		/**< # of referencing checksum reports*/
-	uint8_t	rm_freed;		/**< map no longer has referencing ZIO*/
-	uint8_t	rm_ecksuminjected;	/**< checksum error was injected */
-	raidz_col_t rm_col[1];		/**< Flexible array of I/O columns */
+	uint64_t rm_cols;		/* Regular column count */
+	uint64_t rm_scols;		/* Count including skipped columns */
+	uint64_t rm_bigcols;		/* Number of oversized columns */
+	uint64_t rm_asize;		/* Actual total I/O size */
+	uint64_t rm_missingdata;	/* Count of missing data devices */
+	uint64_t rm_missingparity;	/* Count of missing parity devices */
+	uint64_t rm_firstdatacol;	/* First data column/parity count */
+	uint64_t rm_nskip;		/* Skipped sectors for padding */
+	uint64_t rm_skipstart;		/* Column index of padding start */
+	void *rm_datacopy;		/* rm_asize-buffer of copied data */
+	uintptr_t rm_reports;		/* # of referencing checksum reports */
+	uint8_t	rm_freed;		/* map no longer has referencing ZIO */
+	uint8_t	rm_ecksuminjected;	/* checksum error was injected */
+	raidz_col_t rm_col[1];		/* Flexible array of I/O columns */
 } raidz_map_t;
 
 #define	VDEV_RAIDZ_P		0
@@ -140,7 +134,7 @@ typedef struct raidz_map {
 #define	VDEV_RAIDZ_MUL_2(x)	(((x) << 1) ^ (((x) & 0x80) ? 0x1d : 0))
 #define	VDEV_RAIDZ_MUL_4(x)	(VDEV_RAIDZ_MUL_2(VDEV_RAIDZ_MUL_2(x)))
 
-/**
+/*
  * We provide a mechanism to perform the field multiplication operation on a
  * 64-bit value all at once rather than a byte at a time. This works by
  * creating a mask from the top bit in each byte and using that to
@@ -160,12 +154,12 @@ typedef struct raidz_map {
 	VDEV_RAIDZ_64MUL_2((x), mask); \
 }
 
-/**
+/*
  * Force reconstruction to use the general purpose method.
  */
 int vdev_raidz_default_to_general;
 
-/** Powers of 2 in the Galois field defined above. */
+/* Powers of 2 in the Galois field defined above. */
 static const uint8_t vdev_raidz_pow2[256] = {
 	0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80,
 	0x1d, 0x3a, 0x74, 0xe8, 0xcd, 0x87, 0x13, 0x26,
@@ -200,7 +194,7 @@ static const uint8_t vdev_raidz_pow2[256] = {
 	0x2c, 0x58, 0xb0, 0x7d, 0xfa, 0xe9, 0xcf, 0x83,
 	0x1b, 0x36, 0x6c, 0xd8, 0xad, 0x47, 0x8e, 0x01
 };
-/** Logs of 2 in the Galois field defined above. */
+/* Logs of 2 in the Galois field defined above. */
 static const uint8_t vdev_raidz_log2[256] = {
 	0x00, 0x00, 0x01, 0x19, 0x02, 0x32, 0x1a, 0xc6,
 	0x03, 0xdf, 0x33, 0xee, 0x1b, 0x68, 0xc7, 0x4b,
@@ -238,7 +232,7 @@ static const uint8_t vdev_raidz_log2[256] = {
 
 static void vdev_raidz_generate_parity(raidz_map_t *rm);
 
-/**
+/*
  * Multiply a given number by 2 raised to the given power.
  */
 static uint8_t
@@ -378,7 +372,7 @@ vdev_raidz_cksum_finish(zio_cksum_report_t *zcr, const void *good_data)
 	zfs_ereport_finish_checksum(zcr, good, bad, B_TRUE);
 }
 
-/**
+/*
  * Invoked indirectly by zfs_ereport_start_checksum(), called
  * below when our read operation fails completely.  The main point
  * is to keep a copy of everything we read from disk, so that at
@@ -436,10 +430,9 @@ static const zio_vsd_ops_t vdev_raidz_vsd_ops = {
 	vdev_raidz_cksum_report
 };
 
-/**
- * Divides the IO evenly across all child vdevs
- *
- * \param[in]	dcols	Usually, the number of children in the target vdev
+/*
+ * Divides the IO evenly across all child vdevs; usually, dcols is
+ * the number of children in the target vdev.
  */
 static raidz_map_t *
 vdev_raidz_map_alloc(zio_t *zio, uint64_t unit_shift, uint64_t dcols,
@@ -728,7 +721,7 @@ vdev_raidz_generate_parity_pqr(raidz_map_t *rm)
 	}
 }
 
-/**
+/*
  * Generate RAID parity in the first virtual columns according to the number of
  * parity columns available.
  */
@@ -938,45 +931,38 @@ vdev_raidz_reconstruct_pq(raidz_map_t *rm, int *tgts, int ntgts)
 	return ((1 << VDEV_RAIDZ_P) | (1 << VDEV_RAIDZ_Q));
 }
 
-/**
- * \file vdev_raidz.c
- *
- * <H2>Reconstruction</H2>
- *
+/* BEGIN CSTYLED */
+/*
  * In the general case of reconstruction, we must solve the system of linear
  * equations defined by the coeffecients used to generate parity as well as
  * the contents of the data and parity disks. This can be expressed with
  * vectors for the original data (D) and the actual data (d) and parity (p)
  * and a matrix composed of the identity matrix (I) and a dispersal matrix (V):
  *
- * \verbatim
-              __   __                     __     __
-              |     |         __     __   |  p_0  |
-              |  V  |         |  D_0  |   | p_m-1 |
-              |     |    x    |   :   | = |  d_0  |
-              |  I  |         | D_n-1 |   |   :   |
-              |     |         ~~     ~~   | d_n-1 |
-              ~~   ~~                     ~~     ~~
-   \endverbatim
+ *            __   __                     __     __
+ *            |     |         __     __   |  p_0  |
+ *            |  V  |         |  D_0  |   | p_m-1 |
+ *            |     |    x    |   :   | = |  d_0  |
+ *            |  I  |         | D_n-1 |   |   :   |
+ *            |     |         ~~     ~~   | d_n-1 |
+ *            ~~   ~~                     ~~     ~~
  *
  * I is simply a square identity matrix of size n, and V is a vandermonde
  * matrix defined by the coeffecients we chose for the various parity columns
  * (1, 2, 4). Note that these values were chosen both for simplicity, speedy
  * computation as well as linear separability.
  *
- * \verbatim
-        __               __               __     __
-        |   1   ..  1 1 1 |               |  p_0  |
-        | 2^n-1 ..  4 2 1 |   __     __   |   :   |
-        | 4^n-1 .. 16 4 1 |   |  D_0  |   | p_m-1 |
-        |   1   ..  0 0 0 |   |  D_1  |   |  d_0  |
-        |   0   ..  0 0 0 | x |  D_2  | = |  d_1  |
-        |   :       : : : |   |   :   |   |  d_2  |
-        |   0   ..  1 0 0 |   | D_n-1 |   |   :   |
-        |   0   ..  0 1 0 |   ~~     ~~   |   :   |
-        |   0   ..  0 0 1 |               | d_n-1 |
-        ~~               ~~               ~~     ~~
-   \endverbatim
+ *      __               __               __     __
+ *      |   1   ..  1 1 1 |               |  p_0  |
+ *      | 2^n-1 ..  4 2 1 |   __     __   |   :   |
+ *      | 4^n-1 .. 16 4 1 |   |  D_0  |   | p_m-1 |
+ *      |   1   ..  0 0 0 |   |  D_1  |   |  d_0  |
+ *      |   0   ..  0 0 0 | x |  D_2  | = |  d_1  |
+ *      |   :       : : : |   |   :   |   |  d_2  |
+ *      |   0   ..  1 0 0 |   | D_n-1 |   |   :   |
+ *      |   0   ..  0 1 0 |   ~~     ~~   |   :   |
+ *      |   0   ..  0 0 1 |               | d_n-1 |
+ *      ~~               ~~               ~~     ~~
  *
  * Note that I, V, d, and p are known. To compute D, we must invert the
  * matrix and use the known data and parity values to reconstruct the unknown
@@ -986,110 +972,106 @@ vdev_raidz_reconstruct_pq(raidz_map_t *rm, int *tgts, int ntgts)
  * to generate (V|I)' and (d|p)'. We can then generate the inverse of (V|I)'
  * using Gauss-Jordan elimination. In the example below we use m=3 parity
  * columns, n=8 data columns, with errors in d_1, d_2, and p_1:
- * \verbatim
-             __                               __
-             |  1   1   1   1   1   1   1   1  |
-             | 128  64  32  16  8   4   2   1  | <-----+-+-- missing disks
-             |  19 205 116  29  64  16  4   1  |      / /
-             |  1   0   0   0   0   0   0   0  |     / /
-             |  0   1   0   0   0   0   0   0  | <--' /
-    (V|I)  = |  0   0   1   0   0   0   0   0  | <---'
-             |  0   0   0   1   0   0   0   0  |
-             |  0   0   0   0   1   0   0   0  |
-             |  0   0   0   0   0   1   0   0  |
-             |  0   0   0   0   0   0   1   0  |
-             |  0   0   0   0   0   0   0   1  |
-             ~~                               ~~
-             __                               __
-             |  1   1   1   1   1   1   1   1  |
-             | 128  64  32  16  8   4   2   1  |
-             |  19 205 116  29  64  16  4   1  |
-             |  1   0   0   0   0   0   0   0  |
-             |  0   1   0   0   0   0   0   0  |
-    (V|I)' = |  0   0   1   0   0   0   0   0  |
-             |  0   0   0   1   0   0   0   0  |
-             |  0   0   0   0   1   0   0   0  |
-             |  0   0   0   0   0   1   0   0  |
-             |  0   0   0   0   0   0   1   0  |
-             |  0   0   0   0   0   0   0   1  |
-             ~~                               ~~
-   \endverbatim
+ *           __                               __
+ *           |  1   1   1   1   1   1   1   1  |
+ *           | 128  64  32  16  8   4   2   1  | <-----+-+-- missing disks
+ *           |  19 205 116  29  64  16  4   1  |      / /
+ *           |  1   0   0   0   0   0   0   0  |     / /
+ *           |  0   1   0   0   0   0   0   0  | <--' /
+ *  (V|I)  = |  0   0   1   0   0   0   0   0  | <---'
+ *           |  0   0   0   1   0   0   0   0  |
+ *           |  0   0   0   0   1   0   0   0  |
+ *           |  0   0   0   0   0   1   0   0  |
+ *           |  0   0   0   0   0   0   1   0  |
+ *           |  0   0   0   0   0   0   0   1  |
+ *           ~~                               ~~
+ *           __                               __
+ *           |  1   1   1   1   1   1   1   1  |
+ *           | 128  64  32  16  8   4   2   1  |
+ *           |  19 205 116  29  64  16  4   1  |
+ *           |  1   0   0   0   0   0   0   0  |
+ *           |  0   1   0   0   0   0   0   0  |
+ *  (V|I)' = |  0   0   1   0   0   0   0   0  |
+ *           |  0   0   0   1   0   0   0   0  |
+ *           |  0   0   0   0   1   0   0   0  |
+ *           |  0   0   0   0   0   1   0   0  |
+ *           |  0   0   0   0   0   0   1   0  |
+ *           |  0   0   0   0   0   0   0   1  |
+ *           ~~                               ~~
  *
  * Here we employ Gauss-Jordan elimination to find the inverse of (V|I)'. We
  * have carefully chosen the seed values 1, 2, and 4 to ensure that this
  * matrix is not singular.
- * \verbatim
-   __                                                                 __
-   |  1   1   1   1   1   1   1   1     1   0   0   0   0   0   0   0  |
-   |  19 205 116  29  64  16  4   1     0   1   0   0   0   0   0   0  |
-   |  1   0   0   0   0   0   0   0     0   0   1   0   0   0   0   0  |
-   |  0   0   0   1   0   0   0   0     0   0   0   1   0   0   0   0  |
-   |  0   0   0   0   1   0   0   0     0   0   0   0   1   0   0   0  |
-   |  0   0   0   0   0   1   0   0     0   0   0   0   0   1   0   0  |
-   |  0   0   0   0   0   0   1   0     0   0   0   0   0   0   1   0  |
-   |  0   0   0   0   0   0   0   1     0   0   0   0   0   0   0   1  |
-   ~~                                                                 ~~
-   __                                                                 __
-   |  1   0   0   0   0   0   0   0     0   0   1   0   0   0   0   0  |
-   |  1   1   1   1   1   1   1   1     1   0   0   0   0   0   0   0  |
-   |  19 205 116  29  64  16  4   1     0   1   0   0   0   0   0   0  |
-   |  0   0   0   1   0   0   0   0     0   0   0   1   0   0   0   0  |
-   |  0   0   0   0   1   0   0   0     0   0   0   0   1   0   0   0  |
-   |  0   0   0   0   0   1   0   0     0   0   0   0   0   1   0   0  |
-   |  0   0   0   0   0   0   1   0     0   0   0   0   0   0   1   0  |
-   |  0   0   0   0   0   0   0   1     0   0   0   0   0   0   0   1  |
-   ~~                                                                 ~~
-   __                                                                 __
-   |  1   0   0   0   0   0   0   0     0   0   1   0   0   0   0   0  |
-   |  0   1   1   0   0   0   0   0     1   0   1   1   1   1   1   1  |
-   |  0  205 116  0   0   0   0   0     0   1   19  29  64  16  4   1  |
-   |  0   0   0   1   0   0   0   0     0   0   0   1   0   0   0   0  |
-   |  0   0   0   0   1   0   0   0     0   0   0   0   1   0   0   0  |
-   |  0   0   0   0   0   1   0   0     0   0   0   0   0   1   0   0  |
-   |  0   0   0   0   0   0   1   0     0   0   0   0   0   0   1   0  |
-   |  0   0   0   0   0   0   0   1     0   0   0   0   0   0   0   1  |
-   ~~                                                                 ~~
-   __                                                                 __
-   |  1   0   0   0   0   0   0   0     0   0   1   0   0   0   0   0  |
-   |  0   1   1   0   0   0   0   0     1   0   1   1   1   1   1   1  |
-   |  0   0  185  0   0   0   0   0    205  1  222 208 141 221 201 204 |
-   |  0   0   0   1   0   0   0   0     0   0   0   1   0   0   0   0  |
-   |  0   0   0   0   1   0   0   0     0   0   0   0   1   0   0   0  |
-   |  0   0   0   0   0   1   0   0     0   0   0   0   0   1   0   0  |
-   |  0   0   0   0   0   0   1   0     0   0   0   0   0   0   1   0  |
-   |  0   0   0   0   0   0   0   1     0   0   0   0   0   0   0   1  |
-   ~~                                                                 ~~
-   __                                                                 __
-   |  1   0   0   0   0   0   0   0     0   0   1   0   0   0   0   0  |
-   |  0   1   1   0   0   0   0   0     1   0   1   1   1   1   1   1  |
-   |  0   0   1   0   0   0   0   0    166 100  4   40 158 168 216 209 |
-   |  0   0   0   1   0   0   0   0     0   0   0   1   0   0   0   0  |
-   |  0   0   0   0   1   0   0   0     0   0   0   0   1   0   0   0  |
-   |  0   0   0   0   0   1   0   0     0   0   0   0   0   1   0   0  |
-   |  0   0   0   0   0   0   1   0     0   0   0   0   0   0   1   0  |
-   |  0   0   0   0   0   0   0   1     0   0   0   0   0   0   0   1  |
-   ~~                                                                 ~~
-   __                                                                 __
-   |  1   0   0   0   0   0   0   0     0   0   1   0   0   0   0   0  |
-   |  0   1   0   0   0   0   0   0    167 100  5   41 159 169 217 208 |
-   |  0   0   1   0   0   0   0   0    166 100  4   40 158 168 216 209 |
-   |  0   0   0   1   0   0   0   0     0   0   0   1   0   0   0   0  |
-   |  0   0   0   0   1   0   0   0     0   0   0   0   1   0   0   0  |
-   |  0   0   0   0   0   1   0   0     0   0   0   0   0   1   0   0  |
-   |  0   0   0   0   0   0   1   0     0   0   0   0   0   0   1   0  |
-   |  0   0   0   0   0   0   0   1     0   0   0   0   0   0   0   1  |
-   ~~                                                                 ~~
-                     __                               __
-                     |  0   0   1   0   0   0   0   0  |
-                     | 167 100  5   41 159 169 217 208 |
-                     | 166 100  4   40 158 168 216 209 |
-         (V|I)'^-1 = |  0   0   0   1   0   0   0   0  |
-                     |  0   0   0   0   1   0   0   0  |
-                     |  0   0   0   0   0   1   0   0  |
-                     |  0   0   0   0   0   0   1   0  |
-                     |  0   0   0   0   0   0   0   1  |
-                     ~~                               ~~
-   \endverbatim
+ * __                                                                 __
+ * |  1   1   1   1   1   1   1   1     1   0   0   0   0   0   0   0  |
+ * |  19 205 116  29  64  16  4   1     0   1   0   0   0   0   0   0  |
+ * |  1   0   0   0   0   0   0   0     0   0   1   0   0   0   0   0  |
+ * |  0   0   0   1   0   0   0   0     0   0   0   1   0   0   0   0  |
+ * |  0   0   0   0   1   0   0   0     0   0   0   0   1   0   0   0  |
+ * |  0   0   0   0   0   1   0   0     0   0   0   0   0   1   0   0  |
+ * |  0   0   0   0   0   0   1   0     0   0   0   0   0   0   1   0  |
+ * |  0   0   0   0   0   0   0   1     0   0   0   0   0   0   0   1  |
+ * ~~                                                                 ~~
+ * __                                                                 __
+ * |  1   0   0   0   0   0   0   0     0   0   1   0   0   0   0   0  |
+ * |  1   1   1   1   1   1   1   1     1   0   0   0   0   0   0   0  |
+ * |  19 205 116  29  64  16  4   1     0   1   0   0   0   0   0   0  |
+ * |  0   0   0   1   0   0   0   0     0   0   0   1   0   0   0   0  |
+ * |  0   0   0   0   1   0   0   0     0   0   0   0   1   0   0   0  |
+ * |  0   0   0   0   0   1   0   0     0   0   0   0   0   1   0   0  |
+ * |  0   0   0   0   0   0   1   0     0   0   0   0   0   0   1   0  |
+ * |  0   0   0   0   0   0   0   1     0   0   0   0   0   0   0   1  |
+ * ~~                                                                 ~~
+ * __                                                                 __
+ * |  1   0   0   0   0   0   0   0     0   0   1   0   0   0   0   0  |
+ * |  0   1   1   0   0   0   0   0     1   0   1   1   1   1   1   1  |
+ * |  0  205 116  0   0   0   0   0     0   1   19  29  64  16  4   1  |
+ * |  0   0   0   1   0   0   0   0     0   0   0   1   0   0   0   0  |
+ * |  0   0   0   0   1   0   0   0     0   0   0   0   1   0   0   0  |
+ * |  0   0   0   0   0   1   0   0     0   0   0   0   0   1   0   0  |
+ * |  0   0   0   0   0   0   1   0     0   0   0   0   0   0   1   0  |
+ * |  0   0   0   0   0   0   0   1     0   0   0   0   0   0   0   1  |
+ * ~~                                                                 ~~
+ * __                                                                 __
+ * |  1   0   0   0   0   0   0   0     0   0   1   0   0   0   0   0  |
+ * |  0   1   1   0   0   0   0   0     1   0   1   1   1   1   1   1  |
+ * |  0   0  185  0   0   0   0   0    205  1  222 208 141 221 201 204 |
+ * |  0   0   0   1   0   0   0   0     0   0   0   1   0   0   0   0  |
+ * |  0   0   0   0   1   0   0   0     0   0   0   0   1   0   0   0  |
+ * |  0   0   0   0   0   1   0   0     0   0   0   0   0   1   0   0  |
+ * |  0   0   0   0   0   0   1   0     0   0   0   0   0   0   1   0  |
+ * |  0   0   0   0   0   0   0   1     0   0   0   0   0   0   0   1  |
+ * ~~                                                                 ~~
+ * __                                                                 __
+ * |  1   0   0   0   0   0   0   0     0   0   1   0   0   0   0   0  |
+ * |  0   1   1   0   0   0   0   0     1   0   1   1   1   1   1   1  |
+ * |  0   0   1   0   0   0   0   0    166 100  4   40 158 168 216 209 |
+ * |  0   0   0   1   0   0   0   0     0   0   0   1   0   0   0   0  |
+ * |  0   0   0   0   1   0   0   0     0   0   0   0   1   0   0   0  |
+ * |  0   0   0   0   0   1   0   0     0   0   0   0   0   1   0   0  |
+ * |  0   0   0   0   0   0   1   0     0   0   0   0   0   0   1   0  |
+ * |  0   0   0   0   0   0   0   1     0   0   0   0   0   0   0   1  |
+ * ~~                                                                 ~~
+ * __                                                                 __
+ * |  1   0   0   0   0   0   0   0     0   0   1   0   0   0   0   0  |
+ * |  0   1   0   0   0   0   0   0    167 100  5   41 159 169 217 208 |
+ * |  0   0   1   0   0   0   0   0    166 100  4   40 158 168 216 209 |
+ * |  0   0   0   1   0   0   0   0     0   0   0   1   0   0   0   0  |
+ * |  0   0   0   0   1   0   0   0     0   0   0   0   1   0   0   0  |
+ * |  0   0   0   0   0   1   0   0     0   0   0   0   0   1   0   0  |
+ * |  0   0   0   0   0   0   1   0     0   0   0   0   0   0   1   0  |
+ * |  0   0   0   0   0   0   0   1     0   0   0   0   0   0   0   1  |
+ * ~~                                                                 ~~
+ *                   __                               __
+ *                   |  0   0   1   0   0   0   0   0  |
+ *                   | 167 100  5   41 159 169 217 208 |
+ *                   | 166 100  4   40 158 168 216 209 |
+ *       (V|I)'^-1 = |  0   0   0   1   0   0   0   0  |
+ *                   |  0   0   0   0   1   0   0   0  |
+ *                   |  0   0   0   0   0   1   0   0  |
+ *                   |  0   0   0   0   0   0   1   0  |
+ *                   |  0   0   0   0   0   0   0   1  |
+ *                   ~~                               ~~
  *
  * We can then simply compute D = (V|I)'^-1 x (d|p)' to discover the values
  * of the missing data.
@@ -1101,6 +1083,7 @@ vdev_raidz_reconstruct_pq(raidz_map_t *rm, int *tgts, int ntgts)
  * that reason, we only build the coefficients in the rows that correspond to
  * targeted columns.
  */
+/* END CSTYLED */
 
 static void
 vdev_raidz_matrix_init(raidz_map_t *rm, int n, int nmap, int *map,
@@ -1486,9 +1469,6 @@ vdev_raidz_reconstruct(raidz_map_t *rm, int *t, int nt)
 	return (code);
 }
 
-/**
- * Called (via vector tables) by vdev_open.
- */
 static int
 vdev_raidz_open(vdev_t *vd, uint64_t *asize, uint64_t *max_asize,
     uint64_t *logical_ashift, uint64_t *physical_ashift)
@@ -1560,9 +1540,6 @@ vdev_raidz_asize(vdev_t *vd, uint64_t psize)
 	return (asize);
 }
 
-/**
- * Record the completion of a column's child IO.
- */
 static void
 vdev_raidz_child_done(zio_t *zio)
 {
@@ -1573,21 +1550,21 @@ vdev_raidz_child_done(zio_t *zio)
 	rc->rc_skipped = 0;
 }
 
-/**
+/*
  * Start an IO operation on a RAIDZ VDev
  *
  *  Outline:
  *    - For Write operations:
- *    	-# Generate the parity data
- *    	-# Send async write operations to each column (data and parity)'s VDev
- *    	-# If the column skips any sectors for padding, generate dummy write
+ *    	1. Generate the parity data
+ *    	2. Send async write operations to each column (data and parity)'s VDev
+ *    	3. If the column skips any sectors for padding, generate dummy write
  *    	   operations for those areas to improve aggregation continuity.
  *    - For read operations:
- *    	-# Send an async read operation to each data column's VDev to read the
+ *    	1. Send an async read operation to each data column's VDev to read the
  *    	   range of data required for zio.
- *    	-# If this is a scrub or resilver operation, or if any of the data
- *    	vdevs have had errors, then send async read operations to the parity
- *    	columns' VDevs as well.
+ *    	2. If this is a scrub or resilver operation, or if any of the data
+ *    	   vdevs have had errors, then send async read operations to the parity
+ *    	   columns' VDevs as well.
  */
 static int
 vdev_raidz_io_start(zio_t *zio)
@@ -1677,7 +1654,7 @@ vdev_raidz_io_start(zio_t *zio)
 }
 
 
-/**
+/*
  * Report a checksum error for a child of a RAID-Z device.
  */
 static void
@@ -1702,7 +1679,7 @@ raidz_checksum_error(zio_t *zio, raidz_col_t *rc, void *bad_data)
 	}
 }
 
-/**
+/*
  * We keep track of whether or not there were any injected errors, so that
  * any ereports we generate can note it.
  */
@@ -1719,7 +1696,7 @@ raidz_checksum_verify(zio_t *zio)
 	return (ret);
 }
 
-/**
+/*
  * Generate the parity from the data columns.  If we tried and were able to
  * read the parity without error, verify that the generated parity matches the
  * data we read. If it doesn't, we fire off a checksum error. Return the
@@ -1757,7 +1734,7 @@ raidz_parity_verify(zio_t *zio, raidz_map_t *rm)
 	return (ret);
 }
 
-/**
+/*
  * Keep statistics on all the ways that we used parity to correct data.
  */
 static uint64_t raidz_corrected[1 << VDEV_RAIDZ_MAXPARITY];
@@ -1773,7 +1750,7 @@ vdev_raidz_worst_error(raidz_map_t *rm)
 	return (error);
 }
 
-/**
+/*
  * Iterate over all combinations of bad data and attempt a reconstruction.
  * Note that the algorithm below is non-optimal because it doesn't take into
  * account how reconstruction is actually performed. For example, with
@@ -1929,23 +1906,24 @@ done:
 	return (ret);
 }
 
-/**
+/*
  * Complete an IO operation on a RAIDZ VDev
  *
  * Outline:
- *   - For write ops:
- *   	-# Check for errors on the child IOs.
- *   	-# Return, setting an error code if too few child VDevs were written
+ *   For write ops:
+ *   	1. Check for errors on the child IOs.
+ *   	2. Return, setting an error code if too few child VDevs were written
  *   	   to reconstruct the data later.
- *   - For read ops:
- *   	-# Check for errors on the child IOs.
- *   	-# If data errors occurred:
- *   	  -# Try to reassemble the data from the parity available.
- *   	  -# If we haven't yet read the parity drives, read them now.
- *   	  -# If all parity drives have been read but the data still doesn't reassemble
- *   	     with a correct checksum, then try combinatorial reconstruction.
- *   	  -# If that doesn't work, return an error.
- *   	-# If there were unexpected errors or this is a resilver operation,
+ *   For read ops:
+ *   	1. Check for errors on the child IOs.
+ *   	2. If data errors occurred:
+ *   	  a. Try to reassemble the data from the parity available.
+ *   	  b. If we haven't yet read the parity drives, read them now.
+ *   	  c. If all parity drives have been read but the data still doesn't
+ *   	     reassemble with a correct checksum, then try combinatorial
+ *   	     reconstruction.
+ *   	  d. If that doesn't work, return an error.
+ *   	3. If there were unexpected errors or this is a resilver operation,
  *   	   rewrite the vdevs that had errors.
  */
 static void
@@ -1990,15 +1968,15 @@ vdev_raidz_io_done(zio_t *zio)
 	}
 
 	if (zio->io_type == ZIO_TYPE_WRITE) {
-	  	/**
-		 * \todo  For now, treat partial writes as a success.
-		 *        (If we couldn't write enough columns to
-		 *        reconstruct the data, the I/O failed.  Otherwise,
-		 *        good enough.) Now that we support write reallocation,
-		 *        it would be better to treat partial failure as real
-		 *        failure unless there are no non-degraded top-level
-		 *        vdevs left, and not update DTLs if we intend to
-		 *        reallocate.
+		/*
+		 * XXX -- for now, treat partial writes as a success.
+		 * (If we couldn't write enough columns to reconstruct
+		 * the data, the I/O failed.  Otherwise, good enough.)
+		 *
+		 * Now that we support write reallocation, it would be better
+		 * to treat partial failure as real failure unless there are
+		 * no non-degraded top-level vdevs left, and not update DTLs
+		 * if we intend to reallocate.
 		 */
 		/* XXPOLICY */
 		if (total_errors > rm->rm_firstdatacol)

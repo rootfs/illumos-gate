@@ -51,7 +51,7 @@ extern "C" {
  * send stream header.
  */
 
-/**
+/*
  * Header types for zfs send streams.
  */
 typedef enum drr_headertype {
@@ -73,13 +73,13 @@ typedef enum drr_headertype {
 #define	DMU_BACKUP_FEATURE_DEDUPPROPS	(0x2)
 #define	DMU_BACKUP_FEATURE_SA_SPILL	(0x4)
 
-/**
+/*
  * Mask of all supported backup features
  */
 #define	DMU_BACKUP_FEATURE_MASK	(DMU_BACKUP_FEATURE_DEDUP | \
 		DMU_BACKUP_FEATURE_DEDUPPROPS | DMU_BACKUP_FEATURE_SA_SPILL)
 
-/** Are all features in the given flag word currently supported? */
+/* Are all features in the given flag word currently supported? */
 #define	DMU_STREAM_SUPPORTED(x)	(!((x) & ~DMU_BACKUP_FEATURE_MASK))
 
 #define	DMU_BACKUP_MAGIC 0x2F5bacbacULL
@@ -95,23 +95,20 @@ typedef enum drr_headertype {
 
 #define	DRR_IS_DEDUP_CAPABLE(flags)	((flags) & DRR_CHECKSUM_DEDUP)
 
-/**
+/*
  * zfs ioctl command structure
  */
 struct drr_begin {
 	uint64_t drr_magic;
-	/**
+	/*
 	 * formerly named drr_version
 	 *
- 	 * The drr_versioninfo field of the dmu_replay_record has the
- 	 * following layout:
+ 	 * This field has the following layout:
 	 *
- 	 \verbatim
-	    64      56      48      40      32      24      16      8       0
-	    +-------+-------+-------+-------+-------+-------+-------+-------+
-	    |               reserved        |        feature-flags      |C|S|
-	    +-------+-------+-------+-------+-------+-------+-------+-------+
-	 \endverbatim
+	 *  64      56      48      40      32      24      16      8       0
+	 *  +-------+-------+-------+-------+-------+-------+-------+-------+
+	 *  |               reserved        |        feature-flags      |C|S|
+	 *  +-------+-------+-------+-------+-------+-------+-------+-------+
 	 *
  	 * The low order two bits indicate the header type: SUBSTREAM (0x1)
  	 * or COMPOUNDSTREAM (0x2).  Using two bits for this is historical:
@@ -134,7 +131,6 @@ struct drr_end {
 	uint64_t drr_toguid;
 };
 
-/** bonus content follows drr-toguid */
 struct drr_object {
 	uint64_t drr_object;
 	dmu_object_type_t drr_type;
@@ -145,6 +141,7 @@ struct drr_object {
 	uint8_t drr_compress;
 	uint8_t drr_pad[6];
 	uint64_t drr_toguid;
+	/* bonus content follows */
 };
 
 struct drr_freeobjects {
@@ -153,7 +150,6 @@ struct drr_freeobjects {
 	uint64_t drr_toguid;
 };
 
-/** content follows drr_key */
 struct drr_write {
 	uint64_t drr_object;
 	dmu_object_type_t drr_type;
@@ -164,7 +160,8 @@ struct drr_write {
 	uint8_t drr_checksumtype;
 	uint8_t drr_checksumflags;
 	uint8_t drr_pad2[6];
-	ddt_key_t drr_key; /**< deduplication key */
+	ddt_key_t drr_key; /* deduplication key */
+	/* content follows */
 };
 
 struct drr_free {
@@ -175,37 +172,28 @@ struct drr_free {
 };
 
 struct drr_write_byref {
-	/**
-	 * \name Where to put the data 
-	 * \{ */
+	/* where to put the data */
 	uint64_t drr_object;
 	uint64_t drr_offset;
 	uint64_t drr_length;
 	uint64_t drr_toguid;
-	/**
-	 * \}
-	 * \name Where to find the prior copy of the data 
-	 * \{ */
+	/* where to find the prior copy of the data */
 	uint64_t drr_refguid;
 	uint64_t drr_refobject;
 	uint64_t drr_refoffset;
-	/**
-	 * \}
-	 * \name Properties of the data 
-	 * \{ */
+	/* properties of the data */
 	uint8_t drr_checksumtype;
 	uint8_t drr_checksumflags;
 	uint8_t drr_pad2[6];
-	ddt_key_t drr_key; /**< deduplication key */
-	/** \} */
+	ddt_key_t drr_key; /* deduplication key */
 };
 
-/** spill data follows drr_pad */
 struct drr_spill {
 	uint64_t drr_object;
 	uint64_t drr_length;
 	uint64_t drr_toguid;
-	uint64_t drr_pad[4]; /**< needed for crypto */
+	uint64_t drr_pad[4]; /* needed for crypto */
+	/* spill data follows */
 };
 
 typedef struct dmu_replay_record {
@@ -227,14 +215,14 @@ typedef struct dmu_replay_record {
 	} drr_u;
 } dmu_replay_record_t;
 
-/** diff record range types */
+/* diff record range types */
 typedef enum diff_type {
 	DDR_NONE = 0x1,
 	DDR_INUSE = 0x2,
 	DDR_FREE = 0x4
 } diff_type_t;
 
-/**
+/*
  * The diff reports back ranges of free or in-use objects.
  */
 typedef struct dmu_diff_record {
@@ -267,11 +255,11 @@ typedef struct zinject_record {
 typedef struct zfs_share {
 	uint64_t	z_exportdata;
 	uint64_t	z_sharedata;
-	uint64_t	z_sharetype;	/**< 0 = share, 1 = unshare */
-	uint64_t	z_sharemax;  /**< max length of share string */
+	uint64_t	z_sharetype;	/* 0 = share, 1 = unshare */
+	uint64_t	z_sharemax;  /* max length of share string */
 } zfs_share_t;
 
-/**
+/*
  * ZFS file systems may behave the usual, POSIX-compliant way, where
  * name lookups are case-sensitive.  They may also be set up so that
  * all the name lookups are case-insensitive, or so that only some
@@ -289,20 +277,20 @@ typedef struct zfs_cmd {
 	char		zc_string[MAXNAMELEN];
 	char		zc_top_ds[MAXPATHLEN];
 	uint64_t	zc_guid;
-	uint64_t	zc_nvlist_conf;		/**< really (char *) */
+	uint64_t	zc_nvlist_conf;		/* really (char *) */
 	uint64_t	zc_nvlist_conf_size;
-	uint64_t	zc_nvlist_src;		/**< really (char *) */
+	uint64_t	zc_nvlist_src;		/* really (char *) */
 	uint64_t	zc_nvlist_src_size;
-	uint64_t	zc_nvlist_dst;		/**< really (char *) */
+	uint64_t	zc_nvlist_dst;		/* really (char *) */
 	uint64_t	zc_nvlist_dst_size;
 	uint64_t	zc_cookie;
 	uint64_t	zc_objset_type;
 	uint64_t	zc_perm_action;
-	uint64_t 	zc_history;		/**< really (char *) */
+	uint64_t 	zc_history;		/* really (char *) */
 	uint64_t 	zc_history_len;
 	uint64_t	zc_history_offset;
 	uint64_t	zc_obj;
-	uint64_t	zc_iflags;		/**< internal to zfs(7fs) */
+	uint64_t	zc_iflags;		/* internal to zfs(7fs) */
 	zfs_share_t	zc_share;
 	uint64_t	zc_jailid;
 	dmu_objset_stats_t zc_objset_stats;
@@ -346,7 +334,7 @@ extern int zfs_secpolicy_destroy_perms(const char *name, cred_t *cr);
 extern int zfs_busy(void);
 extern int zfs_unmount_snap(const char *, void *);
 
-/**
+/*
  * ZFS minor numbers can refer to either a control device instance or
  * a zvol. Depending on the value of zss_type, zss_data points to either
  * a zvol_state_t or a zfs_onexit_t.

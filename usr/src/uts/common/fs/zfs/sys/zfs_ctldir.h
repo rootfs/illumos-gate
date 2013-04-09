@@ -49,7 +49,7 @@ void zfsctl_init(void);
 void zfsctl_fini(void);
 boolean_t zfsctl_is_node(vnode_t *);
 
-/**
+/*
  * Returns the name of the special directory used for snapshots and shares
  */
 inline const char*
@@ -58,7 +58,7 @@ zfsctl_ctldir_name()
 	return (zfsctl_abbreviated_snapdir ? ".snapshot" : ".zfs" );
 }
 
-/**
+/*
  * Returns the name of the directory where snapshots are mounted, relative to
  * the ctldir directory
  */

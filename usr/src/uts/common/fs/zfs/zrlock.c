@@ -22,10 +22,7 @@
  * Copyright (c) 2010, Oracle and/or its affiliates. All rights reserved.
  */
 
-/**
- * \file zrlock.c
- * Zero Reference Locks
- *
+/*
  * A Zero Reference Lock (ZRL) is a reference count that can lock out new
  * references only when the count is zero and only without waiting if the count
  * is not already zero. It is similar to a read-write lock in that it allows
