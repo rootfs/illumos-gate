@@ -1056,10 +1056,7 @@ vdev_uberblock_sync_list(vdev_t **svd, int svdcount, uberblock_t *ub, int flags)
 
 	(void) zio_wait(zio);
 
-	error = (good_writes >= 1 ? 0 : EIO);
-	SPA_SET_ZIO_ERROR(spa, zio, error);
-
-	return (error);
+	return (good_writes >= 1 ? 0 : EIO);
 }
 
 /*
@@ -1083,7 +1080,7 @@ vdev_label_sync_top_done(zio_t *zio)
 	uint64_t *good_writes = zio->io_private;
 
 	if (*good_writes == 0)
-		ZIO_SET_ERROR(zio, EIO);
+		zio->io_error = EIO;
 
 	kmem_free(good_writes, sizeof (uint64_t));
 }
@@ -1170,7 +1167,6 @@ vdev_label_sync_list(spa_t *spa, int l, uint64_t txg, int flags)
 	}
 
 	error = zio_wait(zio);
-	SPA_SET_ZIO_ERROR(spa, zio, error);
 
 	/*
 	 * Flush the new labels to disk.

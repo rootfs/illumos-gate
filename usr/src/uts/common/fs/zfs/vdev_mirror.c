@@ -418,7 +418,7 @@ vdev_mirror_io_done(zio_t *zio)
 			 * writes to the old device to have succeeded.
 			 */
 			if (good_copies == 0 || zio->io_vd == NULL)
-				ZIO_SET_ERROR(zio, vdev_mirror_worst_error(mm));
+				zio->io_error = vdev_mirror_worst_error(mm);
 		}
 		return;
 	}
@@ -442,7 +442,7 @@ vdev_mirror_io_done(zio_t *zio)
 
 	/* XXPOLICY */
 	if (good_copies == 0) {
-		ZIO_SET_ERROR(zio, vdev_mirror_worst_error(mm));
+		zio->io_error = vdev_mirror_worst_error(mm);
 		ASSERT(zio->io_error != 0);
 	}
 

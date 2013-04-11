@@ -159,10 +159,9 @@ vdev_file_io_start(zio_t *zio)
 	vdev_file_t *vf;
 	vnode_t *vp;
 	ssize_t resid;
-	int error;
 
 	if (!vdev_readable(vd)) {
-		ZIO_SET_ERROR(zio, ENXIO);
+		zio->io_error = ENXIO;
 		return (ZIO_PIPELINE_CONTINUE);
 	}
 
@@ -172,23 +171,22 @@ vdev_file_io_start(zio_t *zio)
 	if (zio->io_type == ZIO_TYPE_IOCTL) {
 		switch (zio->io_cmd) {
 		case DKIOCFLUSHWRITECACHE:
-			ZIO_SET_ERROR(zio, VOP_FSYNC(vp, FSYNC | FDSYNC,
-			    kcred, NULL));
+			zio->io_error = VOP_FSYNC(vp, FSYNC | FDSYNC,
+			    kcred, NULL);
 			break;
 		default:
-			ZIO_SET_ERROR(zio, ENOTSUP);
+			zio->io_error = ENOTSUP;
 		}
 
 		return (ZIO_PIPELINE_CONTINUE);
 	}
 
-	error = vn_rdwr(zio->io_type == ZIO_TYPE_READ ?
+	zio->io_error = vn_rdwr(zio->io_type == ZIO_TYPE_READ ?
 	    UIO_READ : UIO_WRITE, vp, zio->io_data, zio->io_size,
 	    zio->io_offset, UIO_SYSSPACE, 0, RLIM64_INFINITY, kcred, &resid);
-	ZIO_SET_ERROR(zio, error);
 
 	if (resid != 0 && zio->io_error == 0)
-		ZIO_SET_ERROR(zio, ENOSPC);
+		zio->io_error = ENOSPC;
 
 	zio_interrupt(zio);
 

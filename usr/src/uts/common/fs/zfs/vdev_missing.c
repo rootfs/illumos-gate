@@ -70,7 +70,7 @@ vdev_missing_close(vdev_t *vd)
 static int
 vdev_missing_io_start(zio_t *zio)
 {
-	ZIO_SET_ERROR(zio, ENOTSUP);
+	zio->io_error = ENOTSUP;
 	return (ZIO_PIPELINE_CONTINUE);
 }
 

@@ -405,10 +405,10 @@ vdev_disk_io_intr(buf_t *bp)
 	 * Rather than teach the rest of the stack about other error
 	 * possibilities (EFAULT, etc), we normalize the error value here.
 	 */
-	ZIO_SET_ERROR(zio, geterror(bp) != 0 ? EIO : 0);
+	zio->io_error = (geterror(bp) != 0 ? EIO : 0);
 
 	if (zio->io_error == 0 && bp->b_resid != 0)
-		ZIO_SET_ERROR(zio, EIO);
+		zio->io_error = EIO;
 
 	kmem_free(vdb, sizeof (vdev_disk_buf_t));
 
@@ -431,7 +431,7 @@ vdev_disk_ioctl_done(void *zio_arg, int error)
 {
 	zio_t *zio = zio_arg;
 
-	ZIO_SET_ERROR(zio, error);
+	zio->io_error = error;
 
 	zio_interrupt(zio);
 }
@@ -449,7 +449,7 @@ vdev_disk_io_start(zio_t *zio)
 	if (zio->io_type == ZIO_TYPE_IOCTL) {
 		/* XXPOLICY */
 		if (!vdev_readable(vd)) {
-			ZIO_SET_ERROR(zio, ENXIO);
+			zio->io_error = ENXIO;
 			return (ZIO_PIPELINE_CONTINUE);
 		}
 
@@ -461,7 +461,7 @@ vdev_disk_io_start(zio_t *zio)
 				break;
 
 			if (vd->vdev_nowritecache) {
-				ZIO_SET_ERROR(zio, ENOTSUP);
+				zio->io_error = ENOTSUP;
 				break;
 			}
 
@@ -494,12 +494,12 @@ vdev_disk_io_start(zio_t *zio)
 				 */
 				vd->vdev_nowritecache = B_TRUE;
 			}
-			ZIO_SET_ERROR(zio, error);
+			zio->io_error = error;
 
 			break;
 
 		default:
-			ZIO_SET_ERROR(zio, ENOTSUP);
+			zio->io_error = ENOTSUP;
 		}
 
 		return (ZIO_PIPELINE_CONTINUE);

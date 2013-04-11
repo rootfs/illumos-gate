@@ -372,7 +372,7 @@ zio_decompress(zio_t *zio, void *data, uint64_t size)
 	if (zio->io_error == 0 &&
 	    zio_decompress_data(BP_GET_COMPRESS(zio->io_bp),
 	    zio->io_data, data, zio->io_size, size) != 0)
-		ZIO_SET_ERROR(zio, EIO);
+		zio->io_error = EIO;
 }
 
 /*
@@ -525,13 +525,8 @@ zio_notify_parent(zio_t *pio, zio_t *zio, enum zio_wait_type wait)
 static void
 zio_inherit_child_errors(zio_t *zio, enum zio_child c)
 {
-	if (zio->io_child_error[c] != 0 && zio->io_error == 0) {
-		dprintf("Updating zio %p to error %d (was %d at %s:%d)\n",
-		    zio, zio->io_child_error[c],
-		    zio->io_last_errno.err, zio->io_last_errno.filename,
-		    zio->io_last_errno.lineno);
-		ZIO_SET_ERROR(zio, zio->io_child_error[c]);
-	}
+	if (zio->io_child_error[c] != 0 && zio->io_error == 0)
+		zio->io_error = zio->io_child_error[c];
 }
 
 /*
@@ -1341,7 +1336,7 @@ zio_reexecute(zio_t *pio)
 	pio->io_pipeline = pio->io_orig_pipeline;
 	pio->io_reexecute = 0;
 	pio->io_flags |= ZIO_FLAG_REEXECUTED;
-	ZIO_SET_ERROR(pio, 0);
+	pio->io_error = 0;
 	pio->io_error = 0;
 	for (int w = 0; w < ZIO_WAIT_TYPES; w++)
 		pio->io_state[w] = 0;
@@ -1783,7 +1778,7 @@ zio_write_gang_block(zio_t *pio)
 	    bp, gbh_copies, txg, pio == gio ? NULL : gio->io_bp,
 	    METASLAB_HINTBP_FAVOR | METASLAB_GANG_HEADER);
 	if (error) {
-		ZIO_SET_ERROR(pio, error);
+		pio->io_error = 0;
 		return (ZIO_PIPELINE_CONTINUE);
 	}
 
@@ -2305,7 +2300,7 @@ zio_dva_allocate(zio_t *zio)
 		    error);
 		if (error == ENOSPC && zio->io_size > SPA_MINBLOCKSIZE)
 			return (zio_write_gang_block(zio));
-		ZIO_SET_ERROR(zio, error);
+		zio->io_error = error;
 	}
 
 	return (ZIO_PIPELINE_CONTINUE);
@@ -2326,7 +2321,7 @@ zio_dva_claim(zio_t *zio)
 
 	error = metaslab_claim(zio->io_spa, zio->io_bp, zio->io_txg);
 	if (error)
-		ZIO_SET_ERROR(zio, error);
+		zio->io_error = error;
 
 	return (ZIO_PIPELINE_CONTINUE);
 }
@@ -2505,7 +2500,7 @@ zio_vdev_io_start(zio_t *zio)
 			return (ZIO_PIPELINE_STOP);
 
 		if (!vdev_accessible(vd, zio)) {
-			ZIO_SET_ERROR(zio, ENXIO);
+			zio->io_error = ENXIO;
 			zio_interrupt(zio);
 			return (ZIO_PIPELINE_STOP);
 		}
@@ -2534,15 +2529,15 @@ zio_vdev_io_done(zio_t *zio)
 			vdev_cache_write(zio);
 
 		if (zio_injection_enabled && zio->io_error == 0)
-			ZIO_SET_ERROR(zio, zio_handle_device_injection(vd,
-			    zio, EIO));
+			zio->io_error = zio_handle_device_injection(vd,
+			    zio, EIO);
 
 		if (zio_injection_enabled && zio->io_error == 0)
-			ZIO_SET_ERROR(zio, zio_handle_label_injection(zio, EIO));
+			zio->io_error = zio_handle_label_injection(zio, EIO);
 
 		if (zio->io_error) {
 			if (!vdev_accessible(vd, zio)) {
-				ZIO_SET_ERROR(zio, ENXIO);
+				zio->io_error = ENXIO;
 			} else {
 				unexpected_error = B_TRUE;
 			}
@@ -2600,7 +2595,7 @@ zio_vdev_io_assess(zio_t *zio)
 	}
 
 	if (zio_injection_enabled && zio->io_error == 0)
-		ZIO_SET_ERROR(zio, zio_handle_fault_injection(zio, EIO));
+		zio->io_error = zio_handle_fault_injection(zio, EIO);
 
 	/*
 	 * If the I/O failed, determine whether we should attempt to retry it.
@@ -2612,7 +2607,7 @@ zio_vdev_io_assess(zio_t *zio)
 	    !(zio->io_flags & (ZIO_FLAG_DONT_RETRY | ZIO_FLAG_IO_RETRY))) {
 		ASSERT(!(zio->io_flags & ZIO_FLAG_DONT_QUEUE));	/* not a leaf */
 		ASSERT(!(zio->io_flags & ZIO_FLAG_IO_BYPASS));	/* not a leaf */
-		ZIO_SET_ERROR(zio, 0);
+		zio->io_error = 0;
 		zio->io_flags |= ZIO_FLAG_IO_RETRY |
 		    ZIO_FLAG_DONT_CACHE | ZIO_FLAG_DONT_AGGREGATE;
 		zio->io_stage = ZIO_STAGE_VDEV_IO_START >> 1;
@@ -2627,7 +2622,7 @@ zio_vdev_io_assess(zio_t *zio)
 	 */
 	if (zio->io_error && vd != NULL && vd->vdev_ops->vdev_op_leaf &&
 	    !vdev_accessible(vd, zio))
-		ZIO_SET_ERROR(zio, ENXIO);
+		zio->io_error = ENXIO;
 
 	/*
 	 * If we can't write to an interior vdev (mirror or RAID-Z),
@@ -2727,7 +2722,7 @@ zio_checksum_verify(zio_t *zio)
 	}
 
 	if ((error = zio_checksum_error(zio, &info)) != 0) {
-		ZIO_SET_ERROR(zio, error);
+		zio->io_error = error;
 		if (!(zio->io_flags & ZIO_FLAG_SPECULATIVE)) {
 			zfs_ereport_start_checksum(zio->io_spa,
 			    zio->io_vd, zio, zio->io_offset,

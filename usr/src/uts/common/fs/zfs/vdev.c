@@ -972,7 +972,7 @@ vdev_probe_done(zio_t *zio)
 			ASSERT(zio->io_error != 0);
 			zfs_ereport_post(FM_EREPORT_ZFS_PROBE_FAILURE,
 			    spa, vd, NULL, 0, 0);
-			ZIO_SET_ERROR(zio, ENXIO);
+			zio->io_error = ENXIO;
 		}
 
 		mutex_enter(&vd->vdev_probe_lock);
@@ -982,7 +982,7 @@ vdev_probe_done(zio_t *zio)
 
 		while ((pio = zio_walk_parents(zio)) != NULL)
 			if (!vdev_accessible(vd, pio))
-				ZIO_SET_ERROR(pio, ENXIO);
+				pio->io_error = ENXIO;
 
 		kmem_free(vps, sizeof (*vps));
 	}

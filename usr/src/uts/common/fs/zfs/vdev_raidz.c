@@ -1980,7 +1980,7 @@ vdev_raidz_io_done(zio_t *zio)
 		 */
 		/* XXPOLICY */
 		if (total_errors > rm->rm_firstdatacol)
-			ZIO_SET_ERROR(zio, vdev_raidz_worst_error(rm));
+			zio->io_error = vdev_raidz_worst_error(rm);
 
 		return;
 	}
@@ -2121,7 +2121,7 @@ vdev_raidz_io_done(zio_t *zio)
 	 * we're cooked.
 	 */
 	if (total_errors > rm->rm_firstdatacol) {
-		ZIO_SET_ERROR(zio, vdev_raidz_worst_error(rm));
+		zio->io_error = vdev_raidz_worst_error(rm);
 
 	} else if (total_errors < rm->rm_firstdatacol &&
 	    (code = vdev_raidz_combrec(zio, total_errors, data_errors)) != 0) {
@@ -2145,7 +2145,7 @@ vdev_raidz_io_done(zio_t *zio)
 		 * Start checksum ereports for all children which haven't
 		 * failed, and the IO wasn't speculative.
 		 */
-		ZIO_SET_ERROR(zio, ECKSUM);
+		zio->io_error = ECKSUM;
 
 		if (!(zio->io_flags & ZIO_FLAG_SPECULATIVE)) {
 			for (c = 0; c < rm->rm_cols; c++) {

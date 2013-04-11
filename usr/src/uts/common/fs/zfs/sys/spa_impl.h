@@ -247,29 +247,7 @@ struct spa {
 #ifndef sun
 	boolean_t	spa_splitting_newspa;	/* creating new spa in split */
 #endif
-#ifdef ZFS_DEBUG
-	struct {
-		int		error;
-		int		lineno;
-		const char	*filename;
-		zio_t		*zio;
-	} spa_last_error;
-#endif
 };
-
-#ifdef ZFS_DEBUG
-#define	SPA_SET_ZIO_ERROR(spa, zio, err) do {			\
-	if (err) {						\
-		(spa)->spa_last_error.error = err;		\
-		(spa)->spa_last_error.lineno = __LINE__;	\
-		(spa)->spa_last_error.filename = __FILE__;	\
-		(spa)->spa_last_error.zio = zio;		\
-	}							\
-} while (0)
-#else
-#define	SPA_SET_ZIO_ERROR(spa, zio, err) do { } while (0)
-#endif
-#define	SPA_SET_ERROR(spa, err) SPA_SET_ZIO_ERROR(spa, NULL, err)
 
 extern const char *spa_config_path;
 
