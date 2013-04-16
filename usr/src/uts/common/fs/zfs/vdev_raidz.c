@@ -473,9 +473,7 @@ vdev_raidz_map_alloc(zio_t *zio, uint64_t unit_shift, uint64_t dcols,
 	/* acols: The columns that will be accessed. */
 	/* scols: The columns that will be accessed or skipped. */
 	if (q == 0) {
-		/*
-		 * Our I/O request doesn't span all child vdevs.
-		 */
+		/* Our I/O request doesn't span all child vdevs. */
 		acols = bc;
 		scols = MIN(dcols, roundup(bc, nparity + 1));
 	} else {
@@ -1553,18 +1551,18 @@ vdev_raidz_child_done(zio_t *zio)
 /*
  * Start an IO operation on a RAIDZ VDev
  *
- *  Outline:
- *    - For Write operations:
- *    	1. Generate the parity data
- *    	2. Send async write operations to each column (data and parity)'s VDev
- *    	3. If the column skips any sectors for padding, generate dummy write
- *    	   operations for those areas to improve aggregation continuity.
- *    - For read operations:
- *    	1. Send an async read operation to each data column's VDev to read the
- *    	   range of data required for zio.
- *    	2. If this is a scrub or resilver operation, or if any of the data
- *    	   vdevs have had errors, then send async read operations to the parity
- *    	   columns' VDevs as well.
+ * Outline:
+ * - For write operations:
+ *   1. Generate the parity data
+ *   2. Send async write operations to each column (data and parity)'s VDev
+ *   3. If the column skips any sectors for padding, generate dummy write
+ *      operations for those areas to improve aggregation continuity.
+ * - For read operations:
+ *   1. Send an async read operation to each data column's VDev to read the
+ *      range of data required for zio.
+ *   2. If this is a scrub or resilver operation, or if any of the data
+ *      vdevs have had errors, then send async read operations to the parity
+ *      columns' VDevs as well.
  */
 static int
 vdev_raidz_io_start(zio_t *zio)
@@ -1910,21 +1908,21 @@ done:
  * Complete an IO operation on a RAIDZ VDev
  *
  * Outline:
- *   For write ops:
- *   	1. Check for errors on the child IOs.
- *   	2. Return, setting an error code if too few child VDevs were written
- *   	   to reconstruct the data later.
- *   For read ops:
- *   	1. Check for errors on the child IOs.
- *   	2. If data errors occurred:
- *   	  a. Try to reassemble the data from the parity available.
- *   	  b. If we haven't yet read the parity drives, read them now.
- *   	  c. If all parity drives have been read but the data still doesn't
- *   	     reassemble with a correct checksum, then try combinatorial
- *   	     reconstruction.
- *   	  d. If that doesn't work, return an error.
- *   	3. If there were unexpected errors or this is a resilver operation,
- *   	   rewrite the vdevs that had errors.
+ * - For write operations:
+ *   1. Check for errors on the child IOs.
+ *   2. Return, setting an error code if too few child VDevs were written
+ *      to reconstruct the data later.
+ * - For read operations:
+ *   1. Check for errors on the child IOs.
+ *   2. If data errors occurred:
+ *      a. Try to reassemble the data from the parity available.
+ *      b. If we haven't yet read the parity drives, read them now.
+ *      c. If all parity drives have been read but the data still doesn't
+ *         reassemble with a correct checksum, then try combinatorial
+ *         reconstruction.
+ *      d. If that doesn't work, return an error.
+ *   3. If there were unexpected errors or this is a resilver operation,
+ *      rewrite the vdevs that had errors.
  */
 static void
 vdev_raidz_io_done(zio_t *zio)

@@ -627,7 +627,7 @@ dbuf_verify(dmu_buf_impl_t *db)
 	ASSERT(db->db_blkid != DMU_BONUS_BLKID ||
 	    list_is_empty(&db->db_dmu_buf_sets));
 
-	/** Dbuf state checks. */
+	/* Dbuf state checks. */
 	/* If a dbuf is partial, it can only have one dirty record. */
 	ASSERT((db->db_state & DB_PARTIAL) == 0 || db->db_dirtycnt == 1);
 
@@ -1356,7 +1356,7 @@ dbuf_unoverride(dbuf_dirty_record_t *dr)
 
 	ASSERT(db->db_data_pending != dr);
 
-	/* Free this block. */
+	/* free this block */
 	if (!BP_IS_HOLE(bp) && !dr->dt.dl.dr_nopwrite) {
 		spa_t *spa;
 

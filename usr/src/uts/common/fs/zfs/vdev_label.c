@@ -1035,7 +1035,6 @@ vdev_uberblock_sync_list(vdev_t **svd, int svdcount, uberblock_t *ub, int flags)
 	spa_t *spa = svd[0]->vdev_spa;
 	zio_t *zio;
 	uint64_t good_writes = 0;
-	int error;
 
 	zio = zio_root(spa, NULL, &good_writes, flags);
 

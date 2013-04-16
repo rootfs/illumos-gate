@@ -626,7 +626,6 @@ next:
 
 /*
  * Find layout that corresponds to ordering of attributes
- *
  * If not found a new layout number is created and added to
  * persistent layout tables.
  */

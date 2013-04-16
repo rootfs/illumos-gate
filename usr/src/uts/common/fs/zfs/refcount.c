@@ -40,7 +40,6 @@ int reference_tracking_enable = TRUE;
 #endif
 int reference_history = 4; /* tunable */
 
-
 static kmem_cache_t *reference_cache;
 static kmem_cache_t *reference_history_cache;
 

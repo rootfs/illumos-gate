@@ -201,10 +201,6 @@ rrw_enter_write(rrwlock_t *rrl)
 	mutex_exit(&rrl->rr_lock);
 }
 
-/*
- * The tag is used in reference count tracking.  The value used in
- * rrw_enter() must also be used by any corresponding rrw_exit()s.
- */
 void
 rrw_enter(rrwlock_t *rrl, krw_t rw, void *tag)
 {

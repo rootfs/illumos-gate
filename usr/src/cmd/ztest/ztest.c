@@ -6072,7 +6072,6 @@ main(int argc, char **argv)
 		exit(0);
 	}
 
-
 	hasalt = (strlen(ztest_opts.zo_alt_ztest) != 0);
 
 	if (ztest_opts.zo_verbose >= 1) {

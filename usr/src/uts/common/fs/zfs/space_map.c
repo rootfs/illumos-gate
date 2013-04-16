@@ -57,7 +57,6 @@ space_map_fini(void)
 
 /*
  * Space map routines.
- *
  * NOTE: caller is responsible for all locking.
  */
 static int

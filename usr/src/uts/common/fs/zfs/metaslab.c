@@ -1603,7 +1603,7 @@ metaslab_alloc(spa_t *spa, metaslab_class_t *mc, uint64_t psize, blkptr_t *bp,
     int ndvas, uint64_t txg, blkptr_t *hintbp, int flags)
 {
 	dva_t *dva = bp->blk_dva;
-	dva_t *hintdva = hintbp->blk_dva;
+	dva_t *hintdva = hintbp ? hintbp->blk_dva : NULL;
 	int error = 0;
 
 	ASSERT(bp->blk_birth == 0);

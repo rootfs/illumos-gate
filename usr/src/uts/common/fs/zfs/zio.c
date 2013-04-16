@@ -1778,7 +1778,7 @@ zio_write_gang_block(zio_t *pio)
 	    bp, gbh_copies, txg, pio == gio ? NULL : gio->io_bp,
 	    METASLAB_HINTBP_FAVOR | METASLAB_GANG_HEADER);
 	if (error) {
-		pio->io_error = 0;
+		pio->io_error = error;
 		return (ZIO_PIPELINE_CONTINUE);
 	}
 

@@ -167,8 +167,7 @@ typedef struct zfs_acl {
 	uint_t		z_version;	/* version of ACL */
 	void		*z_next_ace;	/* pointer to next ACE */
 	uint64_t	z_hints;	/* ACL hints (ZFS_INHERIT_ACE ...) */
-	/* current node that the iterator is handling */
-	zfs_acl_node_t	*z_curr_node;	
+	zfs_acl_node_t	*z_curr_node;	/* current node iterator is handling */
 	list_t		z_acl;		/* chunks of ACE data */
 	acl_ops_t	z_ops;		/* ACL operations */
 } zfs_acl_t;

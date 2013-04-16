@@ -697,20 +697,6 @@ void dmu_buf_add_ref(dmu_buf_t *db, void* tag);
 void dmu_buf_rele(dmu_buf_t *db, void *tag);
 uint64_t dmu_buf_refcount(dmu_buf_t *db);
 
-/*
- * Holds the DMU buffers which contain all bytes in a range of an object.  A
- * pointer to an array of dmu_buf_t*'s is returned (in *dbpp).
- */
-int dmu_buf_hold_array_by_bonus(dmu_buf_t *db, uint64_t offset,
-    uint64_t length, int read, void *tag, int *numbufsp, dmu_buf_t ***dbpp);
-
-/*
- * Releases the hold on an array of dmu_buf_t*'s, and frees the array.  The
- * hold on the array of buffers MUST be released with dmu_buf_rele_array.  You
- * can NOT release the hold on each buffer individually with dmu_buf_rele.
- */
-void dmu_buf_rele_array(dmu_buf_t **, int numbufs, void *tag);
-
 dmu_buf_user_t *dmu_buf_set_user(dmu_buf_t *db, dmu_buf_user_t *user);
 dmu_buf_user_t *dmu_buf_set_user_ie(dmu_buf_t *db, dmu_buf_user_t *user);
 dmu_buf_user_t *dmu_buf_replace_user(dmu_buf_t *db,
@@ -897,23 +883,10 @@ extern const dmu_object_byteswap_info_t dmu_ot_byteswap[DMU_BSWAP_NUMFUNCS];
  * If doi is NULL, just indicates whether the object exists.
  */
 int dmu_object_info(objset_t *os, uint64_t object, dmu_object_info_t *doi);
-
-/*
- * Get information on a DMU object.
- *
- * Return 0 on success or ENOENT if object is not allocated.
- * 
- * If doi is NULL, just indicates whether the object exists.
- */
+/* Like dmu_object_info, but faster if you have a held dnode in hand. */
 void dmu_object_info_from_dnode(struct dnode *dn, dmu_object_info_t *doi);
-
-/*
- * Like dmu_object_info, but faster.
- *
- * Can be used when you have a held dbuf in hand.
- */
+/* Like dmu_object_info, but faster if you have a held dbuf in hand. */
 void dmu_object_info_from_db(dmu_buf_t *db, dmu_object_info_t *doi);
-
 /*
  * Like dmu_object_info_from_db, but faster still when you only care about
  * its size.  This is specifically optimized for zfs_getattr().

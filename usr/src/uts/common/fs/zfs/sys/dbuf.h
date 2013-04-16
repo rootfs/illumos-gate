@@ -435,10 +435,9 @@ typedef struct dmu_buf_impl {
 	uint8_t db_freed_in_flight;
 
 	uint8_t db_dirtycnt;
-
 } dmu_buf_impl_t;
 
-/* Note: The dbuf hash table is exposed only for the mdb module */
+/* Note: the dbuf hash table is exposed only for the mdb module */
 #define	DBUF_MUTEXES 256
 #define	DBUF_HASH_MUTEX(h, idx) (&(h)->hash_mutexes[(idx) & (DBUF_MUTEXES-1)])
 typedef struct dbuf_hash_table {
@@ -595,8 +594,8 @@ boolean_t dbuf_is_metadata(dmu_buf_impl_t *db);
 		(void) snprintf(__db_buf, sizeof (__db_buf), "%lld", \
 		    (u_longlong_t)__db_obj); \
 	dprintf_ds((dbuf)->db_objset->os_dsl_dataset, \
-	    "ptr=%p arc=%p obj=%s lvl=%u blkid=%lld " fmt, \
-	    dbuf, (dbuf)->db_buf, __db_buf, (dbuf)->db_level, \
+	    "obj=%s lvl=%u blkid=%lld " fmt, \
+	    __db_buf, (dbuf)->db_level, \
 	    (u_longlong_t)(dbuf)->db_blkid, __VA_ARGS__); \
 	} \
 _NOTE(CONSTCOND) } while (0)

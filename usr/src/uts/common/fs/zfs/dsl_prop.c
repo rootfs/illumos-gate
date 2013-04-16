@@ -223,7 +223,7 @@ dsl_prop_get_ds(dsl_dataset_t *ds, const char *propname,
  * once to notify it of the current property value, and again each time
  * the property changes, until this callback is unregistered.
  *
- * Return 0 on success or errno if the prop is not an integer value.
+ * Return 0 on success, or errno if the prop is not an integer value.
  */
 int
 dsl_prop_register(dsl_dataset_t *ds, const char *propname,
@@ -289,7 +289,7 @@ dsl_prop_get(const char *dsname, const char *propname,
  * dsl_prop_register() and assume that the value has not changed in
  * between.
  *
- * Return 0 on success or ENOENT if ddname is invalid.
+ * Return 0 on success, or ENOENT if ddname is invalid.
  */
 int
 dsl_prop_get_integer(const char *ddname, const char *propname,
@@ -430,8 +430,8 @@ dsl_prop_check_prediction(dsl_dir_t *dd, dsl_prop_setarg_t *psa)
 #endif
 
 /*
- * Unregister this callback.  Return 0 on success, ENOENT if ddname is invalid,
- * or ENOMSG if no matching callback registered.
+ * Unregister this callback.  Return 0 on success, ENOENT if ddname is
+ * invalid, or ENOMSG if no matching callback registered.
  */
 int
 dsl_prop_unregister(dsl_dataset_t *ds, const char *propname,

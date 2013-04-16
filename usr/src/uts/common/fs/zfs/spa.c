@@ -1761,7 +1761,7 @@ spa_aux_check_removed(spa_aux_vdev_t *sav)
 		spa_check_removed(sav->sav_vdevs[i]);
 }
 
-/* Log claim callback */
+/* Log claim callback for zil_claim_log_block. */
 void
 spa_claim_notify(zio_t *zio)
 {

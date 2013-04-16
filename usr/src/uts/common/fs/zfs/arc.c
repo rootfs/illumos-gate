@@ -203,8 +203,6 @@ SYSCTL_UQUAD(_vfs_zfs, OID_AUTO, arc_min, CTLFLAG_RDTUN, &zfs_arc_min, 0,
     "Minimum ARC size");
 
 /*
- * ARC Buffer States
- *
  * Note that buffers can be in one of 6 states:
  *	ARC_anon	- anonymous (discussed below)
  *	ARC_mru		- recently used, currently cached
@@ -3424,11 +3422,10 @@ arc_buf_evict(arc_buf_t *buf)
 }
 
 /*
- * Convert to an anonymous buffer.
- *
- * This must be done after a read and prior to modifying the buffer contents.
- * If the buffer has more than one reference, we must make a new hdr for the
- * buffer.
+ * Release this buffer from the cache, making it an anonymous buffer.  This
+ * must be done after a read and prior to modifying the buffer contents.
+ * If the buffer has more than one reference, we must make
+ * a new hdr for the buffer.
  */
 void
 arc_release(arc_buf_t *buf, void *tag)
@@ -4919,8 +4916,8 @@ l2arc_write_buffers(spa_t *spa, l2arc_dev_t *dev, uint64_t target_sz)
 }
 
 /*
- * Feed the L2ARC with buffers from the ARC at regular intervals.
- * This thread is the beating heart of the L2ARC.
+ * This thread feeds the L2ARC at regular intervals.  This is the beating
+ * heart of the L2ARC.
  */
 static void
 l2arc_feed_thread(void *dummy __unused)

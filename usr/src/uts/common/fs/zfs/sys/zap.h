@@ -183,6 +183,8 @@ int zap_destroy(objset_t *ds, uint64_t zapobj, dmu_tx_t *tx);
  * When converting to a larger integer size, the integers will be treated as
  * unsigned (ie. no sign-extension will be performed).
  *
+ * 'num_integers' is the length (in integers) of 'buf'.
+ *
  * If the attribute is longer than the buffer, as many integers as will
  * fit will be transferred to 'buf'.  If the entire attribute was not
  * transferred, the call will return EOVERFLOW.
@@ -195,13 +197,13 @@ int zap_lookup(objset_t *ds, uint64_t zapobj, const char *name,
  * entry (which may be different from the requested name if matchtype is
  * not MT_EXACT).
  *
- * If ncp is not NULL, it will be set if there is another name with the same
- * case/unicode normalized form.
+ * If normalization_conflictp is not NULL, it will be set if there is
+ * another name with the same case/unicode normalized form.
  */
 int zap_lookup_norm(objset_t *ds, uint64_t zapobj, const char *name,
     uint64_t integer_size, uint64_t num_integers, void *buf,
     matchtype_t mt, char *realname, int rn_len,
-    boolean_t *ncp);
+    boolean_t *normalization_conflictp);
 int zap_lookup_uint64(objset_t *os, uint64_t zapobj, const uint64_t *key,
     int key_numints, uint64_t integer_size, uint64_t num_integers, void *buf);
 int zap_contains(objset_t *ds, uint64_t zapobj, const char *name);
@@ -242,7 +244,7 @@ int zap_update_uint64(objset_t *os, uint64_t zapobj, const uint64_t *key,
  * Get the length (in integers) and the integer size of the specified
  * attribute.
  *
- * If the requested attribute does not exist, the call will fail and
+ * If the specified attribute does not exist, the call will fail and
  * return ENOENT.
  */
 int zap_length(objset_t *ds, uint64_t zapobj, const char *name,
@@ -266,10 +268,10 @@ int zap_remove_uint64(objset_t *os, uint64_t zapobj, const uint64_t *key,
 int zap_count(objset_t *ds, uint64_t zapobj, uint64_t *count);
 
 /*
- * Returns (in name) the name of the entry whose (value & mask)                 
- * (za_first_integer) is value, or ENOENT if not found.  The string             
- * pointed to by name must be at least 256 bytes long.  If mask==0, the         
- * match must be exact (ie, same as mask=-1ULL).                                
+ * Returns (in name) the name of the entry whose (value & mask)
+ * (za_first_integer) is value, or ENOENT if not found.  The string
+ * pointed to by name must be at least 256 bytes long.  If mask==0, the
+ * match must be exact (ie, same as mask=-1ULL).
  */
 int zap_value_search(objset_t *os, uint64_t zapobj,
     uint64_t value, uint64_t mask, char *name);
@@ -281,11 +283,11 @@ int zap_value_search(objset_t *os, uint64_t zapobj,
  */
 int zap_join(objset_t *os, uint64_t fromobj, uint64_t intoobj, dmu_tx_t *tx);
 
-/* Same as zap_join, but add together any duplicated entries. */
+/* Same as zap_join, but set the values to 'value'. */
 int zap_join_key(objset_t *os, uint64_t fromobj, uint64_t intoobj,
     uint64_t value, dmu_tx_t *tx);
 
-/* Same as zap_join, but set the values to 'value'. */
+/* Same as zap_join, but add together any duplicated entries. */
 int zap_join_increment(objset_t *os, uint64_t fromobj, uint64_t intoobj,
     dmu_tx_t *tx);
 
