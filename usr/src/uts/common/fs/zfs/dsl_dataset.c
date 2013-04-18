@@ -2755,34 +2755,34 @@ dsl_dataset_set_refreservation(const char *dsname, zprop_source_t source,
  *                                         oldsnap            new
  */
 int
-dsl_dataset_space_written(dsl_dataset_t *oldsnap, dsl_dataset_t *new,
+dsl_dataset_space_written(dsl_dataset_t *oldsnap, dsl_dataset_t *newds,
     uint64_t *usedp, uint64_t *compp, uint64_t *uncompp)
 {
 	int err = 0;
 	uint64_t snapobj;
-	dsl_pool_t *dp = new->ds_dir->dd_pool;
+	dsl_pool_t *dp = newds->ds_dir->dd_pool;
 
 	ASSERT(dsl_pool_config_held(dp));
 
 	*usedp = 0;
-	*usedp += new->ds_phys->ds_referenced_bytes;
+	*usedp += newds->ds_phys->ds_referenced_bytes;
 	*usedp -= oldsnap->ds_phys->ds_referenced_bytes;
 
 	*compp = 0;
-	*compp += new->ds_phys->ds_compressed_bytes;
+	*compp += newds->ds_phys->ds_compressed_bytes;
 	*compp -= oldsnap->ds_phys->ds_compressed_bytes;
 
 	*uncompp = 0;
-	*uncompp += new->ds_phys->ds_uncompressed_bytes;
+	*uncompp += newds->ds_phys->ds_uncompressed_bytes;
 	*uncompp -= oldsnap->ds_phys->ds_uncompressed_bytes;
 
-	snapobj = new->ds_object;
+	snapobj = newds->ds_object;
 	while (snapobj != oldsnap->ds_object) {
 		dsl_dataset_t *snap;
 		uint64_t used, comp, uncomp;
 
-		if (snapobj == new->ds_object) {
-			snap = new;
+		if (snapobj == newds->ds_object) {
+			snap = newds;
 		} else {
 			err = dsl_dataset_hold_obj(dp, snapobj, FTAG, &snap);
 			if (err != 0)
@@ -2813,10 +2813,10 @@ dsl_dataset_space_written(dsl_dataset_t *oldsnap, dsl_dataset_t *new,
 		/*
 		 * If we get to the beginning of the chain of snapshots
 		 * (ds_prev_snap_obj == 0) before oldsnap, then oldsnap
-		 * was not a snapshot of/before new.
+		 * was not a snapshot of/before newds.
 		 */
 		snapobj = snap->ds_phys->ds_prev_snap_obj;
-		if (snap != new)
+		if (snap != newds)
 			dsl_dataset_rele(snap, FTAG);
 		if (snapobj == 0) {
 			err = SET_ERROR(EINVAL);

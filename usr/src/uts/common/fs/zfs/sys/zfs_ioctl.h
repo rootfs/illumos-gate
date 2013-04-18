@@ -92,23 +92,6 @@ typedef enum drr_headertype {
 /* Are all features in the given flag word currently supported? */
 #define	DMU_STREAM_SUPPORTED(x)	(!((x) & ~DMU_BACKUP_FEATURE_MASK))
 
-/*
- * The drr_versioninfo field of the dmu_replay_record has the
- * following layout:
- *
- *	64	56	48	40	32	24	16	8	0
- *	+-------+-------+-------+-------+-------+-------+-------+-------+
- *  	|		reserved	|        feature-flags	    |C|S|
- *	+-------+-------+-------+-------+-------+-------+-------+-------+
- *
- * The low order two bits indicate the header type: SUBSTREAM (0x1)
- * or COMPOUNDSTREAM (0x2).  Using two bits for this is historical:
- * this field used to be a version number, where the two version types
- * were 1 and 2.  Using two bits for this allows earlier versions of
- * the code to be able to recognize send streams that don't use any
- * of the features indicated by feature flags.
- */
-
 #define	DMU_BACKUP_MAGIC 0x2F5bacbacULL
 
 #define	DRR_FLAG_CLONE		(1<<0)
@@ -125,87 +108,117 @@ typedef enum drr_headertype {
 /*
  * zfs ioctl command structure
  */
+enum drr_type {
+	DRR_BEGIN, DRR_OBJECT, DRR_FREEOBJECTS,
+	DRR_WRITE, DRR_FREE, DRR_END, DRR_WRITE_BYREF,
+	DRR_SPILL, DRR_NUMTYPES
+};
+
+struct drr_begin {
+	uint64_t drr_magic;
+	/*
+	 * Formerly named drr_version, this field has the following layout:
+	 *
+	 *  64      56      48      40      32      24      16      8       0
+	 *  +-------+-------+-------+-------+-------+-------+-------+-------+
+	 *  |               reserved        |        feature-flags      |C|S|
+	 *  +-------+-------+-------+-------+-------+-------+-------+-------+
+	 *
+	 * The low order two bits indicate the header type: SUBSTREAM (0x1)
+	 * or COMPOUNDSTREAM (0x2).  Using two bits for this is historical:
+	 * this field used to be a version number, where the two version types
+	 * were 1 and 2.  Using two bits for this allows earlier versions of
+	 * the code to be able to recognize send streams that don't use any
+	 * of the features indicated by feature flags.
+	 */
+	uint64_t drr_versioninfo;
+	uint64_t drr_creation_time;
+	dmu_objset_type_t drr_type;
+	uint32_t drr_flags;
+	uint64_t drr_toguid;
+	uint64_t drr_fromguid;
+	char drr_toname[MAXNAMELEN];
+};
+
+struct drr_end {
+	zio_cksum_t drr_checksum;
+	uint64_t drr_toguid;
+};
+
+struct drr_object {
+	uint64_t drr_object;
+	dmu_object_type_t drr_type;
+	dmu_object_type_t drr_bonustype;
+	uint32_t drr_blksz;
+	uint32_t drr_bonuslen;
+	uint8_t drr_checksumtype;
+	uint8_t drr_compress;
+	uint8_t drr_pad[6];
+	uint64_t drr_toguid;
+	/* bonus content follows */
+};
+
+struct drr_freeobjects {
+	uint64_t drr_firstobj;
+	uint64_t drr_numobjs;
+	uint64_t drr_toguid;
+};
+
+struct drr_write {
+	uint64_t drr_object;
+	dmu_object_type_t drr_type;
+	uint32_t drr_pad;
+	uint64_t drr_offset;
+	uint64_t drr_length;
+	uint64_t drr_toguid;
+	uint8_t drr_checksumtype;
+	uint8_t drr_checksumflags;
+	uint8_t drr_pad2[6];
+	ddt_key_t drr_key;	/* deduplication key */
+	/* content follows */
+};
+
+struct drr_free {
+	uint64_t drr_object;
+	uint64_t drr_offset;
+	uint64_t drr_length;
+	uint64_t drr_toguid;
+};
+
+struct drr_write_byref {
+	uint64_t drr_object;	/* where to put the data */
+	uint64_t drr_offset;
+	uint64_t drr_length;
+	uint64_t drr_toguid;	/* where to find the prior copy of the data */
+	uint64_t drr_refguid;
+	uint64_t drr_refobject;
+	uint64_t drr_refoffset;	/* properties of the data */
+	uint8_t drr_checksumtype;
+	uint8_t drr_checksumflags;
+	uint8_t drr_pad2[6];
+	ddt_key_t drr_key;	/* deduplication key */
+};
+
+struct drr_spill {
+	uint64_t drr_object;
+	uint64_t drr_length;
+	uint64_t drr_toguid;
+	uint64_t drr_pad[4];	/* needed for crypto */
+	/* spill data follows */
+};
+
 typedef struct dmu_replay_record {
-	enum {
-		DRR_BEGIN, DRR_OBJECT, DRR_FREEOBJECTS,
-		DRR_WRITE, DRR_FREE, DRR_END, DRR_WRITE_BYREF,
-		DRR_SPILL, DRR_NUMTYPES
-	} drr_type;
+	enum drr_type drr_type;
 	uint32_t drr_payloadlen;
 	union {
-		struct drr_begin {
-			uint64_t drr_magic;
-			uint64_t drr_versioninfo; /* was drr_version */
-			uint64_t drr_creation_time;
-			dmu_objset_type_t drr_type;
-			uint32_t drr_flags;
-			uint64_t drr_toguid;
-			uint64_t drr_fromguid;
-			char drr_toname[MAXNAMELEN];
-		} drr_begin;
-		struct drr_end {
-			zio_cksum_t drr_checksum;
-			uint64_t drr_toguid;
-		} drr_end;
-		struct drr_object {
-			uint64_t drr_object;
-			dmu_object_type_t drr_type;
-			dmu_object_type_t drr_bonustype;
-			uint32_t drr_blksz;
-			uint32_t drr_bonuslen;
-			uint8_t drr_checksumtype;
-			uint8_t drr_compress;
-			uint8_t drr_pad[6];
-			uint64_t drr_toguid;
-			/* bonus content follows */
-		} drr_object;
-		struct drr_freeobjects {
-			uint64_t drr_firstobj;
-			uint64_t drr_numobjs;
-			uint64_t drr_toguid;
-		} drr_freeobjects;
-		struct drr_write {
-			uint64_t drr_object;
-			dmu_object_type_t drr_type;
-			uint32_t drr_pad;
-			uint64_t drr_offset;
-			uint64_t drr_length;
-			uint64_t drr_toguid;
-			uint8_t drr_checksumtype;
-			uint8_t drr_checksumflags;
-			uint8_t drr_pad2[6];
-			ddt_key_t drr_key; /* deduplication key */
-			/* content follows */
-		} drr_write;
-		struct drr_free {
-			uint64_t drr_object;
-			uint64_t drr_offset;
-			uint64_t drr_length;
-			uint64_t drr_toguid;
-		} drr_free;
-		struct drr_write_byref {
-			/* where to put the data */
-			uint64_t drr_object;
-			uint64_t drr_offset;
-			uint64_t drr_length;
-			uint64_t drr_toguid;
-			/* where to find the prior copy of the data */
-			uint64_t drr_refguid;
-			uint64_t drr_refobject;
-			uint64_t drr_refoffset;
-			/* properties of the data */
-			uint8_t drr_checksumtype;
-			uint8_t drr_checksumflags;
-			uint8_t drr_pad2[6];
-			ddt_key_t drr_key; /* deduplication key */
-		} drr_write_byref;
-		struct drr_spill {
-			uint64_t drr_object;
-			uint64_t drr_length;
-			uint64_t drr_toguid;
-			uint64_t drr_pad[4]; /* needed for crypto */
-			/* spill data follows */
-		} drr_spill;
+		struct drr_begin drr_begin;
+		struct drr_end drr_end;
+		struct drr_object drr_object;
+		struct drr_freeobjects drr_freeobjects;
+		struct drr_write drr_write;
+		struct drr_free drr_free;
+		struct drr_write_byref drr_write_byref;
+		struct drr_spill drr_spill;
 	} drr_u;
 } dmu_replay_record_t;
 

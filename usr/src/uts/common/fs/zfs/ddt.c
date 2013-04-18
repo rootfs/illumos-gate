@@ -178,13 +178,13 @@ ddt_object_prefetch(ddt_t *ddt, enum ddt_type type, enum ddt_class class,
 }
 
 int
-ddt_object_update(ddt_t *ddt, enum ddt_type type, enum ddt_class class,
+ddt_object_update(ddt_t *ddt, enum ddt_type type, enum ddt_class ddt_class,
     ddt_entry_t *dde, dmu_tx_t *tx)
 {
-	ASSERT(ddt_object_exists(ddt, type, class));
+	ASSERT(ddt_object_exists(ddt, type, ddt_class));
 
 	return (ddt_ops[type]->ddt_op_update(ddt->ddt_os,
-	    ddt->ddt_object[type][class], dde, tx));
+	    ddt->ddt_object[type][ddt_class], dde, tx));
 }
 
 static int
@@ -198,48 +198,48 @@ ddt_object_remove(ddt_t *ddt, enum ddt_type type, enum ddt_class class,
 }
 
 int
-ddt_object_walk(ddt_t *ddt, enum ddt_type type, enum ddt_class class,
+ddt_object_walk(ddt_t *ddt, enum ddt_type type, enum ddt_class ddt_class,
     uint64_t *walk, ddt_entry_t *dde)
 {
-	ASSERT(ddt_object_exists(ddt, type, class));
+	ASSERT(ddt_object_exists(ddt, type, ddt_class));
 
 	return (ddt_ops[type]->ddt_op_walk(ddt->ddt_os,
-	    ddt->ddt_object[type][class], dde, walk));
+	    ddt->ddt_object[type][ddt_class], dde, walk));
 }
 
 uint64_t
-ddt_object_count(ddt_t *ddt, enum ddt_type type, enum ddt_class class)
+ddt_object_count(ddt_t *ddt, enum ddt_type type, enum ddt_class ddt_class)
 {
-	ASSERT(ddt_object_exists(ddt, type, class));
+	ASSERT(ddt_object_exists(ddt, type, ddt_class));
 
 	return (ddt_ops[type]->ddt_op_count(ddt->ddt_os,
-	    ddt->ddt_object[type][class]));
+	    ddt->ddt_object[type][ddt_class]));
 }
 
 int
-ddt_object_info(ddt_t *ddt, enum ddt_type type, enum ddt_class class,
+ddt_object_info(ddt_t *ddt, enum ddt_type type, enum ddt_class ddt_class,
     dmu_object_info_t *doi)
 {
-	if (!ddt_object_exists(ddt, type, class))
+	if (!ddt_object_exists(ddt, type, ddt_class))
 		return (SET_ERROR(ENOENT));
 
-	return (dmu_object_info(ddt->ddt_os, ddt->ddt_object[type][class],
+	return (dmu_object_info(ddt->ddt_os, ddt->ddt_object[type][ddt_class],
 	    doi));
 }
 
 boolean_t
-ddt_object_exists(ddt_t *ddt, enum ddt_type type, enum ddt_class class)
+ddt_object_exists(ddt_t *ddt, enum ddt_type type, enum ddt_class ddt_class)
 {
-	return (!!ddt->ddt_object[type][class]);
+	return (!!ddt->ddt_object[type][ddt_class]);
 }
 
 void
-ddt_object_name(ddt_t *ddt, enum ddt_type type, enum ddt_class class,
+ddt_object_name(ddt_t *ddt, enum ddt_type type, enum ddt_class ddt_class,
     char *name)
 {
 	(void) sprintf(name, DMU_POOL_DDT,
 	    zio_checksum_table[ddt->ddt_checksum].ci_name,
-	    ddt_ops[type]->ddt_op_name, ddt_class_name[class]);
+	    ddt_ops[type]->ddt_op_name, ddt_class_name[ddt_class]);
 }
 
 void

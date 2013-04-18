@@ -27,6 +27,7 @@
 
 PROG=		zfs
 OBJS=		zfs_main.o zfs_iter.o
+OUTPUTS=	$(OBJS) zfs_hdrck.cpp zfs_hdrck.o
 SRCS=		$(OBJS:%.o=%.c)
 POFILES=	zfs_main.po zfs_iter.po
 POFILE=		zfs.po
@@ -69,19 +70,25 @@ ROOTETCFSTYPELINKS = $(LINKPROGS:%=$(ROOTETCFSTYPE)/%)
 
 all: $(PROG)
 
-$(PROG): $(OBJS)
+$(PROG): $(OUTPUTS)
 	$(LINK.c) -o $@ $(OBJS) $(LDLIBS)
 	$(POST_PROCESS)
 
 install: all $(ROOTSBINPROG) $(ROOTUSRSBINLINKS) $(USRLIBFSTYPELINKS) \
 	$(ROOTETCFSTYPELINKS)
 
+zfs_hdrck.o: zfs_hdrck.cpp
+	$(COMPILE.cc) -o $@ $^
+
+zfs_hdrck.cpp:
+	find . -name '*.[ch]' | xargs grep -h '^#include <' > $@
+
 $(POFILE): $(POFILES)
 	$(RM) $@
 	cat $(POFILES) > $@
 
 clean:
-	$(RM) $(OBJS)
+	$(RM) $(PROG) $(OUTPUTS)
 
 lint:	lint_SRCS
 

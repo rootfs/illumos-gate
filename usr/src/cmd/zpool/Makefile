@@ -37,6 +37,8 @@ STAT_COMMON_OBJS = timestamp.o
 STAT_COMMON_SRCS = $(STAT_COMMON_OBJS:%.o=$(STATCOMMONDIR)/%.c)
 SRCS += $(STAT_COMMON_SRCS)
 
+OUTPUTS=$(OBJS) $(STAT_COMMON_OBJS) zpool_hdrck.cpp zpool_hdrck.o
+
 LDLIBS += -lzfs -lnvpair -ldevid -lefi -ldiskmgt -luutil -lumem
 
 INCS += -I../../common/zfs -I$(STATCOMMONDIR)
@@ -58,9 +60,15 @@ ROOTUSRSBINLINKS = $(PROG:%=$(ROOTUSRSBIN)/%)
 
 all: $(PROG)
 
-$(PROG): $(OBJS) $(STAT_COMMON_OBJS)
+$(PROG): $(OUTPUTS)
 	$(LINK.c) -o $@ $(OBJS) $(STAT_COMMON_OBJS) $(LDLIBS)
 	$(POST_PROCESS)
+
+zpool_hdrck.o: zpool_hdrck.cpp
+	$(COMPILE.cc) -o $@ $^
+
+zpool_hdrck.cpp:
+	find . -name '*.[ch]' | xargs grep -h '^#include <' > $@
 
 %.o:    $(STATCOMMONDIR)/%.c
 	$(COMPILE.c) $<
@@ -73,7 +81,7 @@ $(POFILE): $(POFILES)
 	$(CAT) $(POFILES) > $@
 
 clean:
-	$(RM) $(OBJS) $(STAT_COMMON_OBJS)
+	$(RM) $(PROG) $(OUTPUTS)
 
 lint:	lint_SRCS
 

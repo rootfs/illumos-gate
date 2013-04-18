@@ -79,11 +79,19 @@ CERRWARN +=	-_gcc=-Wno-unused-label
 
 all: $(LIBS)
 
+$(LIBS): libzpool_hdrck.o
+
 lint: $(LINTLIB)
 
 include ../../Makefile.targ
 
 EXTPICS= $(DTRACE_OBJS:%=pics/%)
+
+libzpool_hdrck.o: libzpool_hdrck.cpp
+	$(COMPILE.cc) -DB_FALSE=_B_FALSE -DB_TRUE=_B_TRUE -o $@ $^
+
+libzpool_hdrck.cpp:
+	find .. -name '*.[ch]' | xargs grep -h '^#include <' > $@
 
 pics/%.o: ../../../uts/common/fs/zfs/%.c ../common/zfs.h
 	$(COMPILE.c) -o $@ $<

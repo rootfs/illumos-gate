@@ -2786,7 +2786,7 @@ arc_read_done(zio_t *zio)
  */
 int
 arc_read(zio_t *pio, spa_t *spa, const blkptr_t *bp, arc_done_func_t *done,
-    void *private, int priority, int zio_flags, uint32_t *arc_flags,
+    void *cb_private, int priority, int zio_flags, uint32_t *arc_flags,
     const zbookmark_t *zb)
 {
 	arc_buf_hdr_t *hdr;
@@ -2817,7 +2817,7 @@ top:
 				acb = kmem_zalloc(sizeof (arc_callback_t),
 				    KM_SLEEP);
 				acb->acb_done = done;
-				acb->acb_private = private;
+				acb->acb_private = cb_private;
 				if (pio != NULL)
 					acb->acb_zio_dummy = zio_null(pio,
 					    spa, NULL, NULL, NULL, zio_flags);
@@ -2825,7 +2825,7 @@ top:
 				ASSERT(acb->acb_done != NULL);
 				acb->acb_next = hdr->b_acb;
 				hdr->b_acb = acb;
-				add_reference(hdr, hash_lock, private);
+				add_reference(hdr, hash_lock, cb_private);
 				mutex_exit(hash_lock);
 				return (0);
 			}
@@ -2836,7 +2836,7 @@ top:
 		ASSERT(hdr->b_state == arc_mru || hdr->b_state == arc_mfu);
 
 		if (done) {
-			add_reference(hdr, hash_lock, private);
+			add_reference(hdr, hash_lock, cb_private);
 			/*
 			 * If this block is already in use, create a new
 			 * copy of the data so that we will be guaranteed
@@ -2867,7 +2867,7 @@ top:
 		    data, metadata, hits);
 
 		if (done)
-			done(NULL, buf, private);
+			done(NULL, buf, cb_private);
 	} else {
 		uint64_t size = BP_GET_LSIZE(bp);
 		arc_callback_t	*acb;
@@ -2879,7 +2879,7 @@ top:
 			/* this block is not in the cache */
 			arc_buf_hdr_t	*exists;
 			arc_buf_contents_t type = BP_GET_BUFC_TYPE(bp);
-			buf = arc_buf_alloc(spa, size, private, type);
+			buf = arc_buf_alloc(spa, size, cb_private, type);
 			hdr = buf->b_hdr;
 			hdr->b_dva = *BP_IDENTITY(bp);
 			hdr->b_birth = BP_PHYSICAL_BIRTH(bp);
@@ -2889,13 +2889,13 @@ top:
 				/* somebody beat us to the hash insert */
 				mutex_exit(hash_lock);
 				buf_discard_identity(hdr);
-				(void) arc_buf_remove_ref(buf, private);
+				(void) arc_buf_remove_ref(buf, cb_private);
 				goto top; /* restart the IO request */
 			}
 			/* if this is a prefetch, we don't have a reference */
 			if (*arc_flags & ARC_PREFETCH) {
 				(void) remove_reference(hdr, hash_lock,
-				    private);
+				    cb_private);
 				hdr->b_flags |= ARC_PREFETCH;
 			}
 			if (*arc_flags & ARC_L2CACHE)
@@ -2913,7 +2913,7 @@ top:
 			if (*arc_flags & ARC_PREFETCH)
 				hdr->b_flags |= ARC_PREFETCH;
 			else
-				add_reference(hdr, hash_lock, private);
+				add_reference(hdr, hash_lock, cb_private);
 			if (*arc_flags & ARC_L2CACHE)
 				hdr->b_flags |= ARC_L2CACHE;
 			buf = kmem_cache_alloc(buf_cache, KM_PUSHPAGE);
@@ -2933,7 +2933,7 @@ top:
 
 		acb = kmem_zalloc(sizeof (arc_callback_t), KM_SLEEP);
 		acb->acb_done = done;
-		acb->acb_private = private;
+		acb->acb_private = cb_private;
 
 		ASSERT(hdr->b_acb == NULL);
 		hdr->b_acb = acb;
@@ -3046,7 +3046,7 @@ top:
 }
 
 void
-arc_set_callback(arc_buf_t *buf, arc_evict_func_t *func, void *private)
+arc_set_callback(arc_buf_t *buf, arc_evict_func_t *func, void *cb_private)
 {
 	ASSERT(buf->b_hdr != NULL);
 	ASSERT(buf->b_hdr->b_state != arc_anon);
@@ -3055,7 +3055,7 @@ arc_set_callback(arc_buf_t *buf, arc_evict_func_t *func, void *private)
 	ASSERT(!HDR_BUF_AVAILABLE(buf->b_hdr));
 
 	buf->b_efunc = func;
-	buf->b_private = private;
+	buf->b_private = cb_private;
 }
 
 /*
@@ -3414,7 +3414,7 @@ arc_write_done(zio_t *zio)
 zio_t *
 arc_write(zio_t *pio, spa_t *spa, uint64_t txg,
     blkptr_t *bp, arc_buf_t *buf, boolean_t l2arc, const zio_prop_t *zp,
-    arc_done_func_t *ready, arc_done_func_t *done, void *private,
+    arc_done_func_t *ready, arc_done_func_t *done, void *cb_private,
     int priority, int zio_flags, const zbookmark_t *zb)
 {
 	arc_buf_hdr_t *hdr = buf->b_hdr;
@@ -3431,7 +3431,7 @@ arc_write(zio_t *pio, spa_t *spa, uint64_t txg,
 	callback = kmem_zalloc(sizeof (arc_write_callback_t), KM_SLEEP);
 	callback->awcb_ready = ready;
 	callback->awcb_done = done;
-	callback->awcb_private = private;
+	callback->awcb_private = cb_private;
 	callback->awcb_buf = buf;
 
 	zio = zio_write(pio, spa, txg, bp, buf->b_data, hdr->b_size, zp,
