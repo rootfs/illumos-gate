@@ -52,15 +52,23 @@ CERRWARN += -_gcc=-Wno-switch
 
 all: $(PROG)
 
-$(PROG): $(OBJS)
+$(PROG): $(OBJS) ztest_hdrck.o
 	$(LINK.c) -o $(PROG) $(OBJS) $(LDLIBS)
 	$(POST_PROCESS)
 
 clean:
+	$(RM) $(OBJS) ztest_hdrck.o
 
 lint:	lint_SRCS
 
 include ../../Makefile.targ
+
+ztest_hdrck.cpp: ../ztest_hdrck.sh
+	../ztest_hdrck.sh
+
+%.o: %.cpp
+	$(COMPILE.cc) $<
+	$(POST_PROCESS_O)
 
 %.o: ../%.c
 	$(COMPILE.c) $<
