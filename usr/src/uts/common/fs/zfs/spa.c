@@ -142,6 +142,7 @@ static boolean_t spa_has_active_shared_spare(spa_t *spa);
 static int spa_load_impl(spa_t *spa, uint64_t, nvlist_t *config,
     spa_load_state_t state, spa_import_type_t type, boolean_t mosconfig,
     char **ereport);
+static boolean_t spa_async_tasks_pending(spa_t *spa, uint64_t *wait_time);
 static void spa_vdev_resilver_done(spa_t *spa);
 
 uint_t		zio_taskq_batch_pct = 100;	/* 1 thread per cpu in pset */
@@ -1058,6 +1059,8 @@ spa_activate(spa_t *spa, int mode)
 		spa_create_zio_taskqs(spa);
 	}
 
+	spa_async_create(spa);
+
 	list_create(&spa->spa_config_dirty_list, sizeof (vdev_t),
 	    offsetof(vdev_t, vdev_config_dirty_node));
 	list_create(&spa->spa_state_dirty_list, sizeof (vdev_t),
@@ -1200,7 +1203,8 @@ spa_unload(spa_t *spa)
 	/*
 	 * Stop async tasks.
 	 */
-	spa_async_suspend(spa);
+	ASSERT3U(spa->spa_async_suspended, !=, 0);
+	spa_async_shutdown(spa);
 
 	/*
 	 * Stop syncing.
@@ -2641,6 +2645,8 @@ spa_load_impl(spa_t *spa, uint64_t pool_guid, nvlist_t *config,
 		 */
 		txg_wait_synced(spa->spa_dsl_pool, spa->spa_claim_max_txg);
 
+		spa_async_resume(spa);
+
 		/*
 		 * If the config cache is stale, or we have uninitialized
 		 * metaslabs (see spa_vdev_add()), then update the config.
@@ -2697,6 +2703,14 @@ static int
 spa_load_retry(spa_t *spa, spa_load_state_t state, int mosconfig)
 {
 	int mode = spa->spa_mode;
+	int old_suspend_count;
+
+	/* Support nested suspends across a retry */
+	mutex_enter(&spa->spa_async_lock);
+	old_suspend_count = spa->spa_async_suspended;
+	mutex_exit(&spa->spa_async_lock);
+
+	ASSERT3U(old_suspend_count, >, 0);
 
 	spa_unload(spa);
 	spa_deactivate(spa);
@@ -2704,7 +2718,9 @@ spa_load_retry(spa_t *spa, spa_load_state_t state, int mosconfig)
 	spa->spa_load_max_txg--;
 
 	spa_activate(spa, mode);
-	spa_async_suspend(spa);
+	mutex_enter(&spa->spa_async_lock);
+	spa->spa_async_suspended = old_suspend_count;
+	mutex_exit(&spa->spa_async_lock);
 
 	return (spa_load(spa, state, SPA_IMPORT_EXISTING, mosconfig));
 }
@@ -3570,6 +3586,8 @@ spa_create(const char *pool, nvlist_t *nvroot, nvlist_t *props,
 	 * bean counters are appropriately updated.
 	 */
 	txg_wait_synced(spa->spa_dsl_pool, txg);
+
+	spa_async_resume(spa);
 
 	spa_config_sync(spa, B_FALSE, B_TRUE);
 
@@ -5564,16 +5582,10 @@ spa_async_autoexpand(spa_t *spa, vdev_t *vd)
 }
 
 static void
-spa_async_thread(spa_t *spa)
+spa_async_dispatch(spa_t *spa, int tasks)
 {
-	int tasks;
 
 	ASSERT(spa->spa_sync_on);
-
-	mutex_enter(&spa->spa_async_lock);
-	tasks = spa->spa_async_tasks;
-	spa->spa_async_tasks = 0;
-	mutex_exit(&spa->spa_async_lock);
 
 	/*
 	 * See if the config needs to be updated.
@@ -5637,13 +5649,64 @@ spa_async_thread(spa_t *spa)
 	 */
 	if (tasks & SPA_ASYNC_RESILVER)
 		dsl_resilver_restart(spa->spa_dsl_pool, 0);
+}
+
+static void
+spa_async_thread(void *arg)
+{
+	spa_t *spa = arg;
+	int tasks;
+	int run_tasks;
+	uint64_t wait_time;
+
+	mutex_enter(&spa->spa_async_lock);
+	for (;;) {
+
+		/*
+		 * The only time we are not suspended is when we
+		 * are running tasks.
+		 */
+		spa->spa_async_suspend_done = 1;
+
+		if (spa->spa_async_shutdown != 0)
+			break;
+
+		if (spa->spa_async_suspended != 0) {
+			/*
+			 * If anyone is waiting for us to suspend, let them
+			 * know we're about to go to sleep.
+			 */
+			cv_broadcast(&spa->spa_async_sd_cv);
+			cv_wait(&spa->spa_async_wu_cv, &spa->spa_async_lock);
+			continue;
+		}
+
+		if (spa_async_tasks_pending(spa, &wait_time) == B_FALSE) {
+			if (wait_time != 0)
+				cv_timedwait(&spa->spa_async_wu_cv,
+				    &spa->spa_async_lock, wait_time);
+			else
+				cv_wait(&spa->spa_async_wu_cv,
+				    &spa->spa_async_lock);
+			continue;
+		}
+
+		tasks = spa->spa_async_tasks;
+		spa->spa_async_tasks = 0;
+		spa->spa_async_suspend_done = 0;
+
+		mutex_exit(&spa->spa_async_lock);
+
+		spa_async_dispatch(spa, tasks);
+
+		mutex_enter(&spa->spa_async_lock);
+	}
 
 	/*
 	 * Let the world know that we're done.
 	 */
-	mutex_enter(&spa->spa_async_lock);
 	spa->spa_async_thread = NULL;
-	cv_broadcast(&spa->spa_async_cv);
+	cv_broadcast(&spa->spa_async_sd_cv);
 	mutex_exit(&spa->spa_async_lock);
 	thread_exit();
 }
@@ -5653,8 +5716,11 @@ spa_async_suspend(spa_t *spa)
 {
 	mutex_enter(&spa->spa_async_lock);
 	spa->spa_async_suspended++;
-	while (spa->spa_async_thread != NULL)
-		cv_wait(&spa->spa_async_cv, &spa->spa_async_lock);
+	while (spa->spa_async_thread != NULL &&
+	    spa->spa_async_suspend_done == 0) {
+		cv_broadcast(&spa->spa_async_wu_cv);
+		cv_wait(&spa->spa_async_sd_cv, &spa->spa_async_lock);
+	}
 	mutex_exit(&spa->spa_async_lock);
 }
 
@@ -5664,16 +5730,64 @@ spa_async_resume(spa_t *spa)
 	mutex_enter(&spa->spa_async_lock);
 	ASSERT(spa->spa_async_suspended != 0);
 	spa->spa_async_suspended--;
+	if (spa->spa_async_suspended == 0)
+		cv_broadcast(&spa->spa_async_wu_cv);
 	mutex_exit(&spa->spa_async_lock);
 }
 
+void
+spa_async_create(spa_t *spa)
+{
+	mutex_enter(&spa->spa_async_lock);
+	if (spa->spa_async_thread != NULL) {
+		mutex_exit(&spa->spa_async_lock);
+		return;
+	}
+
+	spa->spa_async_shutdown = 0;
+	/*
+	 * We start off with the async thread suspended.  We resume it when
+	 * we start the syncer.
+	 */
+	spa->spa_async_suspended = 1;
+	mutex_exit(&spa->spa_async_lock);
+
+	spa->spa_async_thread = thread_create(NULL, 0,
+	    spa_async_thread, spa, 0, &p0, TS_RUN, maxclsyspri);
+	if (spa->spa_async_thread == NULL)
+		printf("%s: error creating SPA async thread!\n", __func__);
+}
+
+void
+spa_async_shutdown(spa_t *spa)
+{
+	mutex_enter(&spa->spa_async_lock);
+	while (spa->spa_async_thread != NULL) {
+		spa->spa_async_shutdown = 1;
+		cv_broadcast(&spa->spa_async_wu_cv);
+		cv_wait(&spa->spa_async_sd_cv, &spa->spa_async_lock);
+	}
+	spa->spa_async_suspended = 0;
+	mutex_exit(&spa->spa_async_lock);
+}
+
+/*
+ * Check whether the SPA has async tasks pending.
+ *
+ * If wait_time is non-zero, the SPA's async thread will wait wait_time/hz
+ * seconds and check again.
+ *
+ * Returns whether the task thread should run.
+ */
 static boolean_t
-spa_async_tasks_pending(spa_t *spa)
+spa_async_tasks_pending(spa_t *spa, uint64_t *wait_time)
 {
 	u_int non_config_tasks;
 	u_int config_task;
 	boolean_t config_task_suspended;
+	int64_t delta_time;
 
+	delta_time = 0;
 	non_config_tasks = spa->spa_async_tasks & ~SPA_ASYNC_CONFIG_UPDATE;
 	config_task = spa->spa_async_tasks & SPA_ASYNC_CONFIG_UPDATE;
 	if (spa->spa_ccw_fail_time == 0) {
@@ -5683,21 +5797,12 @@ spa_async_tasks_pending(spa_t *spa)
 		    (gethrtime() - spa->spa_ccw_fail_time) <
 		    (zfs_ccw_retry_interval * NANOSEC);
 	}
+	if (config_task_suspended)
+		*wait_time = (zfs_ccw_retry_interval * hz) - delta_time;
+	else
+		*wait_time = 0;
 
 	return (non_config_tasks || (config_task && !config_task_suspended));
-}
-
-static void
-spa_async_dispatch(spa_t *spa)
-{
-	mutex_enter(&spa->spa_async_lock);
-	if (spa_async_tasks_pending(spa) &&
-	    !spa->spa_async_suspended &&
-	    spa->spa_async_thread == NULL &&
-	    rootdir != NULL)
-		spa->spa_async_thread = thread_create(NULL, 0,
-		    spa_async_thread, spa, 0, &p0, TS_RUN, maxclsyspri);
-	mutex_exit(&spa->spa_async_lock);
 }
 
 void
@@ -5706,6 +5811,7 @@ spa_async_request(spa_t *spa, int task)
 	zfs_dbgmsg("spa=%s async request task=%u", spa->spa_name, task);
 	mutex_enter(&spa->spa_async_lock);
 	spa->spa_async_tasks |= task;
+	cv_broadcast(&spa->spa_async_wu_cv);
 	mutex_exit(&spa->spa_async_lock);
 }
 
@@ -6277,11 +6383,6 @@ spa_sync(spa_t *spa, uint64_t txg)
 	spa_config_exit(spa, SCL_CONFIG, FTAG);
 
 	spa_handle_ignored_writes(spa);
-
-	/*
-	 * If any async tasks have been requested, kick them off.
-	 */
-	spa_async_dispatch(spa);
 }
 
 /*
@@ -6342,6 +6443,7 @@ spa_evict_all(void)
 			spa_unload(spa);
 			spa_deactivate(spa);
 		}
+		ASSERT3P(spa->spa_async_thread, ==, NULL);
 		spa_remove(spa);
 	}
 	mutex_exit(&spa_namespace_lock);

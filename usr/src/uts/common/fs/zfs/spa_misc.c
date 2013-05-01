@@ -479,7 +479,8 @@ spa_add(const char *name, nvlist_t *config, const char *altroot)
 	mutex_init(&spa->spa_vdev_top_lock, NULL, MUTEX_DEFAULT, NULL);
 	mutex_init(&spa->spa_iokstat_lock, NULL, MUTEX_DEFAULT, NULL);
 
-	cv_init(&spa->spa_async_cv, NULL, CV_DEFAULT, NULL);
+	cv_init(&spa->spa_async_sd_cv, NULL, CV_DEFAULT, NULL);
+	cv_init(&spa->spa_async_wu_cv, NULL, CV_DEFAULT, NULL);
 	cv_init(&spa->spa_proc_cv, NULL, CV_DEFAULT, NULL);
 	cv_init(&spa->spa_scrub_io_cv, NULL, CV_DEFAULT, NULL);
 	cv_init(&spa->spa_suspend_cv, NULL, CV_DEFAULT, NULL);
@@ -621,7 +622,8 @@ spa_remove(spa_t *spa)
 	for (int t = 0; t < TXG_SIZE; t++)
 		bplist_destroy(&spa->spa_free_bplist[t]);
 
-	cv_destroy(&spa->spa_async_cv);
+	cv_destroy(&spa->spa_async_sd_cv);
+	cv_destroy(&spa->spa_async_wu_cv);
 	cv_destroy(&spa->spa_proc_cv);
 	cv_destroy(&spa->spa_scrub_io_cv);
 	cv_destroy(&spa->spa_suspend_cv);
@@ -1372,7 +1374,10 @@ strtonum(const char *str, char **nptr)
 boolean_t
 spa_shutting_down(spa_t *spa)
 {
-	return (spa->spa_async_suspended);
+	if (spa->spa_async_suspended || spa->spa_async_shutdown)
+		return (B_TRUE);
+	else
+		return (B_FALSE);
 }
 
 dsl_pool_t *

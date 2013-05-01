@@ -174,8 +174,11 @@ struct spa {
 	kmutex_t	spa_async_lock;		/* protect async state */
 	kthread_t	*spa_async_thread;	/* thread doing async task */
 	int		spa_async_suspended;	/* async tasks suspended */
-	kcondvar_t	spa_async_cv;		/* wait for thread_exit() */
 	uint16_t	spa_async_tasks;	/* async task mask */
+	int		spa_async_suspend_done;	/* async tasks suspended */
+	int		spa_async_shutdown;	/* shutdown async task */
+	kcondvar_t	spa_async_sd_cv;	/* wait for thread_exit() */
+	kcondvar_t	spa_async_wu_cv;	/* wakeup async thread */
 	char		*spa_root;		/* alternate root directory */
 	uint64_t	spa_ena;		/* spa-wide ereport ENA */
 	int		spa_last_open_failed;	/* error if last open failed */

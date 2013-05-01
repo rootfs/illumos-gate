@@ -3084,16 +3084,7 @@ ztest_vdev_LUN_growth(ztest_ds_t *zd, uint64_t id)
 	 * thus we must wait for the async thread to complete any
 	 * pending tasks before proceeding.
 	 */
-	for (;;) {
-		boolean_t done;
-		mutex_enter(&spa->spa_async_lock);
-		done = (spa->spa_async_thread == NULL && !spa->spa_async_tasks);
-		mutex_exit(&spa->spa_async_lock);
-		if (done)
-			break;
-		txg_wait_synced(spa_get_dsl(spa), 0);
-		(void) poll(NULL, 0, 100);
-	}
+	spa_async_suspend(spa);
 
 	spa_config_enter(spa, SCL_STATE, spa, RW_READER);
 
@@ -3135,6 +3126,7 @@ ztest_vdev_LUN_growth(ztest_ds_t *zd, uint64_t id)
 	}
 
 	spa_config_exit(spa, SCL_STATE, spa);
+	spa_async_resume(spa);
 	VERIFY(mutex_unlock(&ztest_vdev_lock) == 0);
 }
 
