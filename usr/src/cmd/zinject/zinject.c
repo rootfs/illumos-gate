@@ -144,6 +144,7 @@
 #include <unistd.h>
 
 #include <sys/fs/zfs.h>
+#include <sys/param.h>
 #include <sys/mount.h>
 
 #include <libzfs.h>
@@ -155,7 +156,9 @@
 libzfs_handle_t *g_zfs;
 int zfs_fd;
 
+#ifndef ECKSUM
 #define	ECKSUM	EBADE
+#endif
 
 static const char *errtable[TYPE_INVAL] = {
 	"data",

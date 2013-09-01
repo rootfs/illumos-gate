@@ -25,7 +25,7 @@
 
 /*
  * Copyright (c) 2011, Joyent, Inc. All rights reserved.
- * Copyright (c) 2012 by Delphix. All rights reserved.
+ * Copyright (c) 2011 by Delphix. All rights reserved.
  */
 
 #include <stdlib.h>
@@ -35,9 +35,13 @@
 #include <limits.h>
 #include <assert.h>
 #include <ctype.h>
+#if defined(sun)
 #include <alloca.h>
+#endif
 #include <dt_impl.h>
-#include <dt_pq.h>
+#if !defined(sun)
+#include <libproc_compat.h>
+#endif
 
 #define	DT_MASK_LO 0x00000000FFFFFFFFULL
 
@@ -439,8 +443,17 @@ dt_flowindent(dtrace_hdl_t *dtp, dtrace_probedata_t *data, dtrace_epid_t last,
 		offs += epd->dtepd_size;
 
 		do {
-			if (offs >= buf->dtbd_size)
-				goto out;
+			if (offs >= buf->dtbd_size) {
+				/*
+				 * We're at the end -- maybe.  If the oldest
+				 * record is non-zero, we need to wrap.
+				 */
+				if (buf->dtbd_oldest != 0) {
+					offs = 0;
+				} else {
+					goto out;
+				}
+			}
 
 			next = *(uint32_t *)((uintptr_t)buf->dtbd_data + offs);
 
@@ -749,7 +762,7 @@ dt_print_llquantize(dtrace_hdl_t *dtp, FILE *fp, const void *addr,
 	step = next > nsteps ? next / nsteps : 1;
 
 	if (first_bin == 0) {
-		(void) snprintf(c, sizeof (c), "< %lld", value);
+		(void) snprintf(c, sizeof (c), "< %lld", (long long)value);
 
 		if (dt_printf(dtp, fp, "%16s ", c) < 0)
 			return (-1);
@@ -784,7 +797,7 @@ dt_print_llquantize(dtrace_hdl_t *dtp, FILE *fp, const void *addr,
 		return (0);
 
 	assert(last_bin == bin);
-	(void) snprintf(c, sizeof (c), ">= %lld", value);
+	(void) snprintf(c, sizeof (c), ">= %lld", (long long)value);
 
 	if (dt_printf(dtp, fp, "%16s ", c) < 0)
 		return (-1);
@@ -971,7 +984,7 @@ dt_print_stack(dtrace_hdl_t *dtp, FILE *fp, const char *format,
 			return (dt_set_errno(dtp, EDT_BADSTACKPC));
 		}
 
-		if (pc == NULL)
+		if (pc == 0)
 			break;
 
 		addr += size;
@@ -983,7 +996,7 @@ dt_print_stack(dtrace_hdl_t *dtp, FILE *fp, const char *format,
 			if (pc > sym.st_value) {
 				(void) snprintf(c, sizeof (c), "%s`%s+0x%llx",
 				    dts.dts_object, dts.dts_name,
-				    pc - sym.st_value);
+				    (u_longlong_t)(pc - sym.st_value));
 			} else {
 				(void) snprintf(c, sizeof (c), "%s`%s",
 				    dts.dts_object, dts.dts_name);
@@ -996,9 +1009,10 @@ dt_print_stack(dtrace_hdl_t *dtp, FILE *fp, const char *format,
 			 */
 			if (dtrace_lookup_by_addr(dtp, pc, NULL, &dts) == 0) {
 				(void) snprintf(c, sizeof (c), "%s`0x%llx",
-				    dts.dts_object, pc);
+				    dts.dts_object, (u_longlong_t)pc);
 			} else {
-				(void) snprintf(c, sizeof (c), "0x%llx", pc);
+				(void) snprintf(c, sizeof (c), "0x%llx",
+				    (u_longlong_t)pc);
 			}
 		}
 
@@ -1059,7 +1073,7 @@ dt_print_ustack(dtrace_hdl_t *dtp, FILE *fp, const char *format,
 	if (P != NULL)
 		dt_proc_lock(dtp, P); /* lock handle while we perform lookups */
 
-	for (i = 0; i < depth && pc[i] != NULL; i++) {
+	for (i = 0; i < depth && pc[i] != 0; i++) {
 		const prmap_t *map;
 
 		if ((err = dt_printf(dtp, fp, "%*s", indent, "")) < 0)
@@ -1096,7 +1110,7 @@ dt_print_ustack(dtrace_hdl_t *dtp, FILE *fp, const char *format,
 			(void) snprintf(c, sizeof (c), "%s", str);
 		} else {
 			if (P != NULL && Pobjname(P, pc[i], objname,
-			    sizeof (objname)) != NULL) {
+			    sizeof (objname)) != 0) {
 				(void) snprintf(c, sizeof (c), "%s`0x%llx",
 				    dt_basename(objname), (u_longlong_t)pc[i]);
 			} else {
@@ -1208,7 +1222,7 @@ dt_print_umod(dtrace_hdl_t *dtp, FILE *fp, const char *format, caddr_t addr)
 	if (P != NULL)
 		dt_proc_lock(dtp, P); /* lock handle while we perform lookups */
 
-	if (P != NULL && Pobjname(P, pc, objname, sizeof (objname)) != NULL) {
+	if (P != NULL && Pobjname(P, pc, objname, sizeof (objname)) != 0) {
 		(void) snprintf(c, sizeof (c), "%s", dt_basename(objname));
 	} else {
 		(void) snprintf(c, sizeof (c), "0x%llx", (u_longlong_t)pc);
@@ -1222,6 +1236,314 @@ dt_print_umod(dtrace_hdl_t *dtp, FILE *fp, const char *format, caddr_t addr)
 	}
 
 	return (err);
+}
+
+int
+dt_print_memory(dtrace_hdl_t *dtp, FILE *fp, caddr_t addr)
+{
+	int quiet = (dtp->dt_options[DTRACEOPT_QUIET] != DTRACEOPT_UNSET);
+	size_t nbytes = *((uintptr_t *) addr);
+
+	return (dt_print_bytes(dtp, fp, addr + sizeof(uintptr_t),
+	    nbytes, 50, quiet, 1));
+}
+
+typedef struct dt_type_cbdata {
+	dtrace_hdl_t		*dtp;
+	dtrace_typeinfo_t	dtt;
+	caddr_t			addr;
+	caddr_t			addrend;
+	const char		*name;
+	int			f_type;
+	int			indent;
+	int			type_width;
+	int			name_width;
+	FILE			*fp;
+} dt_type_cbdata_t;
+
+static int	dt_print_type_data(dt_type_cbdata_t *, ctf_id_t);
+
+static int
+dt_print_type_member(const char *name, ctf_id_t type, ulong_t off, void *arg)
+{
+	dt_type_cbdata_t cbdata;
+	dt_type_cbdata_t *cbdatap = arg;
+	ssize_t ssz;
+
+	if ((ssz = ctf_type_size(cbdatap->dtt.dtt_ctfp, type)) <= 0)
+		return (0);
+
+	off /= 8;
+
+	cbdata = *cbdatap;
+	cbdata.name = name;
+	cbdata.addr += off;
+	cbdata.addrend = cbdata.addr + ssz;
+
+	return (dt_print_type_data(&cbdata, type));
+}
+
+static int
+dt_print_type_width(const char *name, ctf_id_t type, ulong_t off, void *arg)
+{
+	char buf[DT_TYPE_NAMELEN];
+	char *p;
+	dt_type_cbdata_t *cbdatap = arg;
+	size_t sz = strlen(name);
+
+	ctf_type_name(cbdatap->dtt.dtt_ctfp, type, buf, sizeof (buf));
+
+	if ((p = strchr(buf, '[')) != NULL)
+		p[-1] = '\0';
+	else
+		p = "";
+
+	sz += strlen(p);
+
+	if (sz > cbdatap->name_width)
+		cbdatap->name_width = sz;
+
+	sz = strlen(buf);
+
+	if (sz > cbdatap->type_width)
+		cbdatap->type_width = sz;
+
+	return (0);
+}
+
+static int
+dt_print_type_data(dt_type_cbdata_t *cbdatap, ctf_id_t type)
+{
+	caddr_t addr = cbdatap->addr;
+	caddr_t addrend = cbdatap->addrend;
+	char buf[DT_TYPE_NAMELEN];
+	char *p;
+	int cnt = 0;
+	uint_t kind = ctf_type_kind(cbdatap->dtt.dtt_ctfp, type);
+	ssize_t ssz = ctf_type_size(cbdatap->dtt.dtt_ctfp, type);
+
+	ctf_type_name(cbdatap->dtt.dtt_ctfp, type, buf, sizeof (buf));
+
+	if ((p = strchr(buf, '[')) != NULL)
+		p[-1] = '\0';
+	else
+		p = "";
+
+	if (cbdatap->f_type) {
+		int type_width = roundup(cbdatap->type_width + 1, 4);
+		int name_width = roundup(cbdatap->name_width + 1, 4);
+
+		name_width -= strlen(cbdatap->name);
+
+		dt_printf(cbdatap->dtp, cbdatap->fp, "%*s%-*s%s%-*s	= ",cbdatap->indent * 4,"",type_width,buf,cbdatap->name,name_width,p);
+	}
+
+	while (addr < addrend) {
+		dt_type_cbdata_t cbdata;
+		ctf_arinfo_t arinfo;
+		ctf_encoding_t cte;
+		uintptr_t *up;
+		void *vp = addr;
+		cbdata = *cbdatap;
+		cbdata.name = "";
+		cbdata.addr = addr;
+		cbdata.addrend = addr + ssz;
+		cbdata.f_type = 0;
+		cbdata.indent++;
+		cbdata.type_width = 0;
+		cbdata.name_width = 0;
+
+		if (cnt > 0)
+			dt_printf(cbdatap->dtp, cbdatap->fp, "%*s", cbdatap->indent * 4,"");
+
+		switch (kind) {
+		case CTF_K_INTEGER:
+			if (ctf_type_encoding(cbdatap->dtt.dtt_ctfp, type, &cte) != 0)
+				return (-1);
+			if ((cte.cte_format & CTF_INT_SIGNED) != 0)
+				switch (cte.cte_bits) {
+				case 8:
+					if (isprint(*((char *) vp)))
+						dt_printf(cbdatap->dtp, cbdatap->fp, "'%c', ", *((char *) vp));
+					dt_printf(cbdatap->dtp, cbdatap->fp, "%d (0x%x);\n", *((char *) vp), *((char *) vp));
+					break;
+				case 16:
+					dt_printf(cbdatap->dtp, cbdatap->fp, "%hd (0x%hx);\n", *((short *) vp), *((u_short *) vp));
+					break;
+				case 32:
+					dt_printf(cbdatap->dtp, cbdatap->fp, "%d (0x%x);\n", *((int *) vp), *((u_int *) vp));
+					break;
+				case 64:
+					dt_printf(cbdatap->dtp, cbdatap->fp, "%jd (0x%jx);\n", *((long long *) vp), *((unsigned long long *) vp));
+					break;
+				default:
+					dt_printf(cbdatap->dtp, cbdatap->fp, "CTF_K_INTEGER: format %x offset %u bits %u\n",cte.cte_format,cte.cte_offset,cte.cte_bits);
+					break;
+				}
+			else
+				switch (cte.cte_bits) {
+				case 8:
+					dt_printf(cbdatap->dtp, cbdatap->fp, "%u (0x%x);\n", *((uint8_t *) vp) & 0xff, *((uint8_t *) vp) & 0xff);
+					break;
+				case 16:
+					dt_printf(cbdatap->dtp, cbdatap->fp, "%hu (0x%hx);\n", *((u_short *) vp), *((u_short *) vp));
+					break;
+				case 32:
+					dt_printf(cbdatap->dtp, cbdatap->fp, "%u (0x%x);\n", *((u_int *) vp), *((u_int *) vp));
+					break;
+				case 64:
+					dt_printf(cbdatap->dtp, cbdatap->fp, "%ju (0x%jx);\n", *((unsigned long long *) vp), *((unsigned long long *) vp));
+					break;
+				default:
+					dt_printf(cbdatap->dtp, cbdatap->fp, "CTF_K_INTEGER: format %x offset %u bits %u\n",cte.cte_format,cte.cte_offset,cte.cte_bits);
+					break;
+				}
+			break;
+		case CTF_K_FLOAT:
+			dt_printf(cbdatap->dtp, cbdatap->fp, "CTF_K_FLOAT: format %x offset %u bits %u\n",cte.cte_format,cte.cte_offset,cte.cte_bits);
+			break;
+		case CTF_K_POINTER:
+			dt_printf(cbdatap->dtp, cbdatap->fp, "%p;\n", *((void **) addr));
+			break;
+		case CTF_K_ARRAY:
+			if (ctf_array_info(cbdatap->dtt.dtt_ctfp, type, &arinfo) != 0)
+				return (-1);
+			dt_printf(cbdatap->dtp, cbdatap->fp, "{\n%*s",cbdata.indent * 4,"");
+			dt_print_type_data(&cbdata, arinfo.ctr_contents);
+			dt_printf(cbdatap->dtp, cbdatap->fp, "%*s};\n",cbdatap->indent * 4,"");
+			break;
+		case CTF_K_FUNCTION:
+			dt_printf(cbdatap->dtp, cbdatap->fp, "CTF_K_FUNCTION:\n");
+			break;
+		case CTF_K_STRUCT:
+			cbdata.f_type = 1;
+			if (ctf_member_iter(cbdatap->dtt.dtt_ctfp, type,
+			    dt_print_type_width, &cbdata) != 0)
+				return (-1);
+			dt_printf(cbdatap->dtp, cbdatap->fp, "{\n");
+			if (ctf_member_iter(cbdatap->dtt.dtt_ctfp, type,
+			    dt_print_type_member, &cbdata) != 0)
+				return (-1);
+			dt_printf(cbdatap->dtp, cbdatap->fp, "%*s};\n",cbdatap->indent * 4,"");
+			break;
+		case CTF_K_UNION:
+			cbdata.f_type = 1;
+			if (ctf_member_iter(cbdatap->dtt.dtt_ctfp, type,
+			    dt_print_type_width, &cbdata) != 0)
+				return (-1);
+			dt_printf(cbdatap->dtp, cbdatap->fp, "{\n");
+			if (ctf_member_iter(cbdatap->dtt.dtt_ctfp, type,
+			    dt_print_type_member, &cbdata) != 0)
+				return (-1);
+			dt_printf(cbdatap->dtp, cbdatap->fp, "%*s};\n",cbdatap->indent * 4,"");
+			break;
+		case CTF_K_ENUM:
+			dt_printf(cbdatap->dtp, cbdatap->fp, "%s;\n", ctf_enum_name(cbdatap->dtt.dtt_ctfp, type, *((int *) vp)));
+			break;
+		case CTF_K_TYPEDEF:
+			dt_print_type_data(&cbdata, ctf_type_reference(cbdatap->dtt.dtt_ctfp,type));
+			break;
+		case CTF_K_VOLATILE:
+			if (cbdatap->f_type)
+				dt_printf(cbdatap->dtp, cbdatap->fp, "volatile ");
+			dt_print_type_data(&cbdata, ctf_type_reference(cbdatap->dtt.dtt_ctfp,type));
+			break;
+		case CTF_K_CONST:
+			if (cbdatap->f_type)
+				dt_printf(cbdatap->dtp, cbdatap->fp, "const ");
+			dt_print_type_data(&cbdata, ctf_type_reference(cbdatap->dtt.dtt_ctfp,type));
+			break;
+		case CTF_K_RESTRICT:
+			if (cbdatap->f_type)
+				dt_printf(cbdatap->dtp, cbdatap->fp, "restrict ");
+			dt_print_type_data(&cbdata, ctf_type_reference(cbdatap->dtt.dtt_ctfp,type));
+			break;
+		default:
+			break;
+		}
+
+		addr += ssz;
+		cnt++;
+	}
+
+	return (0);
+}
+
+static int
+dt_print_type(dtrace_hdl_t *dtp, FILE *fp, caddr_t addr)
+{
+	caddr_t addrend;
+	char *p;
+	dtrace_typeinfo_t dtt;
+	dt_type_cbdata_t cbdata;
+	int num = 0;
+	int quiet = (dtp->dt_options[DTRACEOPT_QUIET] != DTRACEOPT_UNSET);
+	ssize_t ssz;
+
+	if (!quiet)
+		dt_printf(dtp, fp, "\n");
+
+	/* Get the total number of bytes of data buffered. */
+	size_t nbytes = *((uintptr_t *) addr);
+	addr += sizeof(uintptr_t);
+
+	/*
+	 * Get the size of the type so that we can check that it matches
+	 * the CTF data we look up and so that we can figure out how many
+	 * type elements are buffered.
+	 */
+	size_t typs = *((uintptr_t *) addr);
+	addr += sizeof(uintptr_t);
+
+	/*
+	 * Point to the type string in the buffer. Get it's string
+	 * length and round it up to become the offset to the start
+	 * of the buffered type data which we would like to be aligned
+	 * for easy access.
+	 */
+	char *strp = (char *) addr;
+	int offset = roundup(strlen(strp) + 1, sizeof(uintptr_t));
+
+	/*
+	 * The type string might have a format such as 'int [20]'.
+	 * Check if there is an array dimension present.
+	 */
+	if ((p = strchr(strp, '[')) != NULL) {
+		/* Strip off the array dimension. */
+		*p++ = '\0';
+
+		for (; *p != '\0' && *p != ']'; p++)
+			num = num * 10 + *p - '0';
+	} else
+		/* No array dimension, so default. */
+		num = 1;
+
+	/* Lookup the CTF type from the type string. */
+	if (dtrace_lookup_by_type(dtp,  DTRACE_OBJ_EVERY, strp, &dtt) < 0)
+		return (-1);
+
+	/* Offset the buffer address to the start of the data... */
+	addr += offset;
+
+	ssz = ctf_type_size(dtt.dtt_ctfp, dtt.dtt_type);
+
+	if (typs != ssz) {
+		printf("Expected type size from buffer (%lu) to match type size looked up now (%ld)\n", (u_long) typs, (long) ssz);
+		return (-1);
+	}
+
+	cbdata.dtp = dtp;
+	cbdata.dtt = dtt;
+	cbdata.name = "";
+	cbdata.addr = addr;
+	cbdata.addrend = addr + nbytes;
+	cbdata.indent = 1;
+	cbdata.f_type = 1;
+	cbdata.type_width = 0;
+	cbdata.name_width = 0;
+	cbdata.fp = fp;
+
+	return (dt_print_type_data(&cbdata, dtt.dtt_type));
 }
 
 static int
@@ -1692,27 +2014,26 @@ dt_setopt(dtrace_hdl_t *dtp, const dtrace_probedata_t *data,
 }
 
 static int
-dt_consume_cpu(dtrace_hdl_t *dtp, FILE *fp, int cpu,
-    dtrace_bufdesc_t *buf, boolean_t just_one,
+dt_consume_cpu(dtrace_hdl_t *dtp, FILE *fp, int cpu, dtrace_bufdesc_t *buf,
     dtrace_consume_probe_f *efunc, dtrace_consume_rec_f *rfunc, void *arg)
 {
 	dtrace_epid_t id;
-	size_t offs;
+	size_t offs, start = buf->dtbd_oldest, end = buf->dtbd_size;
 	int flow = (dtp->dt_options[DTRACEOPT_FLOWINDENT] != DTRACEOPT_UNSET);
 	int quiet = (dtp->dt_options[DTRACEOPT_QUIET] != DTRACEOPT_UNSET);
 	int rval, i, n;
+	dtrace_epid_t last = DTRACE_EPIDNONE;
 	uint64_t tracememsize = 0;
 	dtrace_probedata_t data;
 	uint64_t drops;
+	caddr_t addr;
 
 	bzero(&data, sizeof (data));
 	data.dtpda_handle = dtp;
 	data.dtpda_cpu = cpu;
-	data.dtpda_flow = dtp->dt_flow;
-	data.dtpda_indent = dtp->dt_indent;
-	data.dtpda_prefix = dtp->dt_prefix;
 
-	for (offs = buf->dtbd_oldest; offs < buf->dtbd_size; ) {
+again:
+	for (offs = start; offs < end; ) {
 		dtrace_eprobedesc_t *epd;
 
 		/*
@@ -1747,8 +2068,7 @@ dt_consume_cpu(dtrace_hdl_t *dtp, FILE *fp, int cpu,
 		}
 
 		if (flow)
-			(void) dt_flowindent(dtp, &data, dtp->dt_last_epid,
-			    buf, offs);
+			(void) dt_flowindent(dtp, &data, last, buf, offs);
 
 		rval = (*efunc)(&data, arg);
 
@@ -1767,7 +2087,6 @@ dt_consume_cpu(dtrace_hdl_t *dtp, FILE *fp, int cpu,
 			return (dt_set_errno(dtp, EDT_BADRVAL));
 
 		for (i = 0; i < epd->dtepd_nrecs; i++) {
-			caddr_t addr;
 			dtrace_recdesc_t *rec = &epd->dtepd_rec[i];
 			dtrace_actkind_t act = rec->dtrd_action;
 
@@ -1875,7 +2194,7 @@ dt_consume_cpu(dtrace_hdl_t *dtp, FILE *fp, int cpu,
 
 			if (act == DTRACEACT_TRACEMEM_DYNSIZE &&
 			    rec->dtrd_size == sizeof (uint64_t)) {
-				/* LINTED - alignment */
+			    	/* LINTED - alignment */
 				tracememsize = *((unsigned long long *)addr);
 				continue;
 			}
@@ -1928,6 +2247,18 @@ dt_consume_cpu(dtrace_hdl_t *dtp, FILE *fp, int cpu,
 
 			if (act == DTRACEACT_UMOD) {
 				if (dt_print_umod(dtp, fp, NULL, addr) < 0)
+					return (-1);
+				goto nextrec;
+			}
+
+			if (act == DTRACEACT_PRINTM) {
+				if (dt_print_memory(dtp, fp, addr) < 0)
+					return (-1);
+				goto nextrec;
+			}
+
+			if (act == DTRACEACT_PRINTT) {
+				if (dt_print_type(dtp, fp, addr) < 0)
 					return (-1);
 				goto nextrec;
 			}
@@ -2127,16 +2458,14 @@ nextrec:
 		rval = (*rfunc)(&data, NULL, arg);
 nextepid:
 		offs += epd->dtepd_size;
-		dtp->dt_last_epid = id;
-		if (just_one) {
-			buf->dtbd_oldest = offs;
-			break;
-		}
+		last = id;
 	}
 
-	dtp->dt_flow = data.dtpda_flow;
-	dtp->dt_indent = data.dtpda_indent;
-	dtp->dt_prefix = data.dtpda_prefix;
+	if (buf->dtbd_oldest != 0 && start == buf->dtbd_oldest) {
+		end = buf->dtbd_oldest;
+		start = 0;
+		goto again;
+	}
 
 	if ((drops = buf->dtbd_drops) == 0)
 		return (0);
@@ -2147,126 +2476,6 @@ nextepid:
 	buf->dtbd_drops = 0;
 
 	return (dt_handle_cpudrop(dtp, cpu, DTRACEDROP_PRINCIPAL, drops));
-}
-
-/*
- * Reduce memory usage by shrinking the buffer if it's no more than half full.
- * Note, we need to preserve the alignment of the data at dtbd_oldest, which is
- * only 4-byte aligned.
- */
-static void
-dt_realloc_buf(dtrace_hdl_t *dtp, dtrace_bufdesc_t *buf, int cursize)
-{
-	uint64_t used = buf->dtbd_size - buf->dtbd_oldest;
-	if (used < cursize / 2) {
-		int misalign = buf->dtbd_oldest & (sizeof (uint64_t) - 1);
-		char *newdata = dt_alloc(dtp, used + misalign);
-		if (newdata == NULL)
-			return;
-		bzero(newdata, misalign);
-		bcopy(buf->dtbd_data + buf->dtbd_oldest,
-		    newdata + misalign, used);
-		dt_free(dtp, buf->dtbd_data);
-		buf->dtbd_oldest = misalign;
-		buf->dtbd_size = used + misalign;
-		buf->dtbd_data = newdata;
-	}
-}
-
-/*
- * If the ring buffer has wrapped, the data is not in order.  Rearrange it
- * so that it is.  Note, we need to preserve the alignment of the data at
- * dtbd_oldest, which is only 4-byte aligned.
- */
-static int
-dt_unring_buf(dtrace_hdl_t *dtp, dtrace_bufdesc_t *buf)
-{
-	int misalign;
-	char *newdata, *ndp;
-
-	if (buf->dtbd_oldest == 0)
-		return (0);
-
-	misalign = buf->dtbd_oldest & (sizeof (uint64_t) - 1);
-	newdata = ndp = dt_alloc(dtp, buf->dtbd_size + misalign);
-
-	if (newdata == NULL)
-		return (-1);
-
-	assert(0 == (buf->dtbd_size & (sizeof (uint64_t) - 1)));
-
-	bzero(ndp, misalign);
-	ndp += misalign;
-
-	bcopy(buf->dtbd_data + buf->dtbd_oldest, ndp,
-	    buf->dtbd_size - buf->dtbd_oldest);
-	ndp += buf->dtbd_size - buf->dtbd_oldest;
-
-	bcopy(buf->dtbd_data, ndp, buf->dtbd_oldest);
-
-	dt_free(dtp, buf->dtbd_data);
-	buf->dtbd_oldest = 0;
-	buf->dtbd_data = newdata;
-	buf->dtbd_size += misalign;
-
-	return (0);
-}
-
-static void
-dt_put_buf(dtrace_hdl_t *dtp, dtrace_bufdesc_t *buf)
-{
-	dt_free(dtp, buf->dtbd_data);
-	dt_free(dtp, buf);
-}
-
-/*
- * Returns 0 on success, in which case *cbp will be filled in if we retrieved
- * data, or NULL if there is no data for this CPU.
- * Returns -1 on failure and sets dt_errno.
- */
-static int
-dt_get_buf(dtrace_hdl_t *dtp, int cpu, dtrace_bufdesc_t **bufp)
-{
-	dtrace_optval_t size;
-	dtrace_bufdesc_t *buf = dt_zalloc(dtp, sizeof (*buf));
-	int error;
-
-	if (buf == NULL)
-		return (-1);
-
-	(void) dtrace_getopt(dtp, "bufsize", &size);
-	buf->dtbd_data = dt_alloc(dtp, size);
-	if (buf->dtbd_data == NULL) {
-		dt_free(dtp, buf);
-		return (-1);
-	}
-	buf->dtbd_size = size;
-	buf->dtbd_cpu = cpu;
-
-	if (dt_ioctl(dtp, DTRACEIOC_BUFSNAP, buf) == -1) {
-		dt_put_buf(dtp, buf);
-		/*
-		 * If we failed with ENOENT, it may be because the
-		 * CPU was unconfigured -- this is okay.  Any other
-		 * error, however, is unexpected.
-		 */
-		if (errno == ENOENT) {
-			*bufp = NULL;
-			return (0);
-		}
-
-		return (dt_set_errno(dtp, errno));
-	}
-
-	error = dt_unring_buf(dtp, buf);
-	if (error != 0) {
-		dt_put_buf(dtp, buf);
-		return (error);
-	}
-	dt_realloc_buf(dtp, buf, size);
-
-	*bufp = buf;
-	return (0);
 }
 
 typedef struct dt_begin {
@@ -2281,7 +2490,7 @@ typedef struct dt_begin {
 static int
 dt_consume_begin_probe(const dtrace_probedata_t *data, void *arg)
 {
-	dt_begin_t *begin = arg;
+	dt_begin_t *begin = (dt_begin_t *)arg;
 	dtrace_probedesc_t *pd = data->dtpda_pdesc;
 
 	int r1 = (strcmp(pd->dtpd_provider, "dtrace") == 0);
@@ -2306,7 +2515,7 @@ static int
 dt_consume_begin_record(const dtrace_probedata_t *data,
     const dtrace_recdesc_t *rec, void *arg)
 {
-	dt_begin_t *begin = arg;
+	dt_begin_t *begin = (dt_begin_t *)arg;
 
 	return (begin->dtbgn_recfunc(data, rec, begin->dtbgn_arg));
 }
@@ -2332,7 +2541,7 @@ dt_consume_begin_error(const dtrace_errdata_t *data, void *arg)
 }
 
 static int
-dt_consume_begin(dtrace_hdl_t *dtp, FILE *fp,
+dt_consume_begin(dtrace_hdl_t *dtp, FILE *fp, dtrace_bufdesc_t *buf,
     dtrace_consume_probe_f *pf, dtrace_consume_rec_f *rf, void *arg)
 {
 	/*
@@ -2356,19 +2565,33 @@ dt_consume_begin(dtrace_hdl_t *dtp, FILE *fp,
 	 * first pass, and that we only process ERROR enablings _not_ induced
 	 * by BEGIN enablings in the second pass.
 	 */
-
 	dt_begin_t begin;
 	processorid_t cpu = dtp->dt_beganon;
+	dtrace_bufdesc_t nbuf;
+#if !defined(sun)
+	dtrace_bufdesc_t *pbuf;
+#endif
 	int rval, i;
 	static int max_ncpus;
-	dtrace_bufdesc_t *buf;
+	dtrace_optval_t size;
 
 	dtp->dt_beganon = -1;
 
-	if (dt_get_buf(dtp, cpu, &buf) != 0)
-		return (-1);
-	if (buf == NULL)
-		return (0);
+#if defined(sun)
+	if (dt_ioctl(dtp, DTRACEIOC_BUFSNAP, buf) == -1) {
+#else
+	if (dt_ioctl(dtp, DTRACEIOC_BUFSNAP, &buf) == -1) {
+#endif
+		/*
+		 * We really don't expect this to fail, but it is at least
+		 * technically possible for this to fail with ENOENT.  In this
+		 * case, we just drive on...
+		 */
+		if (errno == ENOENT)
+			return (0);
+
+		return (dt_set_errno(dtp, errno));
+	}
 
 	if (!dtp->dt_stopped || buf->dtbd_cpu != dtp->dt_endedon) {
 		/*
@@ -2376,10 +2599,7 @@ dt_consume_begin(dtrace_hdl_t *dtp, FILE *fp,
 		 * we are, we actually processed any END probes on another
 		 * CPU.  We can simply consume this buffer and return.
 		 */
-		rval = dt_consume_cpu(dtp, fp, cpu, buf, B_FALSE,
-		    pf, rf, arg);
-		dt_put_buf(dtp, buf);
-		return (rval);
+		return (dt_consume_cpu(dtp, fp, cpu, buf, pf, rf, arg));
 	}
 
 	begin.dtbgn_probefunc = pf;
@@ -2396,40 +2616,60 @@ dt_consume_begin(dtrace_hdl_t *dtp, FILE *fp,
 	dtp->dt_errhdlr = dt_consume_begin_error;
 	dtp->dt_errarg = &begin;
 
-	rval = dt_consume_cpu(dtp, fp, cpu, buf, B_FALSE,
-	    dt_consume_begin_probe, dt_consume_begin_record, &begin);
+	rval = dt_consume_cpu(dtp, fp, cpu, buf, dt_consume_begin_probe,
+	    dt_consume_begin_record, &begin);
 
 	dtp->dt_errhdlr = begin.dtbgn_errhdlr;
 	dtp->dt_errarg = begin.dtbgn_errarg;
 
-	if (rval != 0) {
-		dt_put_buf(dtp, buf);
+	if (rval != 0)
 		return (rval);
-	}
+
+	/*
+	 * Now allocate a new buffer.  We'll use this to deal with every other
+	 * CPU.
+	 */
+	bzero(&nbuf, sizeof (dtrace_bufdesc_t));
+	(void) dtrace_getopt(dtp, "bufsize", &size);
+	if ((nbuf.dtbd_data = malloc(size)) == NULL)
+		return (dt_set_errno(dtp, EDT_NOMEM));
 
 	if (max_ncpus == 0)
 		max_ncpus = dt_sysconf(dtp, _SC_CPUID_MAX) + 1;
 
 	for (i = 0; i < max_ncpus; i++) {
-		dtrace_bufdesc_t *nbuf;
+		nbuf.dtbd_cpu = i;
+
 		if (i == cpu)
 			continue;
 
-		if (dt_get_buf(dtp, i, &nbuf) != 0) {
-			dt_put_buf(dtp, buf);
-			return (-1);
-		}
-		if (nbuf == NULL)
-			continue;
+#if defined(sun)
+		if (dt_ioctl(dtp, DTRACEIOC_BUFSNAP, &nbuf) == -1) {
+#else
+		pbuf = &nbuf;
+		if (dt_ioctl(dtp, DTRACEIOC_BUFSNAP, &pbuf) == -1) {
+#endif
+			/*
+			 * If we failed with ENOENT, it may be because the
+			 * CPU was unconfigured -- this is okay.  Any other
+			 * error, however, is unexpected.
+			 */
+			if (errno == ENOENT)
+				continue;
 
-		rval = dt_consume_cpu(dtp, fp, i, nbuf, B_FALSE,
-		    pf, rf, arg);
-		dt_put_buf(dtp, nbuf);
-		if (rval != 0) {
-			dt_put_buf(dtp, buf);
+			free(nbuf.dtbd_data);
+
+			return (dt_set_errno(dtp, errno));
+		}
+
+		if ((rval = dt_consume_cpu(dtp, fp,
+		    i, &nbuf, pf, rf, arg)) != 0) {
+			free(nbuf.dtbd_data);
 			return (rval);
 		}
 	}
+
+	free(nbuf.dtbd_data);
 
 	/*
 	 * Okay -- we're done with the other buffers.  Now we want to
@@ -2445,8 +2685,8 @@ dt_consume_begin(dtrace_hdl_t *dtp, FILE *fp,
 	dtp->dt_errhdlr = dt_consume_begin_error;
 	dtp->dt_errarg = &begin;
 
-	rval = dt_consume_cpu(dtp, fp, cpu, buf, B_FALSE,
-	    dt_consume_begin_probe, dt_consume_begin_record, &begin);
+	rval = dt_consume_cpu(dtp, fp, cpu, buf, dt_consume_begin_probe,
+	    dt_consume_begin_record, &begin);
 
 	dtp->dt_errhdlr = begin.dtbgn_errhdlr;
 	dtp->dt_errarg = begin.dtbgn_errarg;
@@ -2454,32 +2694,11 @@ dt_consume_begin(dtrace_hdl_t *dtp, FILE *fp,
 	return (rval);
 }
 
-/* ARGSUSED */
-static uint64_t
-dt_buf_oldest(void *elem, void *arg)
-{
-	dtrace_bufdesc_t *buf = elem;
-	size_t offs = buf->dtbd_oldest;
-
-	while (offs < buf->dtbd_size) {
-		dtrace_rechdr_t *dtrh =
-		    /* LINTED - alignment */
-		    (dtrace_rechdr_t *)(buf->dtbd_data + offs);
-		if (dtrh->dtrh_epid == DTRACE_EPIDNONE) {
-			offs += sizeof (dtrace_epid_t);
-		} else {
-			return (DTRACE_RECORD_LOAD_TIMESTAMP(dtrh));
-		}
-	}
-
-	/* There are no records left; use the time the buffer was retrieved. */
-	return (buf->dtbd_timestamp);
-}
-
 int
 dtrace_consume(dtrace_hdl_t *dtp, FILE *fp,
     dtrace_consume_probe_f *pf, dtrace_consume_rec_f *rf, void *arg)
 {
+	dtrace_bufdesc_t *buf = &dtp->dt_buf;
 	dtrace_optval_t size;
 	static int max_ncpus;
 	int i, rval;
@@ -2507,158 +2726,79 @@ dtrace_consume(dtrace_hdl_t *dtp, FILE *fp,
 	if (rf == NULL)
 		rf = (dtrace_consume_rec_f *)dt_nullrec;
 
-	if (dtp->dt_options[DTRACEOPT_TEMPORAL] == DTRACEOPT_UNSET) {
-		/*
-		 * The output will not be in the order it was traced.  Rather,
-		 * we will consume all of the data from each CPU's buffer in
-		 * turn.  We apply special handling for the records from BEGIN
-		 * and END probes so that they are consumed first and last,
-		 * respectively.
-		 *
-		 * If we have just begun, we want to first process the CPU that
-		 * executed the BEGIN probe (if any).
-		 */
-		if (dtp->dt_active && dtp->dt_beganon != -1 &&
-		    (rval = dt_consume_begin(dtp, fp, pf, rf, arg)) != 0)
-			return (rval);
-
-		for (i = 0; i < max_ncpus; i++) {
-			dtrace_bufdesc_t *buf;
-
-			/*
-			 * If we have stopped, we want to process the CPU on
-			 * which the END probe was processed only _after_ we
-			 * have processed everything else.
-			 */
-			if (dtp->dt_stopped && (i == dtp->dt_endedon))
-				continue;
-
-			if (dt_get_buf(dtp, i, &buf) != 0)
-				return (-1);
-			if (buf == NULL)
-				continue;
-
-			dtp->dt_flow = 0;
-			dtp->dt_indent = 0;
-			dtp->dt_prefix = NULL;
-			rval = dt_consume_cpu(dtp, fp, i,
-			    buf, B_FALSE, pf, rf, arg);
-			dt_put_buf(dtp, buf);
-			if (rval != 0)
-				return (rval);
-		}
-		if (dtp->dt_stopped) {
-			dtrace_bufdesc_t *buf;
-
-			if (dt_get_buf(dtp, dtp->dt_endedon, &buf) != 0)
-				return (-1);
-			if (buf == NULL)
-				return (0);
-
-			rval = dt_consume_cpu(dtp, fp, dtp->dt_endedon,
-			    buf, B_FALSE, pf, rf, arg);
-			dt_put_buf(dtp, buf);
-			return (rval);
-		}
-	} else {
-		/*
-		 * The output will be in the order it was traced (or for
-		 * speculations, when it was committed).  We retrieve a buffer
-		 * from each CPU and put it into a priority queue, which sorts
-		 * based on the first entry in the buffer.  This is sufficient
-		 * because entries within a buffer are already sorted.
-		 *
-		 * We then consume records one at a time, always consuming the
-		 * oldest record, as determined by the priority queue.  When
-		 * we reach the end of the time covered by these buffers,
-		 * we need to stop and retrieve more records on the next pass.
-		 * The kernel tells us the time covered by each buffer, in
-		 * dtbd_timestamp.  The first buffer's timestamp tells us the
-		 * time covered by all buffers, as subsequently retrieved
-		 * buffers will cover to a more recent time.
-		 */
-
-		uint64_t *drops = alloca(max_ncpus * sizeof (uint64_t));
-		uint64_t first_timestamp = 0;
-		uint_t cookie = 0;
-		dtrace_bufdesc_t *buf;
-
-		bzero(drops, max_ncpus * sizeof (uint64_t));
-
-		if (dtp->dt_bufq == NULL) {
-			dtp->dt_bufq = dt_pq_init(dtp, max_ncpus * 2,
-			    dt_buf_oldest, NULL);
-			if (dtp->dt_bufq == NULL) /* ENOMEM */
-				return (-1);
-		}
-
-		/* Retrieve data from each CPU. */
+	if (buf->dtbd_data == NULL) {
 		(void) dtrace_getopt(dtp, "bufsize", &size);
-		for (i = 0; i < max_ncpus; i++) {
-			dtrace_bufdesc_t *buf;
+		if ((buf->dtbd_data = malloc(size)) == NULL)
+			return (dt_set_errno(dtp, EDT_NOMEM));
 
-			if (dt_get_buf(dtp, i, &buf) != 0)
-				return (-1);
-			if (buf != NULL) {
-				if (first_timestamp == 0)
-					first_timestamp = buf->dtbd_timestamp;
-				assert(buf->dtbd_timestamp >= first_timestamp);
-
-				dt_pq_insert(dtp->dt_bufq, buf);
-				drops[i] = buf->dtbd_drops;
-				buf->dtbd_drops = 0;
-			}
-		}
-
-		/* Consume records. */
-		for (;;) {
-			dtrace_bufdesc_t *buf = dt_pq_pop(dtp->dt_bufq);
-			uint64_t timestamp;
-
-			if (buf == NULL)
-				break;
-
-			timestamp = dt_buf_oldest(buf, dtp);
-			assert(timestamp >= dtp->dt_last_timestamp);
-			dtp->dt_last_timestamp = timestamp;
-
-			if (timestamp == buf->dtbd_timestamp) {
-				/*
-				 * We've reached the end of the time covered
-				 * by this buffer.  If this is the oldest
-				 * buffer, we must do another pass
-				 * to retrieve more data.
-				 */
-				dt_put_buf(dtp, buf);
-				if (timestamp == first_timestamp &&
-				    !dtp->dt_stopped)
-					break;
-				continue;
-			}
-
-			if ((rval = dt_consume_cpu(dtp, fp,
-			    buf->dtbd_cpu, buf, B_TRUE, pf, rf, arg)) != 0)
-				return (rval);
-			dt_pq_insert(dtp->dt_bufq, buf);
-		}
-
-		/* Consume drops. */
-		for (i = 0; i < max_ncpus; i++) {
-			if (drops[i] != 0) {
-				int error = dt_handle_cpudrop(dtp, i,
-				    DTRACEDROP_PRINCIPAL, drops[i]);
-				if (error != 0)
-					return (error);
-			}
-		}
-
-		/*
-		 * Reduce memory usage by re-allocating smaller buffers
-		 * for the "remnants".
-		 */
-		while (buf = dt_pq_walk(dtp->dt_bufq, &cookie))
-			dt_realloc_buf(dtp, buf, buf->dtbd_size);
+		buf->dtbd_size = size;
 	}
 
-	return (0);
+	/*
+	 * If we have just begun, we want to first process the CPU that
+	 * executed the BEGIN probe (if any).
+	 */
+	if (dtp->dt_active && dtp->dt_beganon != -1) {
+		buf->dtbd_cpu = dtp->dt_beganon;
+		if ((rval = dt_consume_begin(dtp, fp, buf, pf, rf, arg)) != 0)
+			return (rval);
+	}
+
+	for (i = 0; i < max_ncpus; i++) {
+		buf->dtbd_cpu = i;
+
+		/*
+		 * If we have stopped, we want to process the CPU on which the
+		 * END probe was processed only _after_ we have processed
+		 * everything else.
+		 */
+		if (dtp->dt_stopped && (i == dtp->dt_endedon))
+			continue;
+
+#if defined(sun)
+		if (dt_ioctl(dtp, DTRACEIOC_BUFSNAP, buf) == -1) {
+#else
+		if (dt_ioctl(dtp, DTRACEIOC_BUFSNAP, &buf) == -1) {
+#endif
+			/*
+			 * If we failed with ENOENT, it may be because the
+			 * CPU was unconfigured -- this is okay.  Any other
+			 * error, however, is unexpected.
+			 */
+			if (errno == ENOENT)
+				continue;
+
+			return (dt_set_errno(dtp, errno));
+		}
+
+		if ((rval = dt_consume_cpu(dtp, fp, i, buf, pf, rf, arg)) != 0)
+			return (rval);
+	}
+
+	if (!dtp->dt_stopped)
+		return (0);
+
+	buf->dtbd_cpu = dtp->dt_endedon;
+
+#if defined(sun)
+	if (dt_ioctl(dtp, DTRACEIOC_BUFSNAP, buf) == -1) {
+#else
+	if (dt_ioctl(dtp, DTRACEIOC_BUFSNAP, &buf) == -1) {
+#endif
+		/*
+		 * This _really_ shouldn't fail, but it is strictly speaking
+		 * possible for this to return ENOENT if the CPU that called
+		 * the END enabling somehow managed to become unconfigured.
+		 * It's unclear how the user can possibly expect anything
+		 * rational to happen in this case -- the state has been thrown
+		 * out along with the unconfigured CPU -- so we'll just drive
+		 * on...
+		 */
+		if (errno == ENOENT)
+			return (0);
+
+		return (dt_set_errno(dtp, errno));
+	}
+
+	return (dt_consume_cpu(dtp, fp, dtp->dt_endedon, buf, pf, rf, arg));
 }

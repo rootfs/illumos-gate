@@ -23,6 +23,8 @@
  * Copyright (c) 2005, 2010, Oracle and/or its affiliates. All rights reserved.
  * Copyright (c) 2012 by Delphix. All rights reserved.
  * Copyright (c) 2012, Joyent, Inc. All rights reserved.
+ * Copyright (c) 2012 Pawel Jakub Dawidek <pawel@dawidek.net>.
+ * All rights reserved.
  * Copyright (c) 2013 Steven Hartland. All rights reserved.
  */
 
@@ -36,6 +38,7 @@
 #include <unistd.h>
 #include <stddef.h>
 #include <fcntl.h>
+#include <sys/param.h>
 #include <sys/mount.h>
 #include <pthread.h>
 #include <umem.h>
@@ -51,8 +54,14 @@
 #include <sys/zio_checksum.h>
 #include <sys/ddt.h>
 
+#ifdef __FreeBSD__
+extern int zfs_ioctl_version;
+#endif
+
 /* in libzfs_dataset.c */
 extern void zfs_setprop_error(libzfs_handle_t *, zfs_prop_t, int, char *);
+/* We need to use something for ENODATA. */
+#define	ENODATA	EIDRM
 
 static int zfs_receive_impl(libzfs_handle_t *, const char *, recvflags_t *,
     int, const char *, nvlist_t *, avl_tree_t *, char **, int, uint64_t *);
@@ -723,7 +732,7 @@ send_iterate_fs(zfs_handle_t *zhp, void *arg)
 	sd->parent_fromsnap_guid = 0;
 	VERIFY(0 == nvlist_alloc(&sd->parent_snaps, NV_UNIQUE_NAME, 0));
 	VERIFY(0 == nvlist_alloc(&sd->snapprops, NV_UNIQUE_NAME, 0));
-	(void) zfs_iter_snapshots(zhp, send_iterate_snap, sd);
+	(void) zfs_iter_snapshots_sorted(zhp, send_iterate_snap, sd);
 	VERIFY(0 == nvlist_add_nvlist(nvfs, "snaps", sd->parent_snaps));
 	VERIFY(0 == nvlist_add_nvlist(nvfs, "snapprops", sd->snapprops));
 	nvlist_free(sd->parent_snaps);
@@ -845,7 +854,6 @@ estimate_ioctl(zfs_handle_t *zhp, uint64_t fromsnap_obj,
 		case EIO:
 		case ENOLINK:
 		case ENOSPC:
-		case ENOSTR:
 		case ENXIO:
 		case EPIPE:
 		case ERANGE:
@@ -923,7 +931,9 @@ dump_ioctl(zfs_handle_t *zhp, const char *fromsnap, uint64_t fromsnap_obj,
 		case EIO:
 		case ENOLINK:
 		case ENOSPC:
+#ifdef sun
 		case ENOSTR:
+#endif
 		case ENXIO:
 		case EPIPE:
 		case ERANGE:
@@ -1566,8 +1576,8 @@ zfs_send(zfs_handle_t *zhp, const char *fromsnap, const char *tosnap,
 	if (tid != 0) {
 		if (err != 0)
 			(void) pthread_cancel(tid);
-		(void) pthread_join(tid, NULL);
 		(void) close(pipefd[0]);
+		(void) pthread_join(tid, NULL);
 	}
 
 	if (sdd.cleanup_fd != -1) {
@@ -1603,8 +1613,8 @@ err_out:
 		VERIFY(0 == close(sdd.cleanup_fd));
 	if (tid != 0) {
 		(void) pthread_cancel(tid);
-		(void) pthread_join(tid, NULL);
 		(void) close(pipefd[0]);
+		(void) pthread_join(tid, NULL);
 	}
 	return (err);
 }
@@ -1936,11 +1946,12 @@ recv_incremental_replication(libzfs_handle_t *hdl, const char *tofs,
     recvflags_t *flags, nvlist_t *stream_nv, avl_tree_t *stream_avl,
     nvlist_t *renamed)
 {
-	nvlist_t *local_nv;
+	nvlist_t *local_nv, *deleted = NULL;
 	avl_tree_t *local_avl;
 	nvpair_t *fselem, *nextfselem;
 	char *fromsnap;
 	char newname[ZFS_MAXNAMELEN];
+	char guidname[32];
 	int error;
 	boolean_t needagain, progress, recursive;
 	char *s1, *s2;
@@ -1955,6 +1966,8 @@ recv_incremental_replication(libzfs_handle_t *hdl, const char *tofs,
 
 again:
 	needagain = progress = B_FALSE;
+
+	VERIFY(0 == nvlist_alloc(&deleted, NV_UNIQUE_NAME, 0));
 
 	if ((error = gather_nvlist(hdl, tofs, fromsnap, NULL,
 	    recursive, &local_nv, &local_avl)) != 0)
@@ -2070,6 +2083,8 @@ again:
 					needagain = B_TRUE;
 				else
 					progress = B_TRUE;
+				sprintf(guidname, "%lu", thisguid);
+				nvlist_add_boolean(deleted, guidname);
 				continue;
 			}
 
@@ -2125,6 +2140,8 @@ again:
 				needagain = B_TRUE;
 			else
 				progress = B_TRUE;
+			sprintf(guidname, "%lu", parent_fromsnap_guid);
+			nvlist_add_boolean(deleted, guidname);
 			continue;
 		}
 
@@ -2145,6 +2162,24 @@ again:
 
 		s1 = strrchr(fsname, '/');
 		s2 = strrchr(stream_fsname, '/');
+
+		/*
+		 * Check if we're going to rename based on parent guid change
+		 * and the current parent guid was also deleted. If it was then
+		 * rename will fail and is likely unneeded, so avoid this and
+		 * force an early retry to determine the new
+		 * parent_fromsnap_guid.
+		 */
+		if (stream_parent_fromsnap_guid != 0 &&
+                    parent_fromsnap_guid != 0 &&
+                    stream_parent_fromsnap_guid != parent_fromsnap_guid) {
+			sprintf(guidname, "%lu", parent_fromsnap_guid);
+			if (nvlist_exists(deleted, guidname)) {
+				progress = B_TRUE;
+				needagain = B_TRUE;
+				goto doagain;
+			}
+		}
 
 		/*
 		 * Check for rename. If the exact receive path is specified, it
@@ -2200,8 +2235,10 @@ again:
 		}
 	}
 
+doagain:
 	fsavl_destroy(local_avl);
 	nvlist_free(local_nv);
+	nvlist_free(deleted);
 
 	if (needagain && progress) {
 		/* do another pass to fix up temporary names */
@@ -2642,6 +2679,15 @@ zfs_receive_one(libzfs_handle_t *hdl, int infd, const char *tosnap,
 	 */
 	(void) strcpy(zc.zc_value, tosnap);
 	(void) strncat(zc.zc_value, chopprefix, sizeof (zc.zc_value));
+#ifdef __FreeBSD__
+	if (zfs_ioctl_version == ZFS_IOCVER_UNDEF)
+		zfs_ioctl_version = get_zfs_ioctl_version();
+	/*
+	 * For forward compatibility hide tosnap in zc_value
+	 */
+	if (zfs_ioctl_version < ZFS_IOCVER_LZC)
+		(void) strcpy(zc.zc_value + strlen(zc.zc_value) + 1, tosnap);
+#endif
 	free(cp);
 	if (!zfs_name_valid(zc.zc_value, ZFS_TYPE_SNAPSHOT)) {
 		zcmd_free_nvlists(&zc);
@@ -2664,7 +2710,7 @@ zfs_receive_one(libzfs_handle_t *hdl, int infd, const char *tosnap,
 			(void) printf("found clone origin %s\n", zc.zc_string);
 	}
 
-	stream_wantsnewfs = (drrb->drr_fromguid == NULL ||
+	stream_wantsnewfs = (drrb->drr_fromguid == 0 ||
 	    (drrb->drr_flags & DRR_FLAG_CLONE));
 
 	if (stream_wantsnewfs) {

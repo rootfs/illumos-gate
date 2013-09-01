@@ -36,7 +36,7 @@ script()
 {
 	$dtrace -s /dev/stdin <<EOF
 	proc:::exec
-	/curpsinfo->pr_ppid == $child && args[0] == "/usr/bin/sleep"/
+	/curpsinfo->pr_ppid == $child && args[0] == "/bin/sleep"/
 	{
 		self->exec = 1;
 	}
@@ -52,7 +52,7 @@ EOF
 sleeper()
 {
 	while true; do
-		/usr/bin/sleep 1
+		/bin/sleep 1
 	done
 }
 

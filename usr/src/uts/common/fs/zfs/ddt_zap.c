@@ -29,7 +29,6 @@
 #include <sys/ddt.h>
 #include <sys/zap.h>
 #include <sys/dmu_tx.h>
-#include <util/sscanf.h>
 
 int ddt_zap_leaf_blockshift = 12;
 int ddt_zap_indirect_blockshift = 12;
@@ -134,14 +133,11 @@ ddt_zap_walk(objset_t *os, uint64_t object, ddt_entry_t *dde, uint64_t *walk)
 	return (error);
 }
 
-static uint64_t
-ddt_zap_count(objset_t *os, uint64_t object)
+static int
+ddt_zap_count(objset_t *os, uint64_t object, uint64_t *count)
 {
-	uint64_t count = 0;
 
-	VERIFY(zap_count(os, object, &count) == 0);
-
-	return (count);
+	return (zap_count(os, object, count));
 }
 
 const ddt_ops_t ddt_zap_ops = {

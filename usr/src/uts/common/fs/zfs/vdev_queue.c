@@ -29,7 +29,6 @@
 
 #include <sys/zfs_context.h>
 #include <sys/vdev_impl.h>
-#include <sys/spa_impl.h>
 #include <sys/zio.h>
 #include <sys/avl.h>
 
@@ -64,6 +63,33 @@ int zfs_vdev_ramp_rate = 2;
 int zfs_vdev_aggregation_limit = SPA_MAXBLOCKSIZE;
 int zfs_vdev_read_gap_limit = 32 << 10;
 int zfs_vdev_write_gap_limit = 4 << 10;
+
+SYSCTL_DECL(_vfs_zfs_vdev);
+TUNABLE_INT("vfs.zfs.vdev.max_pending", &zfs_vdev_max_pending);
+SYSCTL_INT(_vfs_zfs_vdev, OID_AUTO, max_pending, CTLFLAG_RW,
+    &zfs_vdev_max_pending, 0, "Maximum I/O requests pending on each device");
+TUNABLE_INT("vfs.zfs.vdev.min_pending", &zfs_vdev_min_pending);
+SYSCTL_INT(_vfs_zfs_vdev, OID_AUTO, min_pending, CTLFLAG_RW,
+    &zfs_vdev_min_pending, 0,
+    "Initial number of I/O requests pending to each device");
+TUNABLE_INT("vfs.zfs.vdev.time_shift", &zfs_vdev_time_shift);
+SYSCTL_INT(_vfs_zfs_vdev, OID_AUTO, time_shift, CTLFLAG_RW,
+    &zfs_vdev_time_shift, 0, "Used for calculating I/O request deadline");
+TUNABLE_INT("vfs.zfs.vdev.ramp_rate", &zfs_vdev_ramp_rate);
+SYSCTL_INT(_vfs_zfs_vdev, OID_AUTO, ramp_rate, CTLFLAG_RW,
+    &zfs_vdev_ramp_rate, 0, "Exponential I/O issue ramp-up rate");
+TUNABLE_INT("vfs.zfs.vdev.aggregation_limit", &zfs_vdev_aggregation_limit);
+SYSCTL_INT(_vfs_zfs_vdev, OID_AUTO, aggregation_limit, CTLFLAG_RW,
+    &zfs_vdev_aggregation_limit, 0,
+    "I/O requests are aggregated up to this size");
+TUNABLE_INT("vfs.zfs.vdev.read_gap_limit", &zfs_vdev_read_gap_limit);
+SYSCTL_INT(_vfs_zfs_vdev, OID_AUTO, read_gap_limit, CTLFLAG_RW,
+    &zfs_vdev_read_gap_limit, 0,
+    "Acceptable gap between two reads being aggregated");
+TUNABLE_INT("vfs.zfs.vdev.write_gap_limit", &zfs_vdev_write_gap_limit);
+SYSCTL_INT(_vfs_zfs_vdev, OID_AUTO, write_gap_limit, CTLFLAG_RW,
+    &zfs_vdev_write_gap_limit, 0,
+    "Acceptable gap between two writes being aggregated");
 
 /*
  * Virtual device vector for disk I/O scheduling.
@@ -147,62 +173,15 @@ vdev_queue_fini(vdev_t *vd)
 static void
 vdev_queue_io_add(vdev_queue_t *vq, zio_t *zio)
 {
-	spa_t *spa = zio->io_spa;
 	avl_add(&vq->vq_deadline_tree, zio);
 	avl_add(zio->io_vdev_tree, zio);
-
-	if (spa->spa_iokstat != NULL) {
-		mutex_enter(&spa->spa_iokstat_lock);
-		kstat_waitq_enter(spa->spa_iokstat->ks_data);
-		mutex_exit(&spa->spa_iokstat_lock);
-	}
 }
 
 static void
 vdev_queue_io_remove(vdev_queue_t *vq, zio_t *zio)
 {
-	spa_t *spa = zio->io_spa;
 	avl_remove(&vq->vq_deadline_tree, zio);
 	avl_remove(zio->io_vdev_tree, zio);
-
-	if (spa->spa_iokstat != NULL) {
-		mutex_enter(&spa->spa_iokstat_lock);
-		kstat_waitq_exit(spa->spa_iokstat->ks_data);
-		mutex_exit(&spa->spa_iokstat_lock);
-	}
-}
-
-static void
-vdev_queue_pending_add(vdev_queue_t *vq, zio_t *zio)
-{
-	spa_t *spa = zio->io_spa;
-	avl_add(&vq->vq_pending_tree, zio);
-	if (spa->spa_iokstat != NULL) {
-		mutex_enter(&spa->spa_iokstat_lock);
-		kstat_runq_enter(spa->spa_iokstat->ks_data);
-		mutex_exit(&spa->spa_iokstat_lock);
-	}
-}
-
-static void
-vdev_queue_pending_remove(vdev_queue_t *vq, zio_t *zio)
-{
-	spa_t *spa = zio->io_spa;
-	avl_remove(&vq->vq_pending_tree, zio);
-	if (spa->spa_iokstat != NULL) {
-		kstat_io_t *ksio = spa->spa_iokstat->ks_data;
-
-		mutex_enter(&spa->spa_iokstat_lock);
-		kstat_runq_exit(spa->spa_iokstat->ks_data);
-		if (zio->io_type == ZIO_TYPE_READ) {
-			ksio->reads++;
-			ksio->nread += zio->io_size;
-		} else if (zio->io_type == ZIO_TYPE_WRITE) {
-			ksio->writes++;
-			ksio->nwritten += zio->io_size;
-		}
-		mutex_exit(&spa->spa_iokstat_lock);
-	}
 }
 
 static void
@@ -369,7 +348,7 @@ again:
 			zio_execute(dio);
 		} while (dio != lio);
 
-		vdev_queue_pending_add(vq, aio);
+		avl_add(&vq->vq_pending_tree, aio);
 
 		return (aio);
 	}
@@ -391,7 +370,7 @@ again:
 		goto again;
 	}
 
-	vdev_queue_pending_add(vq, fio);
+	avl_add(&vq->vq_pending_tree, fio);
 
 	return (fio);
 }
@@ -447,7 +426,7 @@ vdev_queue_io_done(zio_t *zio)
 
 	mutex_enter(&vq->vq_lock);
 
-	vdev_queue_pending_remove(vq, zio);
+	avl_remove(&vq->vq_pending_tree, zio);
 
 	vq->vq_io_complete_ts = gethrtime();
 

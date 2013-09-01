@@ -18,13 +18,13 @@
  *
  * CDDL HEADER END
  */
-
 /*
  * Copyright (c) 2003, 2010, Oracle and/or its affiliates. All rights reserved.
  */
 
 #ifndef	_DT_STRING_H
 #define	_DT_STRING_H
+
 
 #include <sys/types.h>
 #include <strings.h>

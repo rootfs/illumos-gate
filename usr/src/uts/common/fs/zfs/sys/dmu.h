@@ -39,7 +39,6 @@
  * dmu_spa.h.
  */
 
-#include <sys/inttypes.h>
 #include <sys/types.h>
 #include <sys/param.h>
 #include <sys/cred.h>
@@ -70,6 +69,7 @@ struct nvlist;
 struct arc_buf;
 struct zio_prop;
 struct sa_handle;
+struct file;
 
 typedef struct objset objset_t;
 typedef struct dmu_tx dmu_tx_t;
@@ -263,6 +263,8 @@ int dmu_objset_open_ds(struct dsl_dataset *ds, objset_t **osp);
 void dmu_objset_evict_dbufs(objset_t *os);
 int dmu_objset_create(const char *name, dmu_objset_type_t type, uint64_t flags,
     void (*func)(objset_t *os, void *arg, cred_t *cr, dmu_tx_t *tx), void *arg);
+int dmu_get_recursive_snaps_nvl(char *fsname, const char *snapname,
+    struct nvlist *snaps);
 int dmu_objset_clone(const char *name, const char *origin);
 int dsl_destroy_snapshots_nvl(struct nvlist *snaps, boolean_t defer,
     struct nvlist *errlist);
@@ -797,9 +799,8 @@ typedef void (*dmu_traverse_cb_t)(objset_t *os, void *arg, struct blkptr *bp,
     uint64_t object, uint64_t offset, int len);
 void dmu_traverse_objset(objset_t *os, uint64_t txg_start,
     dmu_traverse_cb_t cb, void *arg);
-
 int dmu_diff(const char *tosnap_name, const char *fromsnap_name,
-    struct vnode *vp, offset_t *offp);
+    struct file *fp, offset_t *offp);
 
 /* CRC64 table */
 #define	ZFS_CRC64_POLY	0xC96C5795D7870F42ULL	/* ECMA-182, reflected form */

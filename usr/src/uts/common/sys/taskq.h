@@ -27,13 +27,19 @@
 #define	_SYS_TASKQ_H
 
 #include <sys/types.h>
-#include <sys/thread.h>
+#include <sys/proc.h>
+#include <sys/taskqueue.h>
 
 #ifdef	__cplusplus
 extern "C" {
 #endif
 
 #define	TASKQ_NAMELEN	31
+
+struct taskqueue;
+struct taskq {
+	struct taskqueue	*tq_queue;
+};
 
 typedef struct taskq taskq_t;
 typedef uintptr_t taskqid_t;

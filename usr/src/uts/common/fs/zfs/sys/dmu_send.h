@@ -29,7 +29,6 @@
 #ifndef _DMU_SEND_H
 #define	_DMU_SEND_H
 
-#include <sys/inttypes.h>
 #include <sys/spa.h>
 
 struct vnode;
@@ -38,11 +37,19 @@ struct drr_begin;
 struct avl_tree;
 
 int dmu_send(const char *tosnap, const char *fromsnap, int outfd,
+#ifdef illumos
     struct vnode *vp, offset_t *off);
+#else
+    struct file *fp, offset_t *off);
+#endif
 int dmu_send_estimate(struct dsl_dataset *ds, struct dsl_dataset *fromds,
     uint64_t *sizep);
 int dmu_send_obj(const char *pool, uint64_t tosnap, uint64_t fromsnap,
+#ifdef illumos
     int outfd, struct vnode *vp, offset_t *off);
+#else
+    int outfd, struct file *fp, offset_t *off);
+#endif
 
 typedef struct dmu_recv_cookie {
 	struct dsl_dataset *drc_ds;
@@ -59,7 +66,11 @@ typedef struct dmu_recv_cookie {
 
 int dmu_recv_begin(char *tofs, char *tosnap, struct drr_begin *drrb,
     boolean_t force, char *origin, dmu_recv_cookie_t *drc);
+#ifdef illumos
 int dmu_recv_stream(dmu_recv_cookie_t *drc, struct vnode *vp, offset_t *voffp,
+#else
+int dmu_recv_stream(dmu_recv_cookie_t *drc, struct file *fp, offset_t *voffp,
+#endif
     int cleanup_fd, uint64_t *action_handlep);
 int dmu_recv_end(dmu_recv_cookie_t *drc);
 

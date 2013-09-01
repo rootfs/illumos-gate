@@ -58,7 +58,9 @@ static dnode_phys_t dnode_phys_zero;
 int zfs_default_bs = SPA_MINBLOCKSHIFT;
 int zfs_default_ibs = DN_MAX_INDBLKSHIFT;
 
+#ifdef sun
 static kmem_cbrc_t dnode_move(void *, void *, size_t, void *);
+#endif
 
 /* ARGSUSED */
 static int
@@ -119,6 +121,7 @@ dnode_cons(void *arg, void *unused, int kmflag)
 	    offsetof(dmu_buf_impl_t, db_link));
 
 	dn->dn_moved = 0;
+	POINTER_INVALIDATE(&dn->dn_objset);
 	return (0);
 }
 
@@ -783,6 +786,7 @@ dnode_move_impl(dnode_t *odn, dnode_t *ndn)
 	odn->dn_moved = (uint8_t)-1;
 }
 
+#ifdef sun
 #ifdef	_KERNEL
 /*ARGSUSED*/
 static kmem_cbrc_t
@@ -925,6 +929,7 @@ dnode_move(void *buf, void *newbuf, size_t size, void *arg)
 	return (KMEM_CBRC_YES);
 }
 #endif	/* _KERNEL */
+#endif	/* sun */
 
 void
 dnode_special_close(dnode_handle_t *dnh)
@@ -1079,7 +1084,7 @@ dnode_hold_impl(objset_t *os, uint64_t object, int flag,
 	if (children_dnodes == NULL) {
 		int i;
 		dnode_children_t *winner;
-		children_dnodes = kmem_alloc(sizeof (dnode_children_t) +
+		children_dnodes = kmem_zalloc(sizeof (dnode_children_t) +
 		    (epb - 1) * sizeof (dnode_handle_t), KM_SLEEP);
 		children_dnodes->dnc_count = epb;
 		dnh = &children_dnodes->dnc_children[0];

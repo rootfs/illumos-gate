@@ -35,11 +35,6 @@ void
 print_timestamp(uint_t timestamp_fmt)
 {
 	time_t t = time(NULL);
-	static char *fmt = NULL;
-
-	/* We only need to retrieve this once per invocation */
-	if (fmt == NULL)
-		fmt = nl_langinfo(_DATE_FMT);
 
 	if (timestamp_fmt == UDATE) {
 		(void) printf("%ld\n", t);
@@ -47,7 +42,7 @@ print_timestamp(uint_t timestamp_fmt)
 		char dstr[64];
 		int len;
 
-		len = strftime(dstr, sizeof (dstr), fmt, localtime(&t));
+		len = strftime(dstr, sizeof (dstr), "%+", localtime(&t));
 		if (len > 0)
 			(void) printf("%s\n", dstr);
 	}

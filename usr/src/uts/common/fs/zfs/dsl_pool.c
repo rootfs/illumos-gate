@@ -59,8 +59,31 @@ kmutex_t zfs_write_limit_lock;
 
 static pgcnt_t old_physmem = 0;
 
-hrtime_t zfs_throttle_delay = MSEC2NSEC(10);
-hrtime_t zfs_throttle_resolution = MSEC2NSEC(10);
+SYSCTL_DECL(_vfs_zfs);
+TUNABLE_INT("vfs.zfs.no_write_throttle", &zfs_no_write_throttle);
+SYSCTL_INT(_vfs_zfs, OID_AUTO, no_write_throttle, CTLFLAG_RDTUN,
+    &zfs_no_write_throttle, 0, "");
+TUNABLE_INT("vfs.zfs.write_limit_shift", &zfs_write_limit_shift);
+SYSCTL_INT(_vfs_zfs, OID_AUTO, write_limit_shift, CTLFLAG_RDTUN,
+    &zfs_write_limit_shift, 0, "2^N of physical memory");
+SYSCTL_DECL(_vfs_zfs_txg);
+TUNABLE_INT("vfs.zfs.txg.synctime_ms", &zfs_txg_synctime_ms);
+SYSCTL_INT(_vfs_zfs_txg, OID_AUTO, synctime_ms, CTLFLAG_RDTUN,
+    &zfs_txg_synctime_ms, 0, "Target milliseconds to sync a txg");
+
+TUNABLE_QUAD("vfs.zfs.write_limit_min", &zfs_write_limit_min);
+SYSCTL_UQUAD(_vfs_zfs, OID_AUTO, write_limit_min, CTLFLAG_RDTUN,
+    &zfs_write_limit_min, 0, "Minimum write limit");
+TUNABLE_QUAD("vfs.zfs.write_limit_max", &zfs_write_limit_max);
+SYSCTL_UQUAD(_vfs_zfs, OID_AUTO, write_limit_max, CTLFLAG_RDTUN,
+    &zfs_write_limit_max, 0, "Maximum data payload per txg");
+TUNABLE_QUAD("vfs.zfs.write_limit_inflated", &zfs_write_limit_inflated);
+SYSCTL_UQUAD(_vfs_zfs, OID_AUTO, write_limit_inflated, CTLFLAG_RDTUN,
+    &zfs_write_limit_inflated, 0, "Maximum size of the dynamic write limit");
+TUNABLE_QUAD("vfs.zfs.write_limit_override", &zfs_write_limit_override);
+SYSCTL_UQUAD(_vfs_zfs, OID_AUTO, write_limit_override, CTLFLAG_RDTUN,
+    &zfs_write_limit_override, 0,
+    "Force a txg if dirty buffers exceed this value (bytes)");
 
 int
 dsl_pool_open_special_dir(dsl_pool_t *dp, const char *name, dsl_dir_t **ddp)
@@ -515,13 +538,12 @@ dsl_pool_sync(dsl_pool_t *dp, uint64_t txg)
 	 * Weight the throughput calculation towards the current value:
 	 * 	thru = 3/4 old_thru + 1/4 new_thru
 	 *
-	 * Note: write_time is in nanosecs while dp_throughput is expressed in
-	 * bytes per millisecond.
+	 * Note: write_time is in nanosecs, so write_time/MICROSEC
+	 * yields millisecs
 	 */
 	ASSERT(zfs_write_limit_min > 0);
-	if (data_written > zfs_write_limit_min / 8 &&
-	    write_time > MSEC2NSEC(1)) {
-		uint64_t throughput = data_written / NSEC2MSEC(write_time);
+	if (data_written > zfs_write_limit_min / 8 && write_time > MICROSEC) {
+		uint64_t throughput = data_written / (write_time / MICROSEC);
 
 		if (dp->dp_throughput)
 			dp->dp_throughput = throughput / 4 +
@@ -619,10 +641,8 @@ dsl_pool_tempreserve_space(dsl_pool_t *dp, uint64_t space, dmu_tx_t *tx)
 	 * the caller 1 clock tick.  This will slow down the "fill"
 	 * rate until the sync process can catch up with us.
 	 */
-	if (reserved && reserved > (write_limit - (write_limit >> 3))) {
-		txg_delay(dp, tx->tx_txg, zfs_throttle_delay,
-		    zfs_throttle_resolution);
-	}
+	if (reserved && reserved > (write_limit - (write_limit >> 3)))
+		txg_delay(dp, tx->tx_txg, 1);
 
 	return (0);
 }
@@ -935,7 +955,7 @@ int
 dsl_pool_user_release(dsl_pool_t *dp, uint64_t dsobj, const char *tag,
     dmu_tx_t *tx)
 {
-	return (dsl_pool_user_hold_rele_impl(dp, dsobj, tag, NULL,
+	return (dsl_pool_user_hold_rele_impl(dp, dsobj, tag, 0,
 	    tx, B_FALSE));
 }
 

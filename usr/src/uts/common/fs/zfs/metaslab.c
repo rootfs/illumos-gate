@@ -60,7 +60,13 @@ int zfs_condense_pct = 200;
  * If a device reaches this threshold in a given txg then we consider skipping
  * allocations on that device.
  */
-int zfs_mg_alloc_failures;
+int zfs_mg_alloc_failures = 0;
+
+SYSCTL_DECL(_vfs_zfs);
+SYSCTL_INT(_vfs_zfs, OID_AUTO, mg_alloc_failures, CTLFLAG_RDTUN,
+    &zfs_mg_alloc_failures, 0,
+    "Number of allowed allocation failures per vdev");
+TUNABLE_INT("vfs.zfs.mg_alloc_failures", &zfs_mg_alloc_failures);
 
 /*
  * Metaslab debugging: when set, keeps all space maps in core to verify frees.
@@ -103,6 +109,10 @@ int metaslab_smo_bonus_pct = 150;
  * Should we be willing to write data to degraded vdevs?
  */
 boolean_t zfs_write_to_degraded = B_FALSE;
+SYSCTL_INT(_vfs_zfs, OID_AUTO, write_to_degraded, CTLFLAG_RW,
+    &zfs_write_to_degraded, 0,
+    "Allow writing data to degraded vdevs");
+TUNABLE_INT("vfs.zfs.write_to_degraded", &zfs_write_to_degraded);
 
 /*
  * ==========================================================================

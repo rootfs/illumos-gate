@@ -22,6 +22,7 @@
  * Copyright (c) 2005, 2010, Oracle and/or its affiliates. All rights reserved.
  * Copyright (c) 2012 by Delphix. All rights reserved.
  * Copyright 2011 Nexenta Systems, Inc.  All rights reserved.
+ * Copyright (c) 2012 Martin Matuska <mm@FreeBSD.org>.  All rights reserved.
  * Copyright (c) 2013 Steven Hartland. All rights reserved.
  */
 
@@ -119,6 +120,7 @@
 #include <dlfcn.h>
 #include <ctype.h>
 #include <math.h>
+#include <errno.h>
 #include <sys/fs/zfs.h>
 #include <libnvpair.h>
 
@@ -4732,7 +4734,7 @@ ztest_fault_inject(ztest_ds_t *zd, uint64_t id)
 	int fd;
 	uint64_t offset;
 	uint64_t leaves;
-	uint64_t bad = 0x1990c0ffeedecade;
+	uint64_t bad = 0x1990c0ffeedecadeULL;
 	uint64_t top, leaf;
 	char path0[MAXPATHLEN];
 	char pathrand[MAXPATHLEN];
@@ -5122,7 +5124,7 @@ ztest_run_zdb(char *pool)
 	int isalen;
 	FILE *fp;
 
-	(void) realpath(getexecname(), zdb);
+	strlcpy(zdb, "/usr/bin/ztest", sizeof(zdb));
 
 	/* zdb lives in /usr/sbin, while ztest lives in /usr/bin */
 	bin = strstr(zdb, "/usr/bin/");
@@ -5145,6 +5147,7 @@ ztest_run_zdb(char *pool)
 		(void) printf("Executing %s\n", strstr(zdb, "zdb "));
 
 	fp = popen(zdb, "r");
+	assert(fp != NULL);
 
 	while (fgets(zbuf, sizeof (zbuf), fp) != NULL)
 		if (ztest_opts.zo_verbose >= 3)
@@ -5943,7 +5946,11 @@ exec_child(char *cmd, char *libpath, boolean_t ignorekill, int *statusp)
 		(void) enable_extended_FILE_stdio(-1, -1);
 		if (libpath != NULL)
 			VERIFY(0 == setenv("LD_LIBRARY_PATH", libpath, 1));
+#ifdef illumos
 		(void) execv(cmd, emptyargv);
+#else
+		(void) execvp(cmd, emptyargv);
+#endif
 		ztest_dump_core = B_FALSE;
 		fatal(B_TRUE, "exec failed: %s", cmd);
 	}

@@ -26,7 +26,6 @@
 
 /*
  * Copyright (c) 2011, Joyent, Inc. All rights reserved.
- * Copyright (c) 2012 by Delphix. All rights reserved.
  */
 
 #include <stdlib.h>
@@ -35,7 +34,12 @@
 #include <unistd.h>
 #include <dt_impl.h>
 #include <assert.h>
+#if defined(sun)
 #include <alloca.h>
+#else
+#include <sys/sysctl.h>
+#include <libproc_compat.h>
+#endif
 #include <limits.h>
 
 #define	DTRACE_AHASHSIZE	32779		/* big 'ol prime */
@@ -57,7 +61,7 @@ static int dt_keypos;
 static void
 dt_aggregate_count(int64_t *existing, int64_t *new, size_t size)
 {
-	int i;
+	uint_t i;
 
 	for (i = 0; i < size / sizeof (int64_t); i++)
 		existing[i] = existing[i] + new[i];
@@ -287,9 +291,10 @@ dt_aggregate_llquantizedcmp(int64_t *lhs, int64_t *rhs)
 static int
 dt_aggregate_quantizedcmp(int64_t *lhs, int64_t *rhs)
 {
-	int nbuckets = DTRACE_QUANTIZE_NBUCKETS, i;
+	int nbuckets = DTRACE_QUANTIZE_NBUCKETS;
 	long double ltotal = 0, rtotal = 0;
 	int64_t lzero, rzero;
+	uint_t i;
 
 	for (i = 0; i < nbuckets; i++) {
 		int64_t bucketval = DTRACE_QUANTIZE_BUCKETVAL(i);
@@ -447,7 +452,11 @@ dt_aggregate_snap_cpu(dtrace_hdl_t *dtp, processorid_t cpu)
 
 	buf->dtbd_cpu = cpu;
 
+#if defined(sun)
 	if (dt_ioctl(dtp, DTRACEIOC_AGGSNAP, buf) == -1) {
+#else
+	if (dt_ioctl(dtp, DTRACEIOC_AGGSNAP, &buf) == -1) {
+#endif
 		if (errno == ENOENT) {
 			/*
 			 * If that failed with ENOENT, it may be because the
@@ -720,7 +729,7 @@ dtrace_aggregate_snap(dtrace_hdl_t *dtp)
 		return (0);
 
 	for (i = 0; i < agp->dtat_ncpus; i++) {
-		if (rval = dt_aggregate_snap_cpu(dtp, agp->dtat_cpus[i]))
+		if ((rval = dt_aggregate_snap_cpu(dtp, agp->dtat_cpus[i])))
 			return (rval);
 	}
 
@@ -885,14 +894,33 @@ dt_aggregate_valcmp(const void *lhs, const void *rhs)
 	caddr_t rdata = rh->dtahe_data.dtada_data;
 	dtrace_recdesc_t *lrec, *rrec;
 	int64_t *laddr, *raddr;
-	int rval;
+	int rval, i;
 
-	assert(lagg->dtagd_nrecs == ragg->dtagd_nrecs);
+	if ((rval = dt_aggregate_hashcmp(lhs, rhs)) != 0)
+		return (rval);
 
-	lrec = &lagg->dtagd_rec[lagg->dtagd_nrecs - 1];
-	rrec = &ragg->dtagd_rec[ragg->dtagd_nrecs - 1];
+	if (lagg->dtagd_nrecs > ragg->dtagd_nrecs)
+		return (DT_GREATERTHAN);
 
-	assert(lrec->dtrd_action == rrec->dtrd_action);
+	if (lagg->dtagd_nrecs < ragg->dtagd_nrecs)
+		return (DT_LESSTHAN);
+
+	for (i = 0; i < lagg->dtagd_nrecs; i++) {
+		lrec = &lagg->dtagd_rec[i];
+		rrec = &ragg->dtagd_rec[i];
+
+		if (lrec->dtrd_offset < rrec->dtrd_offset)
+			return (DT_LESSTHAN);
+
+		if (lrec->dtrd_offset > rrec->dtrd_offset)
+			return (DT_GREATERTHAN);
+
+		if (lrec->dtrd_action < rrec->dtrd_action)
+			return (DT_LESSTHAN);
+
+		if (lrec->dtrd_action > rrec->dtrd_action)
+			return (DT_GREATERTHAN);
+	}
 
 	laddr = (int64_t *)(uintptr_t)(ldata + lrec->dtrd_offset);
 	raddr = (int64_t *)(uintptr_t)(rdata + rrec->dtrd_offset);
@@ -1183,7 +1211,7 @@ dt_aggwalk_rval(dtrace_hdl_t *dtp, dt_ahashent_t *h, int rval)
 
 	case DTRACE_AGGWALK_REMOVE: {
 		dtrace_aggdata_t *aggdata = &h->dtahe_data;
-		int i, max_cpus = agp->dtat_maxcpu;
+		int max_cpus = agp->dtat_maxcpu;
 
 		/*
 		 * First, remove this hash entry from its hash chain.

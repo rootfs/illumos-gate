@@ -23,6 +23,7 @@
  * Copyright (c) 2005, 2010, Oracle and/or its affiliates. All rights reserved.
  * Copyright (c) 2013 by Delphix. All rights reserved.
  * Copyright 2013 Nexenta Systems, Inc.  All rights reserved.
+ * Copyright (c) 2013 Martin Matuska <mm@FreeBSD.org>. All rights reserved.
  */
 
 /*
@@ -60,24 +61,32 @@
 #include <sys/fs/zfs.h>
 #include <sys/arc.h>
 #include <sys/callb.h>
-#include <sys/systeminfo.h>
 #include <sys/spa_boot.h>
 #include <sys/zfs_ioctl.h>
 #include <sys/dsl_scan.h>
-#include <sys/zfeature.h>
+#include <sys/dmu_send.h>
 #include <sys/dsl_destroy.h>
+#include <sys/dsl_userhold.h>
+#include <sys/zfeature.h>
+#include <sys/zvol.h>
+#include <sys/trim_map.h>
 
 #ifdef	_KERNEL
-#include <sys/bootprops.h>
 #include <sys/callb.h>
 #include <sys/cpupart.h>
-#include <sys/pool.h>
-#include <sys/sysdc.h>
 #include <sys/zone.h>
 #endif	/* _KERNEL */
 
 #include "zfs_prop.h"
 #include "zfs_comutil.h"
+
+/* Check hostid on import? */
+static int check_hostid = 1;
+
+SYSCTL_DECL(_vfs_zfs);
+TUNABLE_INT("vfs.zfs.check_hostid", &check_hostid);
+SYSCTL_INT(_vfs_zfs, OID_AUTO, check_hostid, CTLFLAG_RW, &check_hostid, 0,
+    "Check hostid on import?");
 
 /*
  * The interval, in seconds, at which failed configuration cache file writes
@@ -86,25 +95,23 @@
 static int zfs_ccw_retry_interval = 300;
 
 typedef enum zti_modes {
-	ZTI_MODE_FIXED,			/* value is # of threads (min 1) */
-	ZTI_MODE_ONLINE_PERCENT,	/* value is % of online CPUs */
-	ZTI_MODE_BATCH,			/* cpu-intensive; value is ignored */
-	ZTI_MODE_NULL,			/* don't create a taskq */
-	ZTI_NMODES
+	zti_mode_fixed,			/* value is # of threads (min 1) */
+	zti_mode_online_percent,	/* value is % of online CPUs */
+	zti_mode_batch,			/* cpu-intensive; value is ignored */
+	zti_mode_null,			/* don't create a taskq */
+	zti_nmodes
 } zti_modes_t;
 
-#define	ZTI_P(n, q)	{ ZTI_MODE_FIXED, (n), (q) }
-#define	ZTI_PCT(n)	{ ZTI_MODE_ONLINE_PERCENT, (n), 1 }
-#define	ZTI_BATCH	{ ZTI_MODE_BATCH, 0, 1 }
-#define	ZTI_NULL	{ ZTI_MODE_NULL, 0, 0 }
+#define	ZTI_FIX(n)	{ zti_mode_fixed, (n) }
+#define	ZTI_PCT(n)	{ zti_mode_online_percent, (n) }
+#define	ZTI_BATCH	{ zti_mode_batch, 0 }
+#define	ZTI_NULL	{ zti_mode_null, 0 }
 
-#define	ZTI_N(n)	ZTI_P(n, 1)
-#define	ZTI_ONE		ZTI_N(1)
+#define	ZTI_ONE		ZTI_FIX(1)
 
 typedef struct zio_taskq_info {
-	zti_modes_t zti_mode;
+	enum zti_modes zti_mode;
 	uint_t zti_value;
-	uint_t zti_count;
 } zio_taskq_info_t;
 
 static const char *const zio_taskq_types[ZIO_TASKQ_TYPES] = {
@@ -112,30 +119,17 @@ static const char *const zio_taskq_types[ZIO_TASKQ_TYPES] = {
 };
 
 /*
- * This table defines the taskq settings for each ZFS I/O type. When
- * initializing a pool, we use this table to create an appropriately sized
- * taskq. Some operations are low volume and therefore have a small, static
- * number of threads assigned to their taskqs using the ZTI_N(#) or ZTI_ONE
- * macros. Other operations process a large amount of data; the ZTI_BATCH
- * macro causes us to create a taskq oriented for throughput. Some operations
- * are so high frequency and short-lived that the taskq itself can become a a
- * point of lock contention. The ZTI_P(#, #) macro indicates that we need an
- * additional degree of parallelism specified by the number of threads per-
- * taskq and the number of taskqs; when dispatching an event in this case, the
- * particular taskq is chosen at random.
- *
- * The different taskq priorities are to handle the different contexts (issue
- * and interrupt) and then to reserve threads for ZIO_PRIORITY_NOW I/Os that
- * need to be handled with minimum delay.
+ * Define the taskq threads for the following I/O types:
+ * 	NULL, READ, WRITE, FREE, CLAIM, and IOCTL
  */
 const zio_taskq_info_t zio_taskqs[ZIO_TYPES][ZIO_TASKQ_TYPES] = {
 	/* ISSUE	ISSUE_HIGH	INTR		INTR_HIGH */
-	{ ZTI_ONE,	ZTI_NULL,	ZTI_ONE,	ZTI_NULL }, /* NULL */
-	{ ZTI_N(8),	ZTI_NULL,	ZTI_BATCH,	ZTI_NULL }, /* READ */
-	{ ZTI_BATCH,	ZTI_N(5),	ZTI_N(8),	ZTI_N(5) }, /* WRITE */
-	{ ZTI_P(12, 8),	ZTI_NULL,	ZTI_ONE,	ZTI_NULL }, /* FREE */
-	{ ZTI_ONE,	ZTI_NULL,	ZTI_ONE,	ZTI_NULL }, /* CLAIM */
-	{ ZTI_ONE,	ZTI_NULL,	ZTI_ONE,	ZTI_NULL }, /* IOCTL */
+	{ ZTI_ONE,	ZTI_NULL,	ZTI_ONE,	ZTI_NULL },
+	{ ZTI_FIX(8),	ZTI_NULL,	ZTI_BATCH,	ZTI_NULL },
+	{ ZTI_BATCH,	ZTI_FIX(5),	ZTI_FIX(8),	ZTI_FIX(5) },
+	{ ZTI_FIX(100),	ZTI_NULL,	ZTI_ONE,	ZTI_NULL },
+	{ ZTI_ONE,	ZTI_NULL,	ZTI_ONE,	ZTI_NULL },
+	{ ZTI_ONE,	ZTI_NULL,	ZTI_ONE,	ZTI_NULL },
 };
 
 static void spa_sync_version(void *arg, dmu_tx_t *tx);
@@ -147,12 +141,20 @@ static int spa_load_impl(spa_t *spa, uint64_t, nvlist_t *config,
 static void spa_vdev_resilver_done(spa_t *spa);
 
 uint_t		zio_taskq_batch_pct = 100;	/* 1 thread per cpu in pset */
+#ifdef PSRSET_BIND
 id_t		zio_taskq_psrset_bind = PS_NONE;
+#endif
+#ifdef SYSDC
 boolean_t	zio_taskq_sysdc = B_TRUE;	/* use SDC scheduling class */
+#endif
 uint_t		zio_taskq_basedc = 80;		/* base duty cycle */
 
 boolean_t	spa_create_process = B_TRUE;	/* no process ==> no sysdc */
 extern int	zfs_sync_pass_deferred_free;
+
+#ifndef illumos
+extern void spa_deadman(void *arg);
+#endif
 
 /*
  * This (illegal) pool name is used when temporarily importing a spa_t in order
@@ -817,120 +819,50 @@ spa_get_errlists(spa_t *spa, avl_tree_t *last, avl_tree_t *scrub)
 	    offsetof(spa_error_entry_t, se_avl));
 }
 
-static void
-spa_taskqs_init(spa_t *spa, zio_type_t t, zio_taskq_type_t q)
+static taskq_t *
+spa_taskq_create(spa_t *spa, const char *name, enum zti_modes mode,
+    uint_t value)
 {
-	const zio_taskq_info_t *ztip = &zio_taskqs[t][q];
-	enum zti_modes mode = ztip->zti_mode;
-	uint_t value = ztip->zti_value;
-	uint_t count = ztip->zti_count;
-	spa_taskqs_t *tqs = &spa->spa_zio_taskq[t][q];
-	char name[32];
-	uint_t flags = 0;
+	uint_t flags = TASKQ_PREPOPULATE;
 	boolean_t batch = B_FALSE;
 
-	if (mode == ZTI_MODE_NULL) {
-		tqs->stqs_count = 0;
-		tqs->stqs_taskq = NULL;
-		return;
+	switch (mode) {
+	case zti_mode_null:
+		return (NULL);		/* no taskq needed */
+
+	case zti_mode_fixed:
+		ASSERT3U(value, >=, 1);
+		value = MAX(value, 1);
+		break;
+
+	case zti_mode_batch:
+		batch = B_TRUE;
+		flags |= TASKQ_THREADS_CPU_PCT;
+		value = zio_taskq_batch_pct;
+		break;
+
+	case zti_mode_online_percent:
+		flags |= TASKQ_THREADS_CPU_PCT;
+		break;
+
+	default:
+		panic("unrecognized mode for %s taskq (%u:%u) in "
+		    "spa_activate()",
+		    name, mode, value);
+		break;
 	}
 
-	ASSERT3U(count, >, 0);
+#ifdef SYSDC
+	if (zio_taskq_sysdc && spa->spa_proc != &p0) {
+		if (batch)
+			flags |= TASKQ_DC_BATCH;
 
-	tqs->stqs_count = count;
-	tqs->stqs_taskq = kmem_alloc(count * sizeof (taskq_t *), KM_SLEEP);
-
-	for (uint_t i = 0; i < count; i++) {
-		taskq_t *tq;
-
-		switch (mode) {
-		case ZTI_MODE_FIXED:
-			ASSERT3U(value, >=, 1);
-			value = MAX(value, 1);
-			break;
-
-		case ZTI_MODE_BATCH:
-			batch = B_TRUE;
-			flags |= TASKQ_THREADS_CPU_PCT;
-			value = zio_taskq_batch_pct;
-			break;
-
-		case ZTI_MODE_ONLINE_PERCENT:
-			flags |= TASKQ_THREADS_CPU_PCT;
-			break;
-
-		default:
-			panic("unrecognized mode for %s_%s taskq (%u:%u) in "
-			    "spa_activate()",
-			    zio_type_name[t], zio_taskq_types[q], mode, value);
-			break;
-		}
-
-		if (count > 1) {
-			(void) snprintf(name, sizeof (name), "%s_%s_%u",
-			    zio_type_name[t], zio_taskq_types[q], i);
-		} else {
-			(void) snprintf(name, sizeof (name), "%s_%s",
-			    zio_type_name[t], zio_taskq_types[q]);
-		}
-
-		if (zio_taskq_sysdc && spa->spa_proc != &p0) {
-			if (batch)
-				flags |= TASKQ_DC_BATCH;
-
-			tq = taskq_create_sysdc(name, value, 50, INT_MAX,
-			    spa->spa_proc, zio_taskq_basedc, flags);
-		} else {
-			tq = taskq_create_proc(name, value, maxclsyspri, 50,
-			    INT_MAX, spa->spa_proc, flags);
-		}
-
-		tqs->stqs_taskq[i] = tq;
+		return (taskq_create_sysdc(name, value, 50, INT_MAX,
+		    spa->spa_proc, zio_taskq_basedc, flags));
 	}
-}
-
-static void
-spa_taskqs_fini(spa_t *spa, zio_type_t t, zio_taskq_type_t q)
-{
-	spa_taskqs_t *tqs = &spa->spa_zio_taskq[t][q];
-
-	if (tqs->stqs_taskq == NULL) {
-		ASSERT0(tqs->stqs_count);
-		return;
-	}
-
-	for (uint_t i = 0; i < tqs->stqs_count; i++) {
-		ASSERT3P(tqs->stqs_taskq[i], !=, NULL);
-		taskq_destroy(tqs->stqs_taskq[i]);
-	}
-
-	kmem_free(tqs->stqs_taskq, tqs->stqs_count * sizeof (taskq_t *));
-	tqs->stqs_taskq = NULL;
-}
-
-/*
- * Dispatch a task to the appropriate taskq for the ZFS I/O type and priority.
- * Note that a type may have multiple discrete taskqs to avoid lock contention
- * on the taskq itself. In that case we choose which taskq at random by using
- * the low bits of gethrtime().
- */
-void
-spa_taskq_dispatch_ent(spa_t *spa, zio_type_t t, zio_taskq_type_t q,
-    task_func_t *func, void *arg, uint_t flags, taskq_ent_t *ent)
-{
-	spa_taskqs_t *tqs = &spa->spa_zio_taskq[t][q];
-	taskq_t *tq;
-
-	ASSERT3P(tqs->stqs_taskq, !=, NULL);
-	ASSERT3U(tqs->stqs_count, !=, 0);
-
-	if (tqs->stqs_count == 1) {
-		tq = tqs->stqs_taskq[0];
-	} else {
-		tq = tqs->stqs_taskq[gethrtime() % tqs->stqs_count];
-	}
-
-	taskq_dispatch_ent(tq, func, arg, flags, ent);
+#endif
+	return (taskq_create_proc(name, value, maxclsyspri, 50, INT_MAX,
+	    spa->spa_proc, flags));
 }
 
 static void
@@ -938,12 +870,22 @@ spa_create_zio_taskqs(spa_t *spa)
 {
 	for (int t = 0; t < ZIO_TYPES; t++) {
 		for (int q = 0; q < ZIO_TASKQ_TYPES; q++) {
-			spa_taskqs_init(spa, t, q);
+			const zio_taskq_info_t *ztip = &zio_taskqs[t][q];
+			enum zti_modes mode = ztip->zti_mode;
+			uint_t value = ztip->zti_value;
+			char name[32];
+
+			(void) snprintf(name, sizeof (name),
+			    "%s_%s", zio_type_name[t], zio_taskq_types[q]);
+
+			spa->spa_zio_taskq[t][q] =
+			    spa_taskq_create(spa, name, mode, value);
 		}
 	}
 }
 
 #ifdef _KERNEL
+#ifdef SPA_PROCESS
 static void
 spa_thread(void *arg)
 {
@@ -960,6 +902,7 @@ spa_thread(void *arg)
 	    "zpool-%s", spa->spa_name);
 	(void) strlcpy(pu->u_comm, pu->u_psargs, sizeof (pu->u_comm));
 
+#ifdef PSRSET_BIND
 	/* bind this thread to the requested psrset */
 	if (zio_taskq_psrset_bind != PS_NONE) {
 		pool_lock();
@@ -981,10 +924,13 @@ spa_thread(void *arg)
 		mutex_exit(&cpu_lock);
 		pool_unlock();
 	}
+#endif
 
+#ifdef SYSDC
 	if (zio_taskq_sysdc) {
 		sysdc_thread_enter(curthread, 100, 0);
 	}
+#endif
 
 	spa->spa_proc = curproc;
 	spa->spa_did = curthread->t_did;
@@ -1011,6 +957,7 @@ spa_thread(void *arg)
 	mutex_enter(&curproc->p_lock);
 	lwp_exit();
 }
+#endif	/* SPA_PROCESS */
 #endif
 
 /*
@@ -1033,6 +980,7 @@ spa_activate(spa_t *spa, int mode)
 	ASSERT(spa->spa_proc == &p0);
 	spa->spa_did = 0;
 
+#ifdef SPA_PROCESS
 	/* Only create a process if we're going to be around a while. */
 	if (spa_create_process && strcmp(spa->spa_name, TRYIMPORT_NAME) != 0) {
 		if (newproc(spa_thread, (caddr_t)spa, syscid, maxclsyspri,
@@ -1053,12 +1001,19 @@ spa_activate(spa_t *spa, int mode)
 #endif
 		}
 	}
+#endif	/* SPA_PROCESS */
 	mutex_exit(&spa->spa_proc_lock);
 
 	/* If we didn't create a process, we need to create our taskqs. */
+	ASSERT(spa->spa_proc == &p0);
 	if (spa->spa_proc == &p0) {
 		spa_create_zio_taskqs(spa);
 	}
+
+	/*
+	 * Start TRIM thread.
+	 */
+	trim_thread_create(spa);
 
 	list_create(&spa->spa_config_dirty_list, sizeof (vdev_t),
 	    offsetof(vdev_t, vdev_config_dirty_node));
@@ -1088,6 +1043,12 @@ spa_deactivate(spa_t *spa)
 	ASSERT(spa->spa_async_zio_root == NULL);
 	ASSERT(spa->spa_state != POOL_STATE_UNINITIALIZED);
 
+	/*
+	 * Stop TRIM thread in case spa_unload() wasn't called directly
+	 * before spa_deactivate().
+	 */
+	trim_thread_destroy(spa);
+
 	txg_list_destroy(&spa->spa_vdev_txg_list);
 
 	list_destroy(&spa->spa_config_dirty_list);
@@ -1095,7 +1056,9 @@ spa_deactivate(spa_t *spa)
 
 	for (int t = 0; t < ZIO_TYPES; t++) {
 		for (int q = 0; q < ZIO_TASKQ_TYPES; q++) {
-			spa_taskqs_fini(spa, t, q);
+			if (spa->spa_zio_taskq[t][q] != NULL)
+				taskq_destroy(spa->spa_zio_taskq[t][q]);
+			spa->spa_zio_taskq[t][q] = NULL;
 		}
 	}
 
@@ -1131,6 +1094,7 @@ spa_deactivate(spa_t *spa)
 	ASSERT(spa->spa_proc == &p0);
 	mutex_exit(&spa->spa_proc_lock);
 
+#ifdef SPA_PROCESS
 	/*
 	 * We want to make sure spa_thread() has actually exited the ZFS
 	 * module, so that the module can't be unloaded out from underneath
@@ -1140,6 +1104,7 @@ spa_deactivate(spa_t *spa)
 		thread_join(spa->spa_did);
 		spa->spa_did = 0;
 	}
+#endif	/* SPA_PROCESS */
 }
 
 /*
@@ -1198,6 +1163,11 @@ spa_unload(spa_t *spa)
 	int i;
 
 	ASSERT(MUTEX_HELD(&spa_namespace_lock));
+
+	/*
+	 * Stop TRIM thread.
+	 */
+	trim_thread_destroy(spa);
 
 	/*
 	 * Stop async tasks.
@@ -1775,7 +1745,9 @@ spa_offline_log(spa_t *spa)
 static void
 spa_aux_check_removed(spa_aux_vdev_t *sav)
 {
-	for (int i = 0; i < sav->sav_count; i++)
+	int i;
+
+	for (i = 0; i < sav->sav_count; i++)
 		spa_check_removed(sav->sav_vdevs[i]);
 }
 
@@ -2379,7 +2351,7 @@ spa_load_impl(spa_t *spa, uint64_t pool_guid, nvlist_t *config,
 			 */
 			(void) ddi_strtoul(hw_serial, NULL, 10, &myhostid);
 #endif	/* _KERNEL */
-			if (hostid != 0 && myhostid != 0 &&
+			if (check_hostid && hostid != 0 && myhostid != 0 &&
 			    hostid != myhostid) {
 				nvlist_free(nvconfig);
 				cmn_err(CE_WARN, "pool '%s' could not be "
@@ -2822,6 +2794,7 @@ spa_open_common(const char *pool, spa_t **spapp, void *tag, nvlist_t *nvpolicy,
 	spa_load_state_t state = SPA_LOAD_OPEN;
 	int error;
 	int locked = B_FALSE;
+	int firstopen = B_FALSE;
 
 	*spapp = NULL;
 
@@ -2844,6 +2817,8 @@ spa_open_common(const char *pool, spa_t **spapp, void *tag, nvlist_t *nvpolicy,
 
 	if (spa->spa_state == POOL_STATE_UNINITIALIZED) {
 		zpool_rewind_policy_t policy;
+
+		firstopen = B_TRUE;
 
 		zpool_get_rewind_policy(nvpolicy ? nvpolicy : spa->spa_config,
 		    &policy);
@@ -2917,6 +2892,12 @@ spa_open_common(const char *pool, spa_t **spapp, void *tag, nvlist_t *nvpolicy,
 		spa->spa_last_ubsync_txg = 0;
 		spa->spa_load_txg = 0;
 		mutex_exit(&spa_namespace_lock);
+#ifdef __FreeBSD__
+#ifdef _KERNEL
+		if (firstopen)
+			zvol_create_minors(spa->spa_name);
+#endif
+#endif
 	}
 
 	*spapp = spa;
@@ -3585,6 +3566,7 @@ spa_create(const char *pool, nvlist_t *nvroot, nvlist_t *props,
 }
 
 #ifdef _KERNEL
+#if defined(sun)
 /*
  * Get the root pool information from the root disk, then import the root pool
  * during the system boot up time.
@@ -3785,6 +3767,201 @@ out:
 	return (error);
 }
 
+#else
+
+extern int vdev_geom_read_pool_label(const char *name, nvlist_t ***configs,
+    uint64_t *count);
+
+static nvlist_t *
+spa_generate_rootconf(const char *name)
+{
+	nvlist_t **configs, **tops;
+	nvlist_t *config;
+	nvlist_t *best_cfg, *nvtop, *nvroot;
+	uint64_t *holes;
+	uint64_t best_txg;
+	uint64_t nchildren;
+	uint64_t pgid;
+	uint64_t count;
+	uint64_t i;
+	uint_t   nholes;
+
+	if (vdev_geom_read_pool_label(name, &configs, &count) != 0)
+		return (NULL);
+
+	ASSERT3U(count, !=, 0);
+	best_txg = 0;
+	for (i = 0; i < count; i++) {
+		uint64_t txg;
+
+		VERIFY(nvlist_lookup_uint64(configs[i], ZPOOL_CONFIG_POOL_TXG,
+		    &txg) == 0);
+		if (txg > best_txg) {
+			best_txg = txg;
+			best_cfg = configs[i];
+		}
+	}
+
+	/*
+	 * Multi-vdev root pool configuration discovery is not supported yet.
+	 */
+	nchildren = 1;
+	nvlist_lookup_uint64(best_cfg, ZPOOL_CONFIG_VDEV_CHILDREN, &nchildren);
+	holes = NULL;
+	nvlist_lookup_uint64_array(best_cfg, ZPOOL_CONFIG_HOLE_ARRAY,
+	    &holes, &nholes);
+
+	tops = kmem_zalloc(nchildren * sizeof(void *), KM_SLEEP);
+	for (i = 0; i < nchildren; i++) {
+		if (i >= count)
+			break;
+		if (configs[i] == NULL)
+			continue;
+		VERIFY(nvlist_lookup_nvlist(configs[i], ZPOOL_CONFIG_VDEV_TREE,
+		    &nvtop) == 0);
+		nvlist_dup(nvtop, &tops[i], KM_SLEEP);
+	}
+	for (i = 0; holes != NULL && i < nholes; i++) {
+		if (i >= nchildren)
+			continue;
+		if (tops[holes[i]] != NULL)
+			continue;
+		nvlist_alloc(&tops[holes[i]], NV_UNIQUE_NAME, KM_SLEEP);
+		VERIFY(nvlist_add_string(tops[holes[i]], ZPOOL_CONFIG_TYPE,
+		    VDEV_TYPE_HOLE) == 0);
+		VERIFY(nvlist_add_uint64(tops[holes[i]], ZPOOL_CONFIG_ID,
+		    holes[i]) == 0);
+		VERIFY(nvlist_add_uint64(tops[holes[i]], ZPOOL_CONFIG_GUID,
+		    0) == 0);
+	}
+	for (i = 0; i < nchildren; i++) {
+		if (tops[i] != NULL)
+			continue;
+		nvlist_alloc(&tops[i], NV_UNIQUE_NAME, KM_SLEEP);
+		VERIFY(nvlist_add_string(tops[i], ZPOOL_CONFIG_TYPE,
+		    VDEV_TYPE_MISSING) == 0);
+		VERIFY(nvlist_add_uint64(tops[i], ZPOOL_CONFIG_ID,
+		    i) == 0);
+		VERIFY(nvlist_add_uint64(tops[i], ZPOOL_CONFIG_GUID,
+		    0) == 0);
+	}
+
+	/*
+	 * Create pool config based on the best vdev config.
+	 */
+	nvlist_dup(best_cfg, &config, KM_SLEEP);
+
+	/*
+	 * Put this pool's top-level vdevs into a root vdev.
+	 */
+	VERIFY(nvlist_lookup_uint64(config, ZPOOL_CONFIG_POOL_GUID,
+	    &pgid) == 0);
+	VERIFY(nvlist_alloc(&nvroot, NV_UNIQUE_NAME, KM_SLEEP) == 0);
+	VERIFY(nvlist_add_string(nvroot, ZPOOL_CONFIG_TYPE,
+	    VDEV_TYPE_ROOT) == 0);
+	VERIFY(nvlist_add_uint64(nvroot, ZPOOL_CONFIG_ID, 0ULL) == 0);
+	VERIFY(nvlist_add_uint64(nvroot, ZPOOL_CONFIG_GUID, pgid) == 0);
+	VERIFY(nvlist_add_nvlist_array(nvroot, ZPOOL_CONFIG_CHILDREN,
+	    tops, nchildren) == 0);
+
+	/*
+	 * Replace the existing vdev_tree with the new root vdev in
+	 * this pool's configuration (remove the old, add the new).
+	 */
+	VERIFY(nvlist_add_nvlist(config, ZPOOL_CONFIG_VDEV_TREE, nvroot) == 0);
+
+	/*
+	 * Drop vdev config elements that should not be present at pool level.
+	 */
+	nvlist_remove(config, ZPOOL_CONFIG_GUID, DATA_TYPE_UINT64);
+	nvlist_remove(config, ZPOOL_CONFIG_TOP_GUID, DATA_TYPE_UINT64);
+
+	for (i = 0; i < count; i++)
+		nvlist_free(configs[i]);
+	kmem_free(configs, count * sizeof(void *));
+	for (i = 0; i < nchildren; i++)
+		nvlist_free(tops[i]);
+	kmem_free(tops, nchildren * sizeof(void *));
+	nvlist_free(nvroot);
+	return (config);
+}
+
+int
+spa_import_rootpool(const char *name)
+{
+	spa_t *spa;
+	vdev_t *rvd, *bvd, *avd = NULL;
+	nvlist_t *config, *nvtop;
+	uint64_t txg;
+	char *pname;
+	int error;
+
+	/*
+	 * Read the label from the boot device and generate a configuration.
+	 */
+	config = spa_generate_rootconf(name);
+
+	mutex_enter(&spa_namespace_lock);
+	if (config != NULL) {
+		VERIFY(nvlist_lookup_string(config, ZPOOL_CONFIG_POOL_NAME,
+		    &pname) == 0 && strcmp(name, pname) == 0);
+		VERIFY(nvlist_lookup_uint64(config, ZPOOL_CONFIG_POOL_TXG, &txg)
+		    == 0);
+
+		if ((spa = spa_lookup(pname)) != NULL) {
+			/*
+			 * Remove the existing root pool from the namespace so
+			 * that we can replace it with the correct config
+			 * we just read in.
+			 */
+			spa_remove(spa);
+		}
+		spa = spa_add(pname, config, NULL);
+
+		/*
+		 * Set spa_ubsync.ub_version as it can be used in vdev_alloc()
+		 * via spa_version().
+		 */
+		if (nvlist_lookup_uint64(config, ZPOOL_CONFIG_VERSION,
+		    &spa->spa_ubsync.ub_version) != 0)
+			spa->spa_ubsync.ub_version = SPA_VERSION_INITIAL;
+	} else if ((spa = spa_lookup(name)) == NULL) {
+		cmn_err(CE_NOTE, "Cannot find the pool label for '%s'",
+		    name);
+		return (EIO);
+	} else {
+		VERIFY(nvlist_dup(spa->spa_config, &config, KM_SLEEP) == 0);
+	}
+	spa->spa_is_root = B_TRUE;
+	spa->spa_import_flags = ZFS_IMPORT_VERBATIM;
+
+	/*
+	 * Build up a vdev tree based on the boot device's label config.
+	 */
+	VERIFY(nvlist_lookup_nvlist(config, ZPOOL_CONFIG_VDEV_TREE,
+	    &nvtop) == 0);
+	spa_config_enter(spa, SCL_ALL, FTAG, RW_WRITER);
+	error = spa_config_parse(spa, &rvd, nvtop, NULL, 0,
+	    VDEV_ALLOC_ROOTPOOL);
+	spa_config_exit(spa, SCL_ALL, FTAG);
+	if (error) {
+		mutex_exit(&spa_namespace_lock);
+		nvlist_free(config);
+		cmn_err(CE_NOTE, "Can not parse the config for pool '%s'",
+		    pname);
+		return (error);
+	}
+
+	spa_config_enter(spa, SCL_ALL, FTAG, RW_WRITER);
+	vdev_free(rvd);
+	spa_config_exit(spa, SCL_ALL, FTAG);
+	mutex_exit(&spa_namespace_lock);
+
+	nvlist_free(config);
+	return (0);
+}
+
+#endif	/* sun */
 #endif
 
 /*
@@ -3969,6 +4146,11 @@ spa_import(const char *pool, nvlist_t *config, nvlist_t *props, uint64_t flags)
 	mutex_exit(&spa_namespace_lock);
 	spa_history_log_version(spa, "import");
 
+#ifdef __FreeBSD__
+#ifdef _KERNEL
+	zvol_create_minors(pool);
+#endif
+#endif
 	return (0);
 }
 
@@ -4949,8 +5131,15 @@ spa_vdev_split_mirror(spa_t *spa, char *newname, nvlist_t *config,
 	spa_activate(newspa, spa_mode_global);
 	spa_async_suspend(newspa);
 
+#ifndef sun
+	/* mark that we are creating new spa by splitting */
+	newspa->spa_splitting_newspa = B_TRUE;
+#endif
 	/* create the new pool from the disks of the original pool */
 	error = spa_load(newspa, SPA_LOAD_IMPORT, SPA_IMPORT_ASSEMBLE, B_TRUE);
+#ifndef sun
+	newspa->spa_splitting_newspa = B_FALSE;
+#endif
 	if (error)
 		goto out;
 
@@ -5558,15 +5747,16 @@ spa_async_autoexpand(spa_t *spa, vdev_t *vd)
 	VERIFY(nvlist_add_string(attr, DEV_PHYS_PATH, physpath) == 0);
 
 	(void) ddi_log_sysevent(zfs_dip, SUNW_VENDOR, EC_DEV_STATUS,
-	    ESC_DEV_DLE, attr, &eid, DDI_SLEEP);
+	    ESC_ZFS_VDEV_AUTOEXPAND, attr, &eid, DDI_SLEEP);
 
 	nvlist_free(attr);
 	kmem_free(physpath, MAXPATHLEN);
 }
 
 static void
-spa_async_thread(spa_t *spa)
+spa_async_thread(void *arg)
 {
+	spa_t *spa = arg;
 	int tasks;
 
 	ASSERT(spa->spa_sync_on);
@@ -5730,7 +5920,7 @@ spa_free_sync_cb(void *arg, const blkptr_t *bp, dmu_tx_t *tx)
 	zio_t *zio = arg;
 
 	zio_nowait(zio_free_sync(zio, zio->io_spa, dmu_tx_get_txg(tx), bp,
-	    zio->io_flags));
+	    BP_GET_PSIZE(bp), zio->io_flags));
 	return (0);
 }
 
@@ -6104,8 +6294,15 @@ spa_sync(spa_t *spa, uint64_t txg)
 	tx = dmu_tx_create_assigned(dp, txg);
 
 	spa->spa_sync_starttime = gethrtime();
+#ifdef illumos
 	VERIFY(cyclic_reprogram(spa->spa_deadman_cycid,
 	    spa->spa_sync_starttime + spa->spa_deadman_synctime));
+#else	/* FreeBSD */
+#ifdef _KERNEL
+	callout_reset(&spa->spa_deadman_cycid,
+	    hz * spa->spa_deadman_synctime / NANOSEC, spa_deadman, spa);
+#endif
+#endif
 
 	/*
 	 * If we are upgrading to SPA_VERSION_RAIDZ_DEFLATE this txg,
@@ -6235,7 +6432,13 @@ spa_sync(spa_t *spa, uint64_t txg)
 	}
 	dmu_tx_commit(tx);
 
+#ifdef illumos
 	VERIFY(cyclic_reprogram(spa->spa_deadman_cycid, CY_INFINITY));
+#else	/* FreeBSD */
+#ifdef _KERNEL
+	callout_drain(&spa->spa_deadman_cycid);
+#endif
+#endif
 
 	/*
 	 * Clear the dirty config list.

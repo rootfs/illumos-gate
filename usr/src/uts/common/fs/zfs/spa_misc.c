@@ -22,6 +22,7 @@
  * Copyright (c) 2005, 2010, Oracle and/or its affiliates. All rights reserved.
  * Copyright (c) 2013 by Delphix. All rights reserved.
  * Copyright 2011 Nexenta Systems, Inc.  All rights reserved.
+ * Copyright 2013 Martin Matuska <mm@FreeBSD.org>. All rights reserved.
  */
 
 #include <sys/zfs_context.h>
@@ -249,6 +250,10 @@ int zfs_flags = 0;
  * set, calls to zfs_panic_recover() will turn into warning messages.
  */
 int zfs_recover = 0;
+SYSCTL_DECL(_vfs_zfs);
+TUNABLE_INT("vfs.zfs.recover", &zfs_recover);
+SYSCTL_INT(_vfs_zfs, OID_AUTO, recover, CTLFLAG_RDTUN, &zfs_recover, 0,
+    "Try to recover from otherwise-fatal errors.");
 
 extern int zfs_txg_synctime_ms;
 
@@ -260,15 +265,42 @@ extern int zfs_txg_synctime_ms;
  * Secondly, the value determines if an I/O is considered "hung".
  * Any I/O that has not completed in zfs_deadman_synctime is considered
  * "hung" resulting in a system panic.
+ * 1000 zfs_txg_synctime_ms (i.e. 1000 seconds).
  */
 uint64_t zfs_deadman_synctime = 1000ULL;
+TUNABLE_QUAD("vfs.zfs.deadman_synctime", &zfs_deadman_synctime);
+SYSCTL_UQUAD(_vfs_zfs, OID_AUTO, deadman_synctime, CTLFLAG_RDTUN,
+    &zfs_deadman_synctime, 0,
+    "Stalled ZFS I/O expiration time in units of vfs.zfs.txg_synctime_ms");
 
 /*
- * Override the zfs deadman behavior via /etc/system. By default the
- * deadman is enabled except on VMware and sparc deployments.
+ * Default value of -1 for zfs_deadman_enabled is resolved in
+ * zfs_deadman_init()
  */
 int zfs_deadman_enabled = -1;
+TUNABLE_INT("vfs.zfs.deadman_enabled", &zfs_deadman_enabled);
+SYSCTL_INT(_vfs_zfs, OID_AUTO, deadman_enabled, CTLFLAG_RDTUN,
+    &zfs_deadman_enabled, 0, "Kernel panic on stalled ZFS I/O");
 
+#ifndef illumos
+#ifdef _KERNEL
+static void
+zfs_deadman_init()
+{
+	/*
+	 * If we are not i386 or amd64 or in a virtual machine,
+	 * disable ZFS deadman thread by default
+	 */
+	if (zfs_deadman_enabled == -1) {
+#if defined(__amd64__) || defined(__i386__)
+		zfs_deadman_enabled = (vm_guest == VM_GUEST_NO) ? 1 : 0;
+#else
+		zfs_deadman_enabled = 0;
+#endif
+	}
+}
+#endif	/* _KERNEL */
+#endif	/* !illumos */
 
 /*
  * ==========================================================================
@@ -461,8 +493,10 @@ spa_add(const char *name, nvlist_t *config, const char *altroot)
 {
 	spa_t *spa;
 	spa_config_dirent_t *dp;
+#ifdef illumos
 	cyc_handler_t hdlr;
 	cyc_time_t when;
+#endif
 
 	ASSERT(MUTEX_HELD(&spa_namespace_lock));
 
@@ -477,7 +511,6 @@ spa_add(const char *name, nvlist_t *config, const char *altroot)
 	mutex_init(&spa->spa_scrub_lock, NULL, MUTEX_DEFAULT, NULL);
 	mutex_init(&spa->spa_suspend_lock, NULL, MUTEX_DEFAULT, NULL);
 	mutex_init(&spa->spa_vdev_top_lock, NULL, MUTEX_DEFAULT, NULL);
-	mutex_init(&spa->spa_iokstat_lock, NULL, MUTEX_DEFAULT, NULL);
 
 	cv_init(&spa->spa_async_cv, NULL, CV_DEFAULT, NULL);
 	cv_init(&spa->spa_proc_cv, NULL, CV_DEFAULT, NULL);
@@ -495,25 +528,32 @@ spa_add(const char *name, nvlist_t *config, const char *altroot)
 	spa->spa_proc = &p0;
 	spa->spa_proc_state = SPA_PROC_NONE;
 
+#ifdef illumos
 	hdlr.cyh_func = spa_deadman;
 	hdlr.cyh_arg = spa;
 	hdlr.cyh_level = CY_LOW_LEVEL;
+#endif
 
-	spa->spa_deadman_synctime = MSEC2NSEC(zfs_deadman_synctime *
-	    zfs_txg_synctime_ms);
+	spa->spa_deadman_synctime = zfs_deadman_synctime *
+	    zfs_txg_synctime_ms * MICROSEC;
 
+#ifdef illumos
 	/*
 	 * This determines how often we need to check for hung I/Os after
 	 * the cyclic has already fired. Since checking for hung I/Os is
 	 * an expensive operation we don't want to check too frequently.
 	 * Instead wait for 5 synctimes before checking again.
 	 */
-	when.cyt_interval = MSEC2NSEC(5 * zfs_txg_synctime_ms);
+	when.cyt_interval = 5ULL * zfs_txg_synctime_ms * MICROSEC;
 	when.cyt_when = CY_INFINITY;
 	mutex_enter(&cpu_lock);
 	spa->spa_deadman_cycid = cyclic_add(&hdlr, &when);
 	mutex_exit(&cpu_lock);
-
+#else	/* !illumos */
+#ifdef _KERNEL
+	callout_init(&spa->spa_deadman_cycid, CALLOUT_MPSAFE);
+#endif
+#endif
 	refcount_create(&spa->spa_refcount);
 	spa_config_lock_init(spa);
 
@@ -557,13 +597,6 @@ spa_add(const char *name, nvlist_t *config, const char *altroot)
 		    KM_SLEEP) == 0);
 	}
 
-	spa->spa_iokstat = kstat_create("zfs", 0, name,
-	    "disk", KSTAT_TYPE_IO, 1, 0);
-	if (spa->spa_iokstat) {
-		spa->spa_iokstat->ks_lock = &spa->spa_iokstat_lock;
-		kstat_install(spa->spa_iokstat);
-	}
-
 	spa->spa_debug = ((zfs_flags & ZFS_DEBUG_SPA) != 0);
 
 	return (spa);
@@ -605,18 +638,21 @@ spa_remove(spa_t *spa)
 	nvlist_free(spa->spa_load_info);
 	spa_config_set(spa, NULL);
 
+#ifdef illumos
 	mutex_enter(&cpu_lock);
 	if (spa->spa_deadman_cycid != CYCLIC_NONE)
 		cyclic_remove(spa->spa_deadman_cycid);
 	mutex_exit(&cpu_lock);
 	spa->spa_deadman_cycid = CYCLIC_NONE;
+#else	/* !illumos */
+#ifdef _KERNEL
+	callout_drain(&spa->spa_deadman_cycid);
+#endif
+#endif
 
 	refcount_destroy(&spa->spa_refcount);
 
 	spa_config_lock_destroy(spa);
-
-	kstat_delete(spa->spa_iokstat);
-	spa->spa_iokstat = NULL;
 
 	for (int t = 0; t < TXG_SIZE; t++)
 		bplist_destroy(&spa->spa_free_bplist[t]);
@@ -635,7 +671,6 @@ spa_remove(spa_t *spa)
 	mutex_destroy(&spa->spa_scrub_lock);
 	mutex_destroy(&spa->spa_suspend_lock);
 	mutex_destroy(&spa->spa_vdev_top_lock);
-	mutex_destroy(&spa->spa_iokstat_lock);
 
 	kmem_free(spa, sizeof (spa_t));
 }
@@ -1337,7 +1372,7 @@ zfs_panic_recover(const char *fmt, ...)
  * lowercase hexadecimal numbers that don't overflow.
  */
 uint64_t
-strtonum(const char *str, char **nptr)
+zfs_strtonum(const char *str, char **nptr)
 {
 	uint64_t val = 0;
 	char c;
@@ -1662,6 +1697,10 @@ spa_boot_init()
 	spa_config_load();
 }
 
+#ifdef _KERNEL
+EVENTHANDLER_DEFINE(mountroot, spa_boot_init, NULL, 0);
+#endif
+
 void
 spa_init(int mode)
 {
@@ -1681,6 +1720,7 @@ spa_init(int mode)
 
 	spa_mode_global = mode;
 
+#ifdef illumos
 #ifdef _KERNEL
 	spa_arch_init();
 #else
@@ -1694,8 +1734,8 @@ spa_init(int mode)
 		}
 	}
 #endif
-
-	refcount_init();
+#endif /* illumos */
+	refcount_sysinit();
 	unique_init();
 	space_map_init();
 	zio_init();
@@ -1707,6 +1747,11 @@ spa_init(int mode)
 	zpool_feature_init();
 	spa_config_load();
 	l2arc_start();
+#ifndef illumos
+#ifdef _KERNEL
+	zfs_deadman_init();
+#endif
+#endif	/* !illumos */
 }
 
 void

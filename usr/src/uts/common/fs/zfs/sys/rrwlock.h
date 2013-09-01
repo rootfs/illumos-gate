@@ -33,7 +33,6 @@
 extern "C" {
 #endif
 
-#include <sys/inttypes.h>
 #include <sys/zfs_context.h>
 #include <sys/refcount.h>
 

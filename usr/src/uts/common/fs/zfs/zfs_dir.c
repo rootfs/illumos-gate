@@ -32,10 +32,8 @@
 #include <sys/vfs.h>
 #include <sys/vnode.h>
 #include <sys/file.h>
-#include <sys/mode.h>
 #include <sys/kmem.h>
 #include <sys/uio.h>
-#include <sys/pathname.h>
 #include <sys/cmn_err.h>
 #include <sys/errno.h>
 #include <sys/stat.h>
@@ -43,10 +41,12 @@
 #include <sys/sunddi.h>
 #include <sys/random.h>
 #include <sys/policy.h>
+#include <sys/kcondvar.h>
+#include <sys/callb.h>
+#include <sys/smp.h>
 #include <sys/zfs_dir.h>
 #include <sys/zfs_acl.h>
 #include <sys/fs/zfs.h>
-#include "fs/fs_subr.h"
 #include <sys/zap.h>
 #include <sys/dmu.h>
 #include <sys/atomic.h>
@@ -240,15 +240,20 @@ zfs_dirent_lock(zfs_dirlock_t **dlpp, znode_t *dzp, char *name, znode_t **zpp,
 			return (SET_ERROR(ENOENT));
 		}
 		if (dl == NULL)	{
+			size_t namesize;
+
 			/*
 			 * Allocate a new dirlock and add it to the list.
 			 */
-			dl = kmem_alloc(sizeof (zfs_dirlock_t), KM_SLEEP);
+			namesize = strlen(name) + 1;
+			dl = kmem_alloc(sizeof (zfs_dirlock_t) + namesize,
+			    KM_SLEEP);
 			cv_init(&dl->dl_cv, NULL, CV_DEFAULT, NULL);
-			dl->dl_name = name;
+			dl->dl_name = (char *)(dl + 1);
+			bcopy(name, dl->dl_name, namesize);
 			dl->dl_sharecnt = 0;
 			dl->dl_namelock = 0;
-			dl->dl_namesize = 0;
+			dl->dl_namesize = namesize;
 			dl->dl_dzp = dzp;
 			dl->dl_next = dzp->z_dirlocks;
 			dzp->z_dirlocks = dl;
@@ -265,20 +270,8 @@ zfs_dirent_lock(zfs_dirlock_t **dlpp, znode_t *dzp, char *name, znode_t **zpp,
 	if (flag & ZHAVELOCK)
 		dl->dl_namelock = 1;
 
-	if ((flag & ZSHARED) && ++dl->dl_sharecnt > 1 && dl->dl_namesize == 0) {
-		/*
-		 * We're the second shared reference to dl.  Make a copy of
-		 * dl_name in case the first thread goes away before we do.
-		 * Note that we initialize the new name before storing its
-		 * pointer into dl_name, because the first thread may load
-		 * dl->dl_name at any time.  He'll either see the old value,
-		 * which is his, or the new shared copy; either is OK.
-		 */
-		dl->dl_namesize = strlen(dl->dl_name) + 1;
-		name = kmem_alloc(dl->dl_namesize, KM_SLEEP);
-		bcopy(dl->dl_name, name, dl->dl_namesize);
-		dl->dl_name = name;
-	}
+	if (flag & ZSHARED)
+		dl->dl_sharecnt++;
 
 	mutex_exit(&dzp->z_lock);
 
@@ -362,10 +355,8 @@ zfs_dirent_unlock(zfs_dirlock_t *dl)
 	cv_broadcast(&dl->dl_cv);
 	mutex_exit(&dzp->z_lock);
 
-	if (dl->dl_namesize != 0)
-		kmem_free(dl->dl_name, dl->dl_namesize);
 	cv_destroy(&dl->dl_cv);
-	kmem_free(dl, sizeof (*dl));
+	kmem_free(dl, sizeof (*dl) + dl->dl_namesize);
 }
 
 /*
@@ -384,8 +375,15 @@ zfs_dirlook(znode_t *dzp, char *name, vnode_t **vpp, int flags,
 	znode_t *zp;
 	int error = 0;
 	uint64_t parent;
+	int unlinked;
 
 	if (name[0] == 0 || (name[0] == '.' && name[1] == 0)) {
+		mutex_enter(&dzp->z_lock);
+		unlinked = dzp->z_unlinked;
+		mutex_exit(&dzp->z_lock);
+		if (unlinked)
+			return (ENOENT);
+
 		*vpp = ZTOV(dzp);
 		VN_HOLD(*vpp);
 	} else if (name[0] == '.' && name[1] == '.' && name[2] == 0) {
@@ -404,6 +402,13 @@ zfs_dirlook(znode_t *dzp, char *name, vnode_t **vpp, int flags,
 			    NULL, NULL, NULL);
 			return (error);
 		}
+
+		mutex_enter(&dzp->z_lock);
+		unlinked = dzp->z_unlinked;
+		mutex_exit(&dzp->z_lock);
+		if (unlinked)
+			return (ENOENT);
+
 		rw_enter(&dzp->z_parent_lock, RW_READER);
 		error = zfs_zget(zfsvfs, parent, &zp);
 		if (error == 0)
@@ -590,12 +595,12 @@ zfs_rmnode(znode_t *zp)
 	int		error;
 
 	ASSERT(zp->z_links == 0);
-	ASSERT(ZTOV(zp)->v_count == 0);
 
 	/*
 	 * If this is an attribute directory, purge its contents.
 	 */
-	if (ZTOV(zp)->v_type == VDIR && (zp->z_pflags & ZFS_XATTR)) {
+	if (ZTOV(zp) != NULL && ZTOV(zp)->v_type == VDIR &&
+	    (zp->z_pflags & ZFS_XATTR)) {
 		if (zfs_purgedir(zp) != 0) {
 			/*
 			 * Not enough space to delete some xattrs.
@@ -828,7 +833,11 @@ zfs_link_destroy(zfs_dirlock_t *dl, znode_t *zp, dmu_tx_t *tx, int flag,
 		if (zp_is_dir && !zfs_dirempty(zp)) {
 			mutex_exit(&zp->z_lock);
 			vn_vfsunlock(vp);
+#ifdef illumos
 			return (SET_ERROR(EEXIST));
+#else
+			return (SET_ERROR(ENOTEMPTY));
+#endif
 		}
 
 		/*
@@ -844,10 +853,9 @@ zfs_link_destroy(zfs_dirlock_t *dl, znode_t *zp, dmu_tx_t *tx, int flag,
 		}
 
 		if (zp->z_links <= zp_is_dir) {
-			zfs_panic_recover("zfs: link count on %s is %u, "
-			    "should be at least %u",
-			    zp->z_vnode->v_path ? zp->z_vnode->v_path :
-			    "<unknown>", (int)zp->z_links,
+			zfs_panic_recover("zfs: link count on vnode %p is %u, "
+			    "should be at least %u", zp->z_vnode,
+			    (int)zp->z_links,
 			    zp_is_dir + 1);
 			zp->z_links = zp_is_dir + 1;
 		}
@@ -926,8 +934,14 @@ zfs_make_xattrdir(znode_t *zp, vattr_t *vap, vnode_t **xvpp, cred_t *cr)
 
 	*xvpp = NULL;
 
+	/*
+	 * In FreeBSD, access checking for creating an EA is being done
+	 * in zfs_setextattr(),
+	 */
+#ifndef __FreeBSD__
 	if (error = zfs_zaccess(zp, ACE_WRITE_NAMED_ATTRS, 0, B_FALSE, cr))
 		return (error);
+#endif
 
 	if ((error = zfs_acl_ids_create(zp, IS_XATTR, vap, cr, NULL,
 	    &acl_ids)) != 0)
@@ -1017,7 +1031,11 @@ top:
 
 	if (!(flags & CREATE_XATTR_DIR)) {
 		zfs_dirent_unlock(dl);
+#ifdef illumos
 		return (SET_ERROR(ENOENT));
+#else
+		return (SET_ERROR(ENOATTR));
+#endif
 	}
 
 	if (zfsvfs->z_vfs->vfs_flag & VFS_RDONLY) {
@@ -1047,6 +1065,8 @@ top:
 		/* NB: we already did dmu_tx_wait() if necessary */
 		goto top;
 	}
+	if (error == 0)
+		VOP_UNLOCK(*xvpp, 0);
 
 	return (error);
 }
@@ -1086,5 +1106,5 @@ zfs_sticky_remove_access(znode_t *zdp, znode_t *zp, cred_t *cr)
 	    zfs_zaccess(zp, ACE_WRITE_DATA, 0, B_FALSE, cr) == 0))
 		return (0);
 	else
-		return (secpolicy_vnode_remove(cr));
+		return (secpolicy_vnode_remove(ZTOV(zp), cr));
 }

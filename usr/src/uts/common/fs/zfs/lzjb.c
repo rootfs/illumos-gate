@@ -36,6 +36,7 @@
  * source length if compression would overflow the destination buffer.
  */
 
+#include <sys/zfs_context.h>
 #include <sys/types.h>
 #include <sys/param.h>
 

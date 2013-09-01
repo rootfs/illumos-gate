@@ -37,7 +37,6 @@
 
 #include <sys/types.h>
 #include <sys/fs/zfs.h>
-#include <sys/int_limits.h>
 #include <sys/nvpair.h>
 #include "zfs_comutil.h"
 

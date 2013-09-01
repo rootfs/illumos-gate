@@ -33,7 +33,6 @@
 #ifndef _SYS_DEBUG_H
 #define	_SYS_DEBUG_H
 
-#include <sys/isa_defs.h>
 #include <sys/types.h>
 #include <sys/note.h>
 
@@ -51,7 +50,7 @@ extern "C" {
 #if defined(__STDC__)
 extern int assfail(const char *, const char *, int);
 #define	VERIFY(EX) ((void)((EX) || assfail(#EX, __FILE__, __LINE__)))
-#if DEBUG
+#ifdef DEBUG
 #define	ASSERT(EX) ((void)((EX) || assfail(#EX, __FILE__, __LINE__)))
 #else
 #define	ASSERT(x)  ((void)0)
@@ -59,7 +58,7 @@ extern int assfail(const char *, const char *, int);
 #else	/* defined(__STDC__) */
 extern int assfail();
 #define	VERIFY(EX) ((void)((EX) || assfail("EX", __FILE__, __LINE__)))
-#if DEBUG
+#ifdef DEBUG
 #define	ASSERT(EX) ((void)((EX) || assfail("EX", __FILE__, __LINE__)))
 #else
 #define	ASSERT(x)  ((void)0)
@@ -84,7 +83,7 @@ extern int assfail();
  * and
  *	if (a) then (b) *AND* if (b) then (a)
  */
-#if DEBUG
+#ifdef DEBUG
 #define	IMPLY(A, B) \
 	((void)(((!(A)) || (B)) || \
 	    assfail("(" #A ") implies (" #B ")", __FILE__, __LINE__)))
@@ -120,7 +119,7 @@ _NOTE(CONSTCOND) } while (0)
 #define	VERIFY3P(x, y, z)	VERIFY3_IMPL(x, y, z, uintptr_t)
 #define	VERIFY0(x)		VERIFY3_IMPL(x, ==, 0, uintmax_t)
 
-#if DEBUG
+#ifdef DEBUG
 #define	ASSERT3S(x, y, z)	VERIFY3_IMPL(x, y, z, int64_t)
 #define	ASSERT3U(x, y, z)	VERIFY3_IMPL(x, y, z, uint64_t)
 #define	ASSERT3P(x, y, z)	VERIFY3_IMPL(x, y, z, uintptr_t)

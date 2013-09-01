@@ -331,7 +331,7 @@ typedef struct blkptr {
  * Note: the byteorder is either 0 or -1, both of which are palindromes.
  * This simplifies the endianness handling a bit.
  */
-#ifdef _BIG_ENDIAN
+#if BYTE_ORDER == _BIG_ENDIAN
 #define	ZFS_HOST_BYTEORDER	(0ULL)
 #else
 #define	ZFS_HOST_BYTEORDER	(-1ULL)
@@ -420,7 +420,11 @@ extern int spa_get_stats(const char *pool, nvlist_t **config, char *altroot,
     size_t buflen);
 extern int spa_create(const char *pool, nvlist_t *config, nvlist_t *props,
     nvlist_t *zplprops);
+#if defined(sun)
 extern int spa_import_rootpool(char *devpath, char *devid);
+#else
+extern int spa_import_rootpool(const char *name);
+#endif
 extern int spa_import(const char *pool, nvlist_t *config, nvlist_t *props,
     uint64_t flags);
 extern nvlist_t *spa_tryimport(nvlist_t *tryconfig);
@@ -624,7 +628,8 @@ extern boolean_t spa_is_root(spa_t *spa);
 extern boolean_t spa_writeable(spa_t *spa);
 
 extern int spa_mode(spa_t *spa);
-extern uint64_t strtonum(const char *str, char **nptr);
+extern uint64_t zfs_strtonum(const char *str, char **nptr);
+#define	strtonum(str, nptr)	zfs_strtonum((str), (nptr))
 
 extern char *spa_his_ievent_table[];
 
@@ -644,7 +649,7 @@ extern void spa_history_log_internal_dd(dsl_dir_t *dd, const char *operation,
 /* error handling */
 struct zbookmark;
 extern void spa_log_error(spa_t *spa, zio_t *zio);
-extern void zfs_ereport_post(const char *class, spa_t *spa, vdev_t *vd,
+extern void zfs_ereport_post(const char *cls, spa_t *spa, vdev_t *vd,
     zio_t *zio, uint64_t stateoroffset, uint64_t length);
 extern void zfs_post_remove(spa_t *spa, vdev_t *vd);
 extern void zfs_post_state_change(spa_t *spa, vdev_t *vd);

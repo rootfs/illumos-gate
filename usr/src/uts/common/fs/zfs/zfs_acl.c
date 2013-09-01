@@ -32,7 +32,6 @@
 #include <sys/resource.h>
 #include <sys/vfs.h>
 #include <sys/vnode.h>
-#include <sys/sid.h>
 #include <sys/file.h>
 #include <sys/stat.h>
 #include <sys/kmem.h>
@@ -41,7 +40,6 @@
 #include <sys/unistd.h>
 #include <sys/sdt.h>
 #include <sys/fs/zfs.h>
-#include <sys/mode.h>
 #include <sys/policy.h>
 #include <sys/zfs_znode.h>
 #include <sys/zfs_fuid.h>
@@ -52,7 +50,6 @@
 #include <sys/dnode.h>
 #include <sys/zap.h>
 #include <sys/sa.h>
-#include "fs/fs_subr.h"
 #include <acl/acl_common.h>
 
 #define	ALLOW	ACE_ACCESS_ALLOWED_ACE_TYPE
@@ -1686,7 +1683,11 @@ zfs_acl_ids_create(znode_t *dzp, int flag, vattr_t *vap, cred_t *cr,
 			} else {
 				acl_ids->z_fgid = zfs_fuid_create_cred(zfsvfs,
 				    ZFS_GROUP, cr, &acl_ids->z_fuidp);
+#ifdef __FreeBSD__
+				gid = acl_ids->z_fgid = dzp->z_gid;
+#else
 				gid = crgetgid(cr);
+#endif
 			}
 		}
 	}
@@ -1703,7 +1704,7 @@ zfs_acl_ids_create(znode_t *dzp, int flag, vattr_t *vap, cred_t *cr,
 		acl_ids->z_mode |= S_ISGID;
 	} else {
 		if ((acl_ids->z_mode & S_ISGID) &&
-		    secpolicy_vnode_setids_setgids(cr, gid) != 0)
+		    secpolicy_vnode_setids_setgids(ZTOV(dzp), cr, gid) != 0)
 			acl_ids->z_mode &= ~S_ISGID;
 	}
 
@@ -2052,10 +2053,22 @@ zfs_zaccess_dataset_check(znode_t *zp, uint32_t v4_mode)
 		return (SET_ERROR(EPERM));
 	}
 
+#ifdef sun
 	if ((v4_mode & (ACE_DELETE | ACE_DELETE_CHILD)) &&
 	    (zp->z_pflags & ZFS_NOUNLINK)) {
 		return (SET_ERROR(EPERM));
 	}
+#else
+	/*
+	 * In FreeBSD we allow to modify directory's content is ZFS_NOUNLINK
+	 * (sunlnk) is set. We just don't allow directory removal, which is
+	 * handled in zfs_zaccess_delete().
+	 */
+	if ((v4_mode & ACE_DELETE) &&
+	    (zp->z_pflags & ZFS_NOUNLINK)) {
+		return (EPERM);
+	}
+#endif
 
 	if (((v4_mode & (ACE_READ_DATA|ACE_EXECUTE)) &&
 	    (zp->z_pflags & ZFS_AV_QUARANTINED))) {
@@ -2361,6 +2374,15 @@ zfs_zaccess(znode_t *zp, int mode, int flags, boolean_t skipaclchk, cred_t *cr)
 
 	is_attr = ((zp->z_pflags & ZFS_XATTR) && (ZTOV(zp)->v_type == VDIR));
 
+#ifdef __FreeBSD__
+	/*
+	 * In FreeBSD, we don't care about permissions of individual ADS.
+	 * Note that not checking them is not just an optimization - without
+	 * this shortcut, EA operations may bogusly fail with EACCES.
+	 */
+	if (zp->z_pflags & ZFS_XATTR)
+		return (0);
+#else
 	/*
 	 * If attribute then validate against base file
 	 */
@@ -2393,6 +2415,7 @@ zfs_zaccess(znode_t *zp, int mode, int flags, boolean_t skipaclchk, cred_t *cr)
 			mode |= ACE_READ_NAMED_ATTRS;
 		}
 	}
+#endif
 
 	owner = zfs_fuid_map_id(zp->z_zfsvfs, zp->z_uid, cr, ZFS_OWNER);
 	/*
@@ -2464,16 +2487,16 @@ zfs_zaccess(znode_t *zp, int mode, int flags, boolean_t skipaclchk, cred_t *cr)
 		    needed_bits & ~checkmode, needed_bits);
 
 		if (error == 0 && (working_mode & ACE_WRITE_OWNER))
-			error = secpolicy_vnode_chown(cr, owner);
+			error = secpolicy_vnode_chown(ZTOV(check_zp), cr, owner);
 		if (error == 0 && (working_mode & ACE_WRITE_ACL))
-			error = secpolicy_vnode_setdac(cr, owner);
+			error = secpolicy_vnode_setdac(ZTOV(check_zp), cr, owner);
 
 		if (error == 0 && (working_mode &
 		    (ACE_DELETE|ACE_DELETE_CHILD)))
-			error = secpolicy_vnode_remove(cr);
+			error = secpolicy_vnode_remove(ZTOV(check_zp), cr);
 
 		if (error == 0 && (working_mode & ACE_SYNCHRONIZE)) {
-			error = secpolicy_vnode_chown(cr, owner);
+			error = secpolicy_vnode_chown(ZTOV(check_zp), cr, owner);
 		}
 		if (error == 0) {
 			/*
@@ -2629,7 +2652,7 @@ zfs_zaccess_delete(znode_t *dzp, znode_t *zp, cred_t *cr)
 	 */
 
 	if (dzp_error == EACCES)
-		return (secpolicy_vnode_remove(cr));
+		return (secpolicy_vnode_remove(ZTOV(dzp), cr));	/* XXXPJD: s/dzp/zp/ ? */
 
 	/*
 	 * Third Row
@@ -2669,7 +2692,15 @@ zfs_zaccess_rename(znode_t *sdzp, znode_t *szp, znode_t *tdzp,
 	/*
 	 * Rename permissions are combination of delete permission +
 	 * add file/subdir permission.
+	 *
+	 * BSD operating systems also require write permission
+	 * on the directory being moved from one parent directory
+	 * to another.
 	 */
+	if (ZTOV(szp)->v_type == VDIR && ZTOV(sdzp) != ZTOV(tdzp)) {
+		if (error = zfs_zaccess(szp, ACE_WRITE_DATA, 0, B_FALSE, cr))
+			return (error);
+	}
 
 	/*
 	 * first make sure we do the delete portion.

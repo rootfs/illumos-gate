@@ -25,6 +25,7 @@
 #ifndef	_LIBUUTIL_H
 #define	_LIBUUTIL_H
 
+#include <solaris.h>
 #include <sys/types.h>
 #include <stdarg.h>
 #include <stdio.h>

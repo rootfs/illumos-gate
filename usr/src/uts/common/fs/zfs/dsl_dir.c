@@ -20,8 +20,9 @@
  */
 /*
  * Copyright (c) 2005, 2010, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2011 Pawel Jakub Dawidek <pawel@dawidek.net>.
+ * All rights reserved.
  * Copyright (c) 2013 by Delphix. All rights reserved.
- * Copyright (c) 2013 Martin Matuska. All rights reserved.
  */
 
 #include <sys/dmu.h>
@@ -38,6 +39,10 @@
 #include <sys/zio.h>
 #include <sys/arc.h>
 #include <sys/sunddi.h>
+#include <sys/zvol.h>
+#ifdef _KERNEL
+#include <sys/zfs_vfsops.h>
+#endif
 #include "zfs_namecheck.h"
 
 static uint64_t dsl_dir_space_towrite(dsl_dir_t *dd);
@@ -739,8 +744,7 @@ dsl_dir_tempreserve_space(dsl_dir_t *dd, uint64_t lsize, uint64_t asize,
 		err = dsl_pool_tempreserve_space(dd->dd_pool, asize, tx);
 	} else {
 		if (err == EAGAIN) {
-			txg_delay(dd->dd_pool, tx->tx_txg,
-			    MSEC2NSEC(10), MSEC2NSEC(10));
+			txg_delay(dd->dd_pool, tx->tx_txg, 1);
 			err = SET_ERROR(ERESTART);
 		}
 		dsl_pool_memory_pressure(dd->dd_pool);
@@ -1079,7 +1083,6 @@ dsl_dir_set_reservation_sync_impl(dsl_dir_t *dd, uint64_t value, dmu_tx_t *tx)
 	mutex_exit(&dd->dd_lock);
 }
 
-
 static void
 dsl_dir_set_reservation_sync(void *arg, dmu_tx_t *tx)
 {
@@ -1300,6 +1303,13 @@ dsl_dir_rename_sync(void *arg, dmu_tx_t *tx)
 	/* add to new parent zapobj */
 	VERIFY0(zap_add(mos, newparent->dd_phys->dd_child_dir_zapobj,
 	    dd->dd_myname, 8, 1, &dd->dd_object, tx));
+
+#ifdef __FreeBSD__
+#ifdef _KERNEL
+	zfsvfs_update_fromname(ddra->ddra_oldname, ddra->ddra_newname);
+	zvol_rename_minors(ddra->ddra_oldname, ddra->ddra_newname);
+#endif
+#endif
 
 	dsl_prop_notify_all(dd);
 

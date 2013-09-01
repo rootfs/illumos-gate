@@ -33,11 +33,11 @@
 #include <sys/dsl_dataset.h>
 #include <sys/dsl_dir.h>
 #include <sys/utsname.h>
-#include <sys/cmn_err.h>
 #include <sys/sunddi.h>
 #include <sys/cred.h>
 #include "zfs_comutil.h"
 #ifdef _KERNEL
+#include <sys/cmn_err.h>
 #include <sys/zone.h>
 #endif
 
@@ -182,12 +182,11 @@ static char *
 spa_history_zone(void)
 {
 #ifdef _KERNEL
-	if (INGLOBALZONE(curproc))
-		return (NULL);
-	return (curproc->p_zone->zone_name);
-#else
-	return (NULL);
+	/* XXX: pr_hostname can be changed by default from within a jail! */
+	if (jailed(curthread->td_ucred))
+		return (curthread->td_ucred->cr_prison->pr_hostname);
 #endif
+	return (NULL);
 }
 
 /*
@@ -302,6 +301,9 @@ spa_history_log_nvl(spa_t *spa, nvlist_t *nvl)
 	int err = 0;
 	dmu_tx_t *tx;
 	nvlist_t *nvarg;
+
+	if (spa_version(spa) < SPA_VERSION_ZPOOL_HISTORY)
+		return (EINVAL);
 
 	if (spa_version(spa) < SPA_VERSION_ZPOOL_HISTORY || !spa_writeable(spa))
 		return (SET_ERROR(EINVAL));
@@ -435,6 +437,7 @@ log_internal(nvlist_t *nvl, const char *operation, spa_t *spa,
     dmu_tx_t *tx, const char *fmt, va_list adx)
 {
 	char *msg;
+	va_list adx2;
 
 	/*
 	 * If this is part of creating a pool, not everything is
@@ -446,10 +449,14 @@ log_internal(nvlist_t *nvl, const char *operation, spa_t *spa,
 		return;
 	}
 
+	va_copy(adx2, adx);
+
 	msg = kmem_alloc(vsnprintf(NULL, 0, fmt, adx) + 1, KM_SLEEP);
-	(void) vsprintf(msg, fmt, adx);
+	(void) vsprintf(msg, fmt, adx2);
 	fnvlist_add_string(nvl, ZPOOL_HIST_INT_STR, msg);
 	strfree(msg);
+
+	va_end(adx2);
 
 	fnvlist_add_string(nvl, ZPOOL_HIST_INT_NAME, operation);
 	fnvlist_add_uint64(nvl, ZPOOL_HIST_TXG, tx->tx_txg);

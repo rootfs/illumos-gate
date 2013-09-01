@@ -258,6 +258,7 @@ extern "C" {
 #define	ESC_ZFS_VDEV_SPARE		"ESC_ZFS_vdev_spare"
 #define	ESC_ZFS_BOOTFS_VDEV_ATTACH	"ESC_ZFS_bootfs_vdev_attach"
 #define	ESC_ZFS_POOL_REGUID		"ESC_ZFS_pool_reguid"
+#define	ESC_ZFS_VDEV_AUTOEXPAND		"ESC_ZFS_vdev_autoexpand"
 
 /*
  * datalink subclass definitions.

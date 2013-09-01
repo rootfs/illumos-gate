@@ -22,6 +22,7 @@
  * Copyright (c) 2005, 2010, Oracle and/or its affiliates. All rights reserved.
  * Copyright (c) 2013 by Delphix. All rights reserved.
  * Copyright (c) 2012, Joyent, Inc. All rights reserved.
+ * Portions Copyright (c) 2011 Martin Matuska <mm@FreeBSD.org>
  */
 
 #include <sys/dmu_objset.h>
@@ -265,7 +266,11 @@ dsl_dataset_evict(dmu_buf_t *db, void *dsv)
 
 	ASSERT(!list_link_active(&ds->ds_synced_link));
 
+	if (mutex_owned(&ds->ds_lock))
+		mutex_exit(&ds->ds_lock);
 	mutex_destroy(&ds->ds_lock);
+	if (mutex_owned(&ds->ds_opening_lock))
+		mutex_exit(&ds->ds_opening_lock);
 	mutex_destroy(&ds->ds_opening_lock);
 	refcount_destroy(&ds->ds_longholds);
 
@@ -679,8 +684,10 @@ dsl_dataset_create_sync_dd(dsl_dir_t *dd, dsl_dataset_t *origin,
 	dsphys->ds_dir_obj = dd->dd_object;
 	dsphys->ds_flags = flags;
 	dsphys->ds_fsid_guid = unique_create();
-	(void) random_get_pseudo_bytes((void*)&dsphys->ds_guid,
-	    sizeof (dsphys->ds_guid));
+	do {
+		(void) random_get_pseudo_bytes((void*)&dsphys->ds_guid,
+		    sizeof (dsphys->ds_guid));
+	} while (dsphys->ds_guid == 0);
 	dsphys->ds_snapnames_zapobj =
 	    zap_create_norm(mos, U8_TEXTPREP_TOUPPER, DMU_OT_DSL_DS_SNAP_MAP,
 	    DMU_OT_NONE, 0, tx);
@@ -793,6 +800,46 @@ dsl_dataset_create_sync(dsl_dir_t *pdd, const char *lastname,
 
 	return (dsobj);
 }
+
+#ifdef __FreeBSD__
+/* FreeBSD ioctl compat begin */
+struct destroyarg {
+	nvlist_t *nvl;
+	const char *snapname;
+};
+
+static int
+dsl_check_snap_cb(const char *name, void *arg)
+{
+	struct destroyarg *da = arg;
+	dsl_dataset_t *ds;
+	char *dsname;
+
+	dsname = kmem_asprintf("%s@%s", name, da->snapname);
+	fnvlist_add_boolean(da->nvl, dsname);
+	kmem_free(dsname, strlen(dsname) + 1);
+
+	return (0);
+}
+
+int
+dmu_get_recursive_snaps_nvl(char *fsname, const char *snapname,
+    nvlist_t *snaps)
+{
+	struct destroyarg *da;
+	int err;
+
+	da = kmem_zalloc(sizeof (struct destroyarg), KM_SLEEP);
+	da->nvl = snaps;
+	da->snapname = snapname;
+	err = dmu_objset_find(fsname, dsl_check_snap_cb, da,
+	    DS_FIND_CHILDREN);
+	kmem_free(da, sizeof (struct destroyarg));
+
+	return (err);
+}
+/* FreeBSD ioctl compat end */
+#endif /* __FreeBSD__ */
 
 /*
  * The unique space in the head dataset can be calculated by subtracting
@@ -1065,8 +1112,10 @@ dsl_dataset_snapshot_sync_impl(dsl_dataset_t *ds, const char *snapname,
 	bzero(dsphys, sizeof (dsl_dataset_phys_t));
 	dsphys->ds_dir_obj = ds->ds_dir->dd_object;
 	dsphys->ds_fsid_guid = unique_create();
-	(void) random_get_pseudo_bytes((void*)&dsphys->ds_guid,
-	    sizeof (dsphys->ds_guid));
+	do {
+		(void) random_get_pseudo_bytes((void*)&dsphys->ds_guid,
+		    sizeof (dsphys->ds_guid));
+	} while (dsphys->ds_guid == 0);
 	dsphys->ds_prev_snap_obj = ds->ds_phys->ds_prev_snap_obj;
 	dsphys->ds_prev_snap_txg = ds->ds_phys->ds_prev_snap_txg;
 	dsphys->ds_next_snap_obj = ds->ds_object;
@@ -1240,6 +1289,17 @@ dsl_dataset_snapshot(nvlist_t *snaps, nvlist_t *props, nvlist_t *errors)
 		fnvlist_free(suspended);
 	}
 
+#ifdef __FreeBSD__
+#ifdef _KERNEL
+	if (error == 0) {
+		for (pair = nvlist_next_nvpair(snaps, NULL); pair != NULL;
+		    pair = nvlist_next_nvpair(snaps, pair)) {
+			char *snapname = nvpair_name(pair);
+			zvol_create_minors(snapname);
+		}
+	}
+#endif
+#endif
 	return (error);
 }
 
@@ -1611,6 +1671,11 @@ static int
 dsl_dataset_rename_snapshot_sync_impl(dsl_pool_t *dp,
     dsl_dataset_t *hds, void *arg)
 {
+#ifdef __FreeBSD__
+#ifdef _KERNEL
+	char *oldname, *newname;
+#endif
+#endif
 	dsl_dataset_rename_snapshot_arg_t *ddrsa = arg;
 	dsl_dataset_t *ds;
 	uint64_t val;
@@ -1637,7 +1702,22 @@ dsl_dataset_rename_snapshot_sync_impl(dsl_pool_t *dp,
 	VERIFY0(zap_add(dp->dp_meta_objset, hds->ds_phys->ds_snapnames_zapobj,
 	    ds->ds_snapname, 8, 1, &ds->ds_object, tx));
 
+#ifdef __FreeBSD__
+#ifdef _KERNEL
+	oldname = kmem_alloc(MAXPATHLEN, KM_SLEEP);
+	newname = kmem_alloc(MAXPATHLEN, KM_SLEEP);
+	snprintf(oldname, MAXPATHLEN, "%s@%s", ddrsa->ddrsa_fsname,
+	    ddrsa->ddrsa_oldsnapname);
+	snprintf(newname, MAXPATHLEN, "%s@%s", ddrsa->ddrsa_fsname,
+	    ddrsa->ddrsa_newsnapname);
+	zfsvfs_update_fromname(oldname, newname);
+	zvol_rename_minors(oldname, newname);
+	kmem_free(newname, MAXPATHLEN);
+	kmem_free(oldname, MAXPATHLEN);
+#endif
+#endif
 	dsl_dataset_rele(ds, FTAG);
+
 	return (0);
 }
 

@@ -584,7 +584,7 @@ dsl_deleg_access_impl(dsl_dataset_t *ds, const char *perm, cred_t *cr)
 		 * If not in global zone then make sure
 		 * the zoned property is set
 		 */
-		if (!INGLOBALZONE(curproc)) {
+		if (!INGLOBALZONE(curthread)) {
 			uint64_t zoned;
 
 			if (dsl_prop_get_dd(dd,

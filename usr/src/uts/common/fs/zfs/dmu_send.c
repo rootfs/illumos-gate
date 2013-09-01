@@ -23,6 +23,7 @@
  * Copyright 2011 Nexenta Systems, Inc. All rights reserved.
  * Copyright (c) 2013 by Delphix. All rights reserved.
  * Copyright (c) 2012, Joyent, Inc. All rights reserved.
+ * Copyright (c) 2012, Martin Matuska <mm@FreeBSD.org>. All rights reserved.
  */
 
 #include <sys/dmu.h>
@@ -59,14 +60,29 @@ static int
 dump_bytes(dmu_sendarg_t *dsp, void *buf, int len)
 {
 	dsl_dataset_t *ds = dsp->dsa_os->os_dsl_dataset;
-	ssize_t resid; /* have to get resid to get detailed errno */
+	struct uio auio;
+	struct iovec aiov;
 	ASSERT0(len % 8);
 
 	fletcher_4_incremental_native(buf, len, &dsp->dsa_zc);
-	dsp->dsa_err = vn_rdwr(UIO_WRITE, dsp->dsa_vp,
-	    (caddr_t)buf, len,
-	    0, UIO_SYSSPACE, FAPPEND, RLIM64_INFINITY, CRED(), &resid);
-
+	aiov.iov_base = buf;
+	aiov.iov_len = len;
+	auio.uio_iov = &aiov;
+	auio.uio_iovcnt = 1;
+	auio.uio_resid = len;
+	auio.uio_segflg = UIO_SYSSPACE;
+	auio.uio_rw = UIO_WRITE;
+	auio.uio_offset = (off_t)-1;
+	auio.uio_td = dsp->dsa_td;
+#ifdef _KERNEL
+	if (dsp->dsa_fp->f_type == DTYPE_VNODE)
+		bwillwrite();
+	dsp->dsa_err = fo_write(dsp->dsa_fp, &auio, dsp->dsa_td->td_ucred, 0,
+	    dsp->dsa_td);
+#else
+	fprintf(stderr, "%s: returning EOPNOTSUPP\n", __func__);
+	dsp->dsa_err = EOPNOTSUPP;
+#endif
 	mutex_enter(&ds->ds_sendstream_lock);
 	*dsp->dsa_off += len;
 	mutex_exit(&ds->ds_sendstream_lock);
@@ -395,7 +411,11 @@ backup_cb(spa_t *spa, zilog_t *zilog, const blkptr_t *bp,
  */
 static int
 dmu_send_impl(void *tag, dsl_pool_t *dp, dsl_dataset_t *ds,
+#ifdef illumos
     dsl_dataset_t *fromds, int outfd, vnode_t *vp, offset_t *off)
+#else
+    dsl_dataset_t *fromds, int outfd, struct file *fp, offset_t *off)
+#endif
 {
 	objset_t *os;
 	dmu_replay_record_t *drr;
@@ -466,9 +486,10 @@ dmu_send_impl(void *tag, dsl_pool_t *dp, dsl_dataset_t *ds,
 	dsp = kmem_zalloc(sizeof (dmu_sendarg_t), KM_SLEEP);
 
 	dsp->dsa_drr = drr;
-	dsp->dsa_vp = vp;
 	dsp->dsa_outfd = outfd;
 	dsp->dsa_proc = curproc;
+	dsp->dsa_td = curthread;
+	dsp->dsa_fp = fp;
 	dsp->dsa_os = os;
 	dsp->dsa_off = off;
 	dsp->dsa_toguid = ds->ds_phys->ds_guid;
@@ -526,7 +547,11 @@ out:
 
 int
 dmu_send_obj(const char *pool, uint64_t tosnap, uint64_t fromsnap,
+#ifdef illumos
     int outfd, vnode_t *vp, offset_t *off)
+#else
+    int outfd, struct file *fp, offset_t *off)
+#endif
 {
 	dsl_pool_t *dp;
 	dsl_dataset_t *ds;
@@ -552,12 +577,16 @@ dmu_send_obj(const char *pool, uint64_t tosnap, uint64_t fromsnap,
 		}
 	}
 
-	return (dmu_send_impl(FTAG, dp, ds, fromds, outfd, vp, off));
+	return (dmu_send_impl(FTAG, dp, ds, fromds, outfd, fp, off));
 }
 
 int
 dmu_send(const char *tosnap, const char *fromsnap,
+#ifdef illumos
     int outfd, vnode_t *vp, offset_t *off)
+#else
+    int outfd, struct file *fp, offset_t *off)
+#endif
 {
 	dsl_pool_t *dp;
 	dsl_dataset_t *ds;
@@ -587,7 +616,7 @@ dmu_send(const char *tosnap, const char *fromsnap,
 			return (err);
 		}
 	}
-	return (dmu_send_impl(FTAG, dp, ds, fromds, outfd, vp, off));
+	return (dmu_send_impl(FTAG, dp, ds, fromds, outfd, fp, off));
 }
 
 int
@@ -924,7 +953,8 @@ dmu_recv_begin(char *tofs, char *tosnap, struct drr_begin *drrb,
 struct restorearg {
 	int err;
 	boolean_t byteswap;
-	vnode_t *vp;
+	kthread_t *td;
+	struct file *fp;
 	char *buf;
 	uint64_t voff;
 	int bufsize; /* amount of memory allocated for buf */
@@ -967,6 +997,32 @@ free_guid_map_onexit(void *arg)
 	kmem_free(ca, sizeof (avl_tree_t));
 }
 
+static int
+restore_bytes(struct restorearg *ra, void *buf, int len, off_t off, ssize_t *resid)
+{
+	struct uio auio;
+	struct iovec aiov;
+	int error;
+
+	aiov.iov_base = buf;
+	aiov.iov_len = len;
+	auio.uio_iov = &aiov;
+	auio.uio_iovcnt = 1;
+	auio.uio_resid = len;
+	auio.uio_segflg = UIO_SYSSPACE;
+	auio.uio_rw = UIO_READ;
+	auio.uio_offset = off;
+	auio.uio_td = ra->td;
+#ifdef _KERNEL
+	error = fo_read(ra->fp, &auio, ra->td->td_ucred, FOF_OFFSET, ra->td);
+#else
+	fprintf(stderr, "%s: returning EOPNOTSUPP\n", __func__);
+	error = EOPNOTSUPP;
+#endif
+	*resid = auio.uio_resid;
+	return (error);
+}
+
 static void *
 restore_read(struct restorearg *ra, int len)
 {
@@ -979,10 +1035,8 @@ restore_read(struct restorearg *ra, int len)
 	while (done < len) {
 		ssize_t resid;
 
-		ra->err = vn_rdwr(UIO_READ, ra->vp,
-		    (caddr_t)ra->buf + done, len - done,
-		    ra->voff, UIO_SYSSPACE, FAPPEND,
-		    RLIM64_INFINITY, CRED(), &resid);
+		ra->err = restore_bytes(ra, (caddr_t)ra->buf + done,
+		    len - done, ra->voff, &resid);
 
 		if (resid == len - done)
 			ra->err = SET_ERROR(EINVAL);
@@ -1371,7 +1425,7 @@ dmu_recv_cleanup_ds(dmu_recv_cookie_t *drc)
  * NB: callers *must* call dmu_recv_end() if this succeeds.
  */
 int
-dmu_recv_stream(dmu_recv_cookie_t *drc, vnode_t *vp, offset_t *voffp,
+dmu_recv_stream(dmu_recv_cookie_t *drc, struct file *fp, offset_t *voffp,
     int cleanup_fd, uint64_t *action_handlep)
 {
 	struct restorearg ra = { 0 };
@@ -1382,7 +1436,8 @@ dmu_recv_stream(dmu_recv_cookie_t *drc, vnode_t *vp, offset_t *voffp,
 
 	ra.byteswap = drc->drc_byteswap;
 	ra.cksum = drc->drc_cksum;
-	ra.vp = vp;
+	ra.td = curthread;
+	ra.fp = fp;
 	ra.voff = *voffp;
 	ra.bufsize = 1<<20;
 	ra.buf = kmem_alloc(ra.bufsize, KM_SLEEP);
@@ -1644,9 +1699,8 @@ add_ds_to_guidmap(const char *name, avl_tree_t *guid_map, uint64_t snapobj)
 		gmep->gme_ds = snapds;
 		avl_add(guid_map, gmep);
 		dsl_dataset_long_hold(snapds, gmep);
-	} else {
+	} else
 		kmem_free(gmep, sizeof (*gmep));
-	}
 
 	dsl_pool_rele(dp, FTAG);
 	return (err);

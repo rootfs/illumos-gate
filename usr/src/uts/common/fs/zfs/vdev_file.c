@@ -25,7 +25,6 @@
 
 #include <sys/zfs_context.h>
 #include <sys/spa.h>
-#include <sys/spa_impl.h>
 #include <sys/vdev_file.h>
 #include <sys/vdev_impl.h>
 #include <sys/zio.h>
@@ -55,7 +54,7 @@ vdev_file_open(vdev_t *vd, uint64_t *psize, uint64_t *max_psize,
 	vdev_file_t *vf;
 	vnode_t *vp;
 	vattr_t vattr;
-	int error;
+	int error, vfslocked;
 
 	/*
 	 * We must have a pathname, and it must be absolute.
@@ -72,6 +71,7 @@ vdev_file_open(vdev_t *vd, uint64_t *psize, uint64_t *max_psize,
 	if (vd->vdev_tsd != NULL) {
 		ASSERT(vd->vdev_reopening);
 		vf = vd->vdev_tsd;
+		vp = vf->vf_vnode;
 		goto skip_open;
 	}
 
@@ -89,6 +89,8 @@ vdev_file_open(vdev_t *vd, uint64_t *psize, uint64_t *max_psize,
 
 	if (error) {
 		vd->vdev_stat.vs_aux = VDEV_AUX_OPEN_FAILED;
+		kmem_free(vd->vdev_tsd, sizeof (vdev_file_t));
+		vd->vdev_tsd = NULL;
 		return (error);
 	}
 
@@ -99,19 +101,33 @@ vdev_file_open(vdev_t *vd, uint64_t *psize, uint64_t *max_psize,
 	 * Make sure it's a regular file.
 	 */
 	if (vp->v_type != VREG) {
+#ifdef __FreeBSD__
+		(void) VOP_CLOSE(vp, spa_mode(vd->vdev_spa), 1, 0, kcred, NULL);
+#endif
 		vd->vdev_stat.vs_aux = VDEV_AUX_OPEN_FAILED;
+#ifdef __FreeBSD__
+		kmem_free(vd->vdev_tsd, sizeof (vdev_file_t));
+		vd->vdev_tsd = NULL;
+#endif
 		return (SET_ERROR(ENODEV));
 	}
-#endif
+#endif	/* _KERNEL */
 
 skip_open:
 	/*
 	 * Determine the physical size of the file.
 	 */
 	vattr.va_mask = AT_SIZE;
-	error = VOP_GETATTR(vf->vf_vnode, &vattr, 0, kcred, NULL);
+	vfslocked = VFS_LOCK_GIANT(vp->v_mount);
+	vn_lock(vp, LK_SHARED | LK_RETRY);
+	error = VOP_GETATTR(vp, &vattr, kcred);
+	VOP_UNLOCK(vp, 0);
+	VFS_UNLOCK_GIANT(vfslocked);
 	if (error) {
+		(void) VOP_CLOSE(vp, spa_mode(vd->vdev_spa), 1, 0, kcred, NULL);
 		vd->vdev_stat.vs_aux = VDEV_AUX_OPEN_FAILED;
+		kmem_free(vd->vdev_tsd, sizeof (vdev_file_t));
+		vd->vdev_tsd = NULL;
 		return (error);
 	}
 
@@ -130,10 +146,8 @@ vdev_file_close(vdev_t *vd)
 		return;
 
 	if (vf->vf_vnode != NULL) {
-		(void) VOP_PUTPAGE(vf->vf_vnode, 0, 0, B_INVAL, kcred, NULL);
 		(void) VOP_CLOSE(vf->vf_vnode, spa_mode(vd->vdev_spa), 1, 0,
 		    kcred, NULL);
-		VN_RELE(vf->vf_vnode);
 	}
 
 	vd->vdev_delayed_close = B_FALSE;
@@ -141,66 +155,26 @@ vdev_file_close(vdev_t *vd)
 	vd->vdev_tsd = NULL;
 }
 
-/*
- * Implements the interrupt side for file vdev types. This routine will be
- * called when the I/O completes allowing us to transfer the I/O to the
- * interrupt taskqs. For consistency, the code structure mimics disk vdev
- * types.
- */
-static void
-vdev_file_io_intr(buf_t *bp)
-{
-	vdev_buf_t *vb = (vdev_buf_t *)bp;
-	zio_t *zio = vb->vb_io;
-
-	zio->io_error = (geterror(bp) != 0 ? EIO : 0);
-	if (zio->io_error == 0 && bp->b_resid != 0)
-		zio->io_error = SET_ERROR(ENOSPC);
-
-	kmem_free(vb, sizeof (vdev_buf_t));
-	zio_interrupt(zio);
-}
-
-static void
-vdev_file_io_strategy(void *arg)
-{
-	buf_t *bp = arg;
-	vnode_t *vp = bp->b_private;
-	ssize_t resid;
-	int error;
-
-	error = vn_rdwr((bp->b_flags & B_READ) ? UIO_READ : UIO_WRITE,
-	    vp, bp->b_un.b_addr, bp->b_bcount, ldbtob(bp->b_lblkno),
-	    UIO_SYSSPACE, 0, RLIM64_INFINITY, kcred, &resid);
-
-	if (error == 0) {
-		bp->b_resid = resid;
-		biodone(bp);
-	} else {
-		bioerror(bp, error);
-		biodone(bp);
-	}
-}
-
 static int
 vdev_file_io_start(zio_t *zio)
 {
-	spa_t *spa = zio->io_spa;
 	vdev_t *vd = zio->io_vd;
-	vdev_file_t *vf = vd->vdev_tsd;
-	vdev_buf_t *vb;
-	buf_t *bp;
+	vdev_file_t *vf;
+	vnode_t *vp;
+	ssize_t resid;
+
+	if (!vdev_readable(vd)) {
+		zio->io_error = SET_ERROR(ENXIO);
+		return (ZIO_PIPELINE_CONTINUE);
+	}
+
+	vf = vd->vdev_tsd;
+	vp = vf->vf_vnode;
 
 	if (zio->io_type == ZIO_TYPE_IOCTL) {
-		/* XXPOLICY */
-		if (!vdev_readable(vd)) {
-			zio->io_error = SET_ERROR(ENXIO);
-			return (ZIO_PIPELINE_CONTINUE);
-		}
-
 		switch (zio->io_cmd) {
 		case DKIOCFLUSHWRITECACHE:
-			zio->io_error = VOP_FSYNC(vf->vf_vnode, FSYNC | FDSYNC,
+			zio->io_error = VOP_FSYNC(vp, FSYNC | FDSYNC,
 			    kcred, NULL);
 			break;
 		default:
@@ -210,22 +184,14 @@ vdev_file_io_start(zio_t *zio)
 		return (ZIO_PIPELINE_CONTINUE);
 	}
 
-	vb = kmem_alloc(sizeof (vdev_buf_t), KM_SLEEP);
+	zio->io_error = vn_rdwr(zio->io_type == ZIO_TYPE_READ ?
+	    UIO_READ : UIO_WRITE, vp, zio->io_data, zio->io_size,
+	    zio->io_offset, UIO_SYSSPACE, 0, RLIM64_INFINITY, kcred, &resid);
 
-	vb->vb_io = zio;
-	bp = &vb->vb_buf;
+	if (resid != 0 && zio->io_error == 0)
+		zio->io_error = ENOSPC;
 
-	bioinit(bp);
-	bp->b_flags = (zio->io_type == ZIO_TYPE_READ ? B_READ : B_WRITE);
-	bp->b_bcount = zio->io_size;
-	bp->b_un.b_addr = zio->io_data;
-	bp->b_lblkno = lbtodb(zio->io_offset);
-	bp->b_bufsize = zio->io_size;
-	bp->b_private = vf->vf_vnode;
-	bp->b_iodone = (int (*)())vdev_file_io_intr;
-
-	spa_taskq_dispatch_ent(spa, ZIO_TYPE_FREE, ZIO_TASKQ_ISSUE,
-	    vdev_file_io_strategy, bp, 0, &zio->io_tqent);
+	zio_interrupt(zio);
 
 	return (ZIO_PIPELINE_STOP);
 }

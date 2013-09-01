@@ -167,13 +167,19 @@ space_map_add(space_map_t *sm, uint64_t start, uint64_t size)
 void
 space_map_remove(space_map_t *sm, uint64_t start, uint64_t size)
 {
+#ifdef illumos
 	avl_index_t where;
+#endif
 	space_seg_t *ss, *newseg;
 	uint64_t end = start + size;
 	int left_over, right_over;
 
 	VERIFY(!sm->sm_condensing);
+#ifdef illumos
 	ss = space_map_find(sm, start, size, &where);
+#else
+	ss = space_map_find(sm, start, size, NULL);
+#endif
 
 	/* Make sure we completely overlap with someone */
 	if (ss == NULL) {
@@ -184,7 +190,7 @@ space_map_remove(space_map_t *sm, uint64_t start, uint64_t size)
 	}
 	VERIFY3U(ss->ss_start, <=, start);
 	VERIFY3U(ss->ss_end, >=, end);
-	VERIFY(sm->sm_space - size <= sm->sm_size);
+	VERIFY(sm->sm_space - size < sm->sm_size);
 
 	left_over = (ss->ss_start != start);
 	right_over = (ss->ss_end != end);

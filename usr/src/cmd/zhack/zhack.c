@@ -282,7 +282,7 @@ feature_enable_sync(void *arg, dmu_tx_t *tx)
 
 	spa_feature_enable(spa, feature, tx);
 	spa_history_log_internal(spa, "zhack enable feature", tx,
-	    "guid=%s can_readonly=%u",
+	    "name=%s can_readonly=%u",
 	    feature->fi_guid, feature->fi_can_readonly);
 }
 
@@ -362,7 +362,7 @@ feature_incr_sync(void *arg, dmu_tx_t *tx)
 
 	spa_feature_incr(spa, feature, tx);
 	spa_history_log_internal(spa, "zhack feature incr", tx,
-	    "guid=%s", feature->fi_guid);
+	    "name=%s", feature->fi_guid);
 }
 
 static void
@@ -373,7 +373,7 @@ feature_decr_sync(void *arg, dmu_tx_t *tx)
 
 	spa_feature_decr(spa, feature, tx);
 	spa_history_log_internal(spa, "zhack feature decr", tx,
-	    "guid=%s", feature->fi_guid);
+	    "name=%s", feature->fi_guid);
 }
 
 static void

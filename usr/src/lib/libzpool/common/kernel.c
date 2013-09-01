@@ -20,7 +20,6 @@
  */
 /*
  * Copyright (c) 2005, 2010, Oracle and/or its affiliates. All rights reserved.
- * Copyright (c) 2012 by Delphix. All rights reserved.
  */
 
 #include <assert.h>
@@ -47,8 +46,9 @@ int aok;
 uint64_t physmem;
 vnode_t *rootdir = (vnode_t *)0xabcd1234;
 char hw_serial[HW_HOSTID_LEN];
+#ifdef illumos
 kmutex_t cpu_lock;
-vmem_t *zio_arena = NULL;
+#endif
 
 struct utsname utsname = {
 	"userland", "libzpool", "1", "1", "na"
@@ -81,8 +81,8 @@ zk_thread_create(void (*func)(), void *arg)
  */
 /*ARGSUSED*/
 kstat_t *
-kstat_create(const char *module, int instance, const char *name,
-    const char *class, uchar_t type, ulong_t ndata, uchar_t ks_flag)
+kstat_create(char *module, int instance, char *name, char *class,
+    uchar_t type, ulong_t ndata, uchar_t ks_flag)
 {
 	return (NULL);
 }
@@ -95,36 +95,6 @@ kstat_install(kstat_t *ksp)
 /*ARGSUSED*/
 void
 kstat_delete(kstat_t *ksp)
-{}
-
-/*ARGSUSED*/
-void
-kstat_waitq_enter(kstat_io_t *kiop)
-{}
-
-/*ARGSUSED*/
-void
-kstat_waitq_exit(kstat_io_t *kiop)
-{}
-
-/*ARGSUSED*/
-void
-kstat_runq_enter(kstat_io_t *kiop)
-{}
-
-/*ARGSUSED*/
-void
-kstat_runq_exit(kstat_io_t *kiop)
-{}
-
-/*ARGSUSED*/
-void
-kstat_waitq_to_runq(kstat_io_t *kiop)
-{}
-
-/*ARGSUSED*/
-void
-kstat_runq_back_to_waitq(kstat_io_t *kiop)
 {}
 
 /*
@@ -148,6 +118,14 @@ zmutex_destroy(kmutex_t *mp)
 	(void) _mutex_destroy(&(mp)->m_lock);
 	mp->m_owner = (void *)-1UL;
 	mp->initialized = B_FALSE;
+}
+
+int
+zmutex_owned(kmutex_t *mp)
+{
+	ASSERT(mp->initialized == B_TRUE);
+
+	return (mp->m_owner == curthread);
 }
 
 void
@@ -203,11 +181,13 @@ rw_init(krwlock_t *rwlp, char *name, int type, void *arg)
 	rwlock_init(&rwlp->rw_lock, USYNC_THREAD, NULL);
 	rwlp->rw_owner = NULL;
 	rwlp->initialized = B_TRUE;
+	rwlp->rw_count = 0;
 }
 
 void
 rw_destroy(krwlock_t *rwlp)
 {
+	ASSERT(rwlp->rw_count == 0);
 	rwlock_destroy(&rwlp->rw_lock);
 	rwlp->rw_owner = (void *)-1UL;
 	rwlp->initialized = B_FALSE;
@@ -216,17 +196,21 @@ rw_destroy(krwlock_t *rwlp)
 void
 rw_enter(krwlock_t *rwlp, krw_t rw)
 {
-	ASSERT(!RW_LOCK_HELD(rwlp));
+	//ASSERT(!RW_LOCK_HELD(rwlp));
 	ASSERT(rwlp->initialized == B_TRUE);
 	ASSERT(rwlp->rw_owner != (void *)-1UL);
 	ASSERT(rwlp->rw_owner != curthread);
 
-	if (rw == RW_READER)
+	if (rw == RW_READER) {
 		VERIFY(rw_rdlock(&rwlp->rw_lock) == 0);
-	else
+		ASSERT(rwlp->rw_count >= 0);
+		atomic_add_int(&rwlp->rw_count, 1);
+	} else {
 		VERIFY(rw_wrlock(&rwlp->rw_lock) == 0);
-
-	rwlp->rw_owner = curthread;
+		ASSERT(rwlp->rw_count == 0);
+		rwlp->rw_count = -1;
+		rwlp->rw_owner = curthread;
+	}
 }
 
 void
@@ -235,7 +219,16 @@ rw_exit(krwlock_t *rwlp)
 	ASSERT(rwlp->initialized == B_TRUE);
 	ASSERT(rwlp->rw_owner != (void *)-1UL);
 
-	rwlp->rw_owner = NULL;
+	if (rwlp->rw_owner == curthread) {
+		/* Write locked. */
+		ASSERT(rwlp->rw_count == -1);
+		rwlp->rw_count = 0;
+		rwlp->rw_owner = NULL;
+	} else {
+		/* Read locked. */
+		ASSERT(rwlp->rw_count > 0);
+		atomic_add_int(&rwlp->rw_count, -1);
+	}
 	VERIFY(rw_unlock(&rwlp->rw_lock) == 0);
 }
 
@@ -246,6 +239,7 @@ rw_tryenter(krwlock_t *rwlp, krw_t rw)
 
 	ASSERT(rwlp->initialized == B_TRUE);
 	ASSERT(rwlp->rw_owner != (void *)-1UL);
+	ASSERT(rwlp->rw_owner != curthread);
 
 	if (rw == RW_READER)
 		rv = rw_tryrdlock(&rwlp->rw_lock);
@@ -253,7 +247,15 @@ rw_tryenter(krwlock_t *rwlp, krw_t rw)
 		rv = rw_trywrlock(&rwlp->rw_lock);
 
 	if (rv == 0) {
-		rwlp->rw_owner = curthread;
+		ASSERT(rwlp->rw_owner == NULL);
+		if (rw == RW_READER) {
+			ASSERT(rwlp->rw_count >= 0);
+			atomic_add_int(&rwlp->rw_count, 1);
+		} else {
+			ASSERT(rwlp->rw_count == 0);
+			rwlp->rw_count = -1;
+			rwlp->rw_owner = curthread;
+		}
 		return (1);
 	}
 
@@ -270,6 +272,13 @@ rw_tryupgrade(krwlock_t *rwlp)
 	return (0);
 }
 
+int
+rw_lock_held(krwlock_t *rwlp)
+{
+
+	return (rwlp->rw_count != 0);
+}
+
 /*
  * =========================================================================
  * condition variables
@@ -279,7 +288,7 @@ rw_tryupgrade(krwlock_t *rwlp)
 void
 cv_init(kcondvar_t *cv, char *name, int type, void *arg)
 {
-	VERIFY(cond_init(cv, type, NULL) == 0);
+	VERIFY(cond_init(cv, name, NULL) == 0);
 }
 
 void
@@ -302,62 +311,38 @@ clock_t
 cv_timedwait(kcondvar_t *cv, kmutex_t *mp, clock_t abstime)
 {
 	int error;
-	timestruc_t ts;
+	struct timespec ts;
+	struct timeval tv;
 	clock_t delta;
 
+	abstime += ddi_get_lbolt();
 top:
 	delta = abstime - ddi_get_lbolt();
 	if (delta <= 0)
 		return (-1);
 
-	ts.tv_sec = delta / hz;
-	ts.tv_nsec = (delta % hz) * (NANOSEC / hz);
+	if (gettimeofday(&tv, NULL) != 0)
+		assert(!"gettimeofday() failed");
+
+	ts.tv_sec = tv.tv_sec + delta / hz;
+	ts.tv_nsec = tv.tv_usec * 1000 + (delta % hz) * (NANOSEC / hz);
+	ASSERT(ts.tv_nsec >= 0);
+
+	if (ts.tv_nsec >= NANOSEC) {
+		ts.tv_sec++;
+		ts.tv_nsec -= NANOSEC;
+	}
 
 	ASSERT(mutex_owner(mp) == curthread);
 	mp->m_owner = NULL;
-	error = cond_reltimedwait(cv, &mp->m_lock, &ts);
+	error = pthread_cond_timedwait(cv, &mp->m_lock, &ts);
 	mp->m_owner = curthread;
-
-	if (error == ETIME)
-		return (-1);
 
 	if (error == EINTR)
 		goto top;
 
-	ASSERT(error == 0);
-
-	return (1);
-}
-
-/*ARGSUSED*/
-clock_t
-cv_timedwait_hires(kcondvar_t *cv, kmutex_t *mp, hrtime_t tim, hrtime_t res,
-    int flag)
-{
-	int error;
-	timestruc_t ts;
-	hrtime_t delta;
-
-	ASSERT(flag == 0);
-
-top:
-	delta = tim - gethrtime();
-	if (delta <= 0)
+	if (error == ETIMEDOUT)
 		return (-1);
-
-	ts.tv_sec = delta / NANOSEC;
-	ts.tv_nsec = delta % NANOSEC;
-
-	ASSERT(mutex_owner(mp) == curthread);
-	mp->m_owner = NULL;
-	error = cond_reltimedwait(cv, &mp->m_lock, &ts);
-	mp->m_owner = curthread;
-
-	if (error == ETIME)
-		return (-1);
-
-	if (error == EINTR)
-		goto top;
 
 	ASSERT(error == 0);
 
@@ -511,7 +496,7 @@ vn_rdwr(int uio, vnode_t *vp, void *addr, ssize_t len, offset_t offset,
 }
 
 void
-vn_close(vnode_t *vp)
+vn_close(vnode_t *vp, int openflag, cred_t *cr, kthread_t *td)
 {
 	close(vp->v_fd);
 	spa_strfree(vp->v_path);
@@ -636,8 +621,10 @@ __dprintf(const char *file, const char *func, int line, const char *fmt, ...)
 			(void) printf("%d ", getpid());
 		if (dprintf_find_string("tid"))
 			(void) printf("%u ", thr_self());
+#if 0
 		if (dprintf_find_string("cpu"))
 			(void) printf("%u ", getcpuid());
+#endif
 		if (dprintf_find_string("time"))
 			(void) printf("%llu ", gethrtime());
 		if (dprintf_find_string("long"))
@@ -738,7 +725,7 @@ kobj_read_file(struct _buf *file, char *buf, unsigned size, unsigned off)
 void
 kobj_close_file(struct _buf *file)
 {
-	vn_close((vnode_t *)file->_fd);
+	vn_close((vnode_t *)file->_fd, 0, NULL, NULL);
 	umem_free(file, sizeof (struct _buf));
 }
 
@@ -749,7 +736,7 @@ kobj_get_filesize(struct _buf *file, uint64_t *size)
 	vnode_t *vp = (vnode_t *)file->_fd;
 
 	if (fstat64(vp->v_fd, &st) == -1) {
-		vn_close(vp);
+		vn_close(vp, 0, NULL, NULL);
 		return (errno);
 	}
 	*size = st.st_size;
@@ -768,6 +755,7 @@ delay(clock_t ticks)
 	poll(0, 0, ticks * (1000 / hz));
 }
 
+#if 0
 /*
  * Find highest one bit set.
  *	Returns bit number + 1 of highest bit that is set, otherwise returns 0.
@@ -802,6 +790,7 @@ highbit(ulong_t i)
 	}
 	return (h);
 }
+#endif
 
 static int random_fd = -1, urandom_fd = -1;
 
@@ -857,6 +846,7 @@ ddi_strtoull(const char *str, char **nptr, int base, u_longlong_t *result)
 	return (0);
 }
 
+#ifdef illumos
 /* ARGSUSED */
 cyclic_id_t
 cyclic_add(cyc_handler_t *hdlr, cyc_time_t *when)
@@ -876,6 +866,7 @@ cyclic_reprogram(cyclic_id_t id, hrtime_t expiration)
 {
 	return (1);
 }
+#endif
 
 /*
  * =========================================================================
@@ -904,15 +895,17 @@ kernel_init(int mode)
 	dprintf("physmem = %llu pages (%.2f GB)\n", physmem,
 	    (double)physmem * sysconf(_SC_PAGE_SIZE) / (1ULL << 30));
 
-	(void) snprintf(hw_serial, sizeof (hw_serial), "%ld",
-	    (mode & FWRITE) ? gethostid() : 0);
+	(void) snprintf(hw_serial, sizeof (hw_serial), "%lu",
+	    (mode & FWRITE) ? (unsigned long)gethostid() : 0);
 
 	VERIFY((random_fd = open("/dev/random", O_RDONLY)) != -1);
 	VERIFY((urandom_fd = open("/dev/urandom", O_RDONLY)) != -1);
 
 	system_taskq_init();
 
+#ifdef illumos
 	mutex_init(&cpu_lock, NULL, MUTEX_DEFAULT, NULL);
+#endif
 
 	spa_init(mode);
 
@@ -1083,47 +1076,11 @@ zfs_onexit_cb_data(minor_t minor, uint64_t action_handle, void **data)
 	return (0);
 }
 
-void
-bioinit(buf_t *bp)
-{
-	bzero(bp, sizeof (buf_t));
-}
-
-void
-biodone(buf_t *bp)
-{
-	if (bp->b_iodone != NULL) {
-		(*(bp->b_iodone))(bp);
-		return;
-	}
-	ASSERT((bp->b_flags & B_DONE) == 0);
-	bp->b_flags |= B_DONE;
-}
-
-void
-bioerror(buf_t *bp, int error)
-{
-	ASSERT(bp != NULL);
-	ASSERT(error >= 0);
-
-	if (error != 0) {
-		bp->b_flags |= B_ERROR;
-	} else {
-		bp->b_flags &= ~B_ERROR;
-	}
-	bp->b_error = error;
-}
-
-
+#ifdef __FreeBSD__
+/* ARGSUSED */
 int
-geterror(struct buf *bp)
+zvol_create_minors(const char *name)
 {
-	int error = 0;
-
-	if (bp->b_flags & B_ERROR) {
-		error = bp->b_error;
-		if (!error)
-			error = EIO;
-	}
-	return (error);
+	return (0);
 }
+#endif

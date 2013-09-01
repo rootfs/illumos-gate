@@ -2,8 +2,9 @@
  * CDDL HEADER START
  *
  * The contents of this file are subject to the terms of the
- * Common Development and Distribution License (the "License").
- * You may not use this file except in compliance with the License.
+ * Common Development and Distribution License, Version 1.0 only
+ * (the "License").  You may not use this file except in compliance
+ * with the License.
  *
  * You can obtain a copy of the license at usr/src/OPENSOLARIS.LICENSE
  * or http://www.opensolaris.org/os/licensing.
@@ -20,10 +21,11 @@
  */
 
 /*
- * Copyright (c) 2003, 2010, Oracle and/or its affiliates. All rights reserved.
+ * Copyright 2006 Sun Microsystems, Inc.  All rights reserved.
  * Copyright (c) 2011, Joyent Inc. All rights reserved.
- * Copyright (c) 2012 by Delphix. All rights reserved.
  */
+
+#pragma ident	"%Z%%M%	%I%	%E% SMI"
 
 /*
  * DTrace D Language Parser
@@ -94,12 +96,13 @@
  */
 
 #include <sys/param.h>
-#include <sys/sysmacros.h>
 #include <limits.h>
 #include <setjmp.h>
 #include <strings.h>
 #include <assert.h>
+#if defined(sun)
 #include <alloca.h>
+#endif
 #include <stdlib.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -471,9 +474,9 @@ dt_node_name(const dt_node_t *dnp, char *buf, size_t len)
 	case DT_NODE_XLATOR:
 		(void) snprintf(buf, len, "translator <%s> (%s)",
 		    dt_type_name(dnp->dn_xlator->dx_dst_ctfp,
-		    dnp->dn_xlator->dx_dst_type, n1, sizeof (n1)),
+			dnp->dn_xlator->dx_dst_type, n1, sizeof (n1)),
 		    dt_type_name(dnp->dn_xlator->dx_src_ctfp,
-		    dnp->dn_xlator->dx_src_type, n2, sizeof (n2)));
+			dnp->dn_xlator->dx_src_type, n2, sizeof (n2)));
 		break;
 	case DT_NODE_PROG:
 		(void) snprintf(buf, len, "%s", "program");
@@ -1446,9 +1449,9 @@ dt_node_decl(void)
 			    "\t current: %s\n\tprevious: %s\n",
 			    dmp->dm_name, dsp->ds_ident,
 			    dt_type_name(dtt.dtt_ctfp, dtt.dtt_type,
-			    n1, sizeof (n1)),
+				n1, sizeof (n1)),
 			    dt_type_name(ott.dtt_ctfp, ott.dtt_type,
-			    n2, sizeof (n2)));
+				n2, sizeof (n2)));
 		} else if (!exists && dt_module_extern(dtp, dmp,
 		    dsp->ds_ident, &dtt) == NULL) {
 			xyerror(D_UNKNOWN,
@@ -1458,7 +1461,7 @@ dt_node_decl(void)
 			dt_dprintf("extern %s`%s type=<%s>\n",
 			    dmp->dm_name, dsp->ds_ident,
 			    dt_type_name(dtt.dtt_ctfp, dtt.dtt_type,
-			    n1, sizeof (n1)));
+				n1, sizeof (n1)));
 		}
 		break;
 	}
@@ -1762,7 +1765,8 @@ dt_node_offsetof(dt_decl_t *ddp, char *s)
 	ctf_id_t type;
 	uint_t kind;
 
-	name = strdupa(s);
+	name = alloca(strlen(s) + 1);
+	(void) strcpy(name, s);
 	free(s);
 
 	err = dt_decl_type(ddp, &dtt);
@@ -1856,38 +1860,6 @@ dt_node_op1(int op, dt_node_t *cp)
 	dnp->dn_child = cp;
 
 	return (dnp);
-}
-
-/*
- * If an integer constant is being cast to another integer type, we can
- * perform the cast as part of integer constant folding in this pass. We must
- * take action when the integer is being cast to a smaller type or if it is
- * changing signed-ness. If so, we first shift rp's bits bits high (losing
- * excess bits if narrowing) and then shift them down with either a logical
- * shift (unsigned) or arithmetic shift (signed).
- */
-static void
-dt_cast(dt_node_t *lp, dt_node_t *rp)
-{
-	size_t srcsize = dt_node_type_size(rp);
-	size_t dstsize = dt_node_type_size(lp);
-
-	if (dstsize < srcsize) {
-		int n = (sizeof (uint64_t) - dstsize) * NBBY;
-		rp->dn_value <<= n;
-		rp->dn_value >>= n;
-	} else if (dstsize > srcsize) {
-		int n = (sizeof (uint64_t) - srcsize) * NBBY;
-		int s = (dstsize - srcsize) * NBBY;
-
-		rp->dn_value <<= n;
-		if (rp->dn_flags & DT_NF_SIGNED) {
-			rp->dn_value = (intmax_t)rp->dn_value >> s;
-			rp->dn_value >>= n - s;
-		} else {
-			rp->dn_value >>= n;
-		}
-	}
 }
 
 dt_node_t *
@@ -2039,9 +2011,32 @@ dt_node_op2(int op, dt_node_t *lp, dt_node_t *rp)
 		}
 	}
 
+	/*
+	 * If an integer constant is being cast to another integer type, we can
+	 * perform the cast as part of integer constant folding in this pass.
+	 * We must take action when the integer is being cast to a smaller type
+	 * or if it is changing signed-ness.  If so, we first shift rp's bits
+	 * bits high (losing excess bits if narrowing) and then shift them down
+	 * with either a logical shift (unsigned) or arithmetic shift (signed).
+	 */
 	if (op == DT_TOK_LPAR && rp->dn_kind == DT_NODE_INT &&
 	    dt_node_is_integer(lp)) {
-		dt_cast(lp, rp);
+		size_t srcsize = dt_node_type_size(rp);
+		size_t dstsize = dt_node_type_size(lp);
+
+		if ((dstsize < srcsize) || ((lp->dn_flags & DT_NF_SIGNED) ^
+		    (rp->dn_flags & DT_NF_SIGNED))) {
+			int n = dstsize < srcsize ?
+			    (sizeof (uint64_t) * NBBY - dstsize * NBBY) :
+			    (sizeof (uint64_t) * NBBY - srcsize * NBBY);
+
+			rp->dn_value <<= n;
+			if (lp->dn_flags & DT_NF_SIGNED)
+				rp->dn_value = (intmax_t)rp->dn_value >> n;
+			else
+				rp->dn_value = rp->dn_value >> n;
+		}
+
 		dt_node_type_propagate(lp, rp);
 		dt_node_attr_assign(rp, dt_attr_min(lp->dn_attr, rp->dn_attr));
 		dt_node_free(lp);
@@ -2900,14 +2895,14 @@ dt_cook_op1(dt_node_t *dnp, uint_t idflags)
 	case DT_TOK_DEREF:
 		/*
 		 * If the deref operator is applied to a translated pointer,
-		 * we set our output type to the output of the translation.
+		 * we can just set our output type to the base translation.
 		 */
 		if ((idp = dt_node_resolve(cp, DT_IDENT_XLPTR)) != NULL) {
 			dt_xlator_t *dxp = idp->di_data;
 
 			dnp->dn_ident = &dxp->dx_souid;
 			dt_node_type_assign(dnp,
-			    dnp->dn_ident->di_ctfp, dnp->dn_ident->di_type);
+			    DT_DYN_CTFP(dtp), DT_DYN_TYPE(dtp));
 			break;
 		}
 
@@ -3081,31 +3076,6 @@ dt_cook_op1(dt_node_t *dnp, uint_t idflags)
 
 	dt_node_attr_assign(dnp, cp->dn_attr);
 	return (dnp);
-}
-
-static void
-dt_assign_common(dt_node_t *dnp)
-{
-	dt_node_t *lp = dnp->dn_left;
-	dt_node_t *rp = dnp->dn_right;
-	int op = dnp->dn_op;
-
-	if (rp->dn_kind == DT_NODE_INT)
-		dt_cast(lp, rp);
-
-	if (!(lp->dn_flags & DT_NF_LVALUE)) {
-		xyerror(D_OP_LVAL, "operator %s requires modifiable "
-		    "lvalue as an operand\n", opstr(op));
-		/* see K&R[A7.17] */
-	}
-
-	if (!(lp->dn_flags & DT_NF_WRITABLE)) {
-		xyerror(D_OP_WRITE, "operator %s can only be applied "
-		    "to a writable variable\n", opstr(op));
-	}
-
-	dt_node_type_propagate(lp, dnp); /* see K&R[A7.17] */
-	dt_node_attr_assign(dnp, dt_attr_min(lp->dn_attr, rp->dn_attr));
 }
 
 static dt_node_t *
@@ -3586,7 +3556,19 @@ dt_cook_op2(dt_node_t *dnp, uint_t idflags)
 			}
 		}
 asgn_common:
-		dt_assign_common(dnp);
+		if (!(lp->dn_flags & DT_NF_LVALUE)) {
+			xyerror(D_OP_LVAL, "operator %s requires modifiable "
+			    "lvalue as an operand\n", opstr(op));
+			/* see K&R[A7.17] */
+		}
+
+		if (!(lp->dn_flags & DT_NF_WRITABLE)) {
+			xyerror(D_OP_WRITE, "operator %s can only be applied "
+			    "to a writable variable\n", opstr(op));
+		}
+
+		dt_node_type_propagate(lp, dnp); /* see K&R[A7.17] */
+		dt_node_attr_assign(dnp, dt_attr_min(lp->dn_attr, rp->dn_attr));
 		break;
 
 	case DT_TOK_PTR:
@@ -3891,14 +3873,6 @@ asgn_common:
 
 		dt_node_type_propagate(lp, dnp); /* see K&R[A7.5] */
 		dt_node_attr_assign(dnp, dt_attr_min(lp->dn_attr, rp->dn_attr));
-
-		/*
-		 * If it's a pointer then should be able to (attempt to)
-		 * assign to it.
-		 */
-		if (lkind == CTF_K_POINTER)
-			dnp->dn_flags |= DT_NF_WRITABLE;
-
 		break;
 	}
 

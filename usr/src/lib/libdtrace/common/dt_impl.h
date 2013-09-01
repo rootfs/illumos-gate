@@ -26,7 +26,7 @@
 
 /*
  * Copyright (c) 2011, Joyent, Inc. All rights reserved.
- * Copyright (c) 2012 by Delphix. All rights reserved.
+ * Copyright (c) 2011 by Delphix. All rights reserved.
  */
 
 #ifndef	_DT_IMPL_H
@@ -34,11 +34,20 @@
 
 #include <sys/param.h>
 #include <sys/objfs.h>
+#if !defined(sun)
+#include <sys/bitmap.h>
+#include <sys/utsname.h>
+#include <sys/ioccom.h>
+#include <sys/time.h>
+#include <string.h>
+#endif
 #include <setjmp.h>
 #include <libctf.h>
 #include <dtrace.h>
 #include <gelf.h>
+#if defined(sun)
 #include <synch.h>
+#endif
 
 #ifdef	__cplusplus
 extern "C" {
@@ -55,7 +64,6 @@ extern "C" {
 #include <dt_proc.h>
 #include <dt_dof.h>
 #include <dt_pcb.h>
-#include <dt_pq.h>
 
 struct dt_module;		/* see below */
 struct dt_pfdict;		/* see <dt_printf.h> */
@@ -133,6 +141,10 @@ typedef struct dt_module {
 	GElf_Addr dm_bss_va;	/* virtual address of BSS */
 	GElf_Xword dm_bss_size;	/* size in bytes of BSS */
 	dt_idhash_t *dm_extern;	/* external symbol definitions */
+#if !defined(sun)
+	caddr_t dm_reloc_offset;	/* Symbol relocation offset. */
+	uintptr_t *dm_sec_offsets;
+#endif
 } dt_module_t;
 
 #define	DT_DM_LOADED	0x1	/* module symbol and type data is loaded */
@@ -227,7 +239,6 @@ struct dtrace_hdl {
 	uint_t dt_provbuckets;	/* number of provider hash buckets */
 	uint_t dt_nprovs;	/* number of providers in hash and list */
 	dt_proc_hash_t *dt_procs; /* hash table of grabbed process handles */
-	char **dt_proc_env;	/* additional environment variables */
 	dt_intdesc_t dt_ints[6]; /* cached integer type descriptions */
 	ctf_id_t dt_type_func;	/* cached CTF identifier for function type */
 	ctf_id_t dt_type_fptr;	/* cached CTF identifier for function pointer */
@@ -246,7 +257,7 @@ struct dtrace_hdl {
 	int dt_maxstrdata;	/* max strdata ID */
 	char **dt_strdata;	/* pointer to strdata array */
 	dt_aggregate_t dt_aggregate; /* aggregate */
-	dt_pq_t *dt_bufq;	/* CPU-specific data queue */
+	dtrace_bufdesc_t dt_buf; /* staging buffer */
 	struct dt_pfdict *dt_pfdict; /* dictionary of printf conversions */
 	dt_version_t dt_vmax;	/* optional ceiling on program API binding */
 	dtrace_attribute_t dt_amin; /* optional floor on program attributes */
@@ -275,12 +286,20 @@ struct dtrace_hdl {
 	int dt_version;		/* library version requested by client */
 	int dt_ctferr;		/* error resulting from last CTF failure */
 	int dt_errno;		/* error resulting from last failed operation */
+#if !defined(sun)
+	const char *dt_errfile;
+	int dt_errline;
+#endif
 	int dt_fd;		/* file descriptor for dtrace pseudo-device */
 	int dt_ftfd;		/* file descriptor for fasttrap pseudo-device */
 	int dt_fterr;		/* saved errno from failed open of dt_ftfd */
 	int dt_cdefs_fd;	/* file descriptor for C CTF debugging cache */
 	int dt_ddefs_fd;	/* file descriptor for D CTF debugging cache */
+#if defined(sun)
 	int dt_stdout_fd;	/* file descriptor for saved stdout */
+#else
+	FILE *dt_freopen_fp;	/* file pointer for freopened stdout */
+#endif
 	dtrace_handle_err_f *dt_errhdlr; /* error handler, if any */
 	void *dt_errarg;	/* error handler argument */
 	dtrace_prog_t *dt_errprog; /* error handler program, if any */
@@ -307,11 +326,6 @@ struct dtrace_hdl {
 	struct utsname dt_uts;	/* uname(2) information for system */
 	dt_list_t dt_lib_dep;	/* scratch linked-list of lib dependencies */
 	dt_list_t dt_lib_dep_sorted;	/* dependency sorted library list */
-	dtrace_flowkind_t dt_flow;	/* flow kind */
-	const char *dt_prefix;	/* recommended flow prefix */
-	int dt_indent;		/* recommended flow indent */
-	dtrace_epid_t dt_last_epid;	/* most recently consumed EPID */
-	uint64_t dt_last_timestamp;	/* most recently consumed timestamp */
 };
 
 /*
@@ -428,6 +442,8 @@ struct dtrace_hdl {
 #define	DT_ACT_UADDR		DT_ACT(27)	/* uaddr() action */
 #define	DT_ACT_SETOPT		DT_ACT(28)	/* setopt() action */
 #define	DT_ACT_PRINT		DT_ACT(29)	/* print() action */
+#define	DT_ACT_PRINTM		DT_ACT(30)	/* printm() action */
+#define	DT_ACT_PRINTT		DT_ACT(31)	/* printt() action */
 
 /*
  * Sentinel to tell freopen() to restore the saved stdout.  This must not
@@ -445,6 +461,7 @@ enum {
 	EDT_VERSREDUCED,	/* requested API version has been reduced */
 	EDT_CTF,		/* libctf called failed (dt_ctferr has more) */
 	EDT_COMPILER,		/* error in D program compilation */
+	EDT_NOREG,		/* register allocation failure */
 	EDT_NOTUPREG,		/* tuple register allocation failure */
 	EDT_NOMEM,		/* memory allocation failure */
 	EDT_INT2BIG,		/* integer limit exceeded */
@@ -555,11 +572,21 @@ extern int dt_version_defined(dt_version_t);
 extern char *dt_cpp_add_arg(dtrace_hdl_t *, const char *);
 extern char *dt_cpp_pop_arg(dtrace_hdl_t *);
 
+#if defined(sun)
 extern int dt_set_errno(dtrace_hdl_t *, int);
+#else
+int _dt_set_errno(dtrace_hdl_t *, int, const char *, int);
+void dt_get_errloc(dtrace_hdl_t *, const char **, int *);
+#define dt_set_errno(_a,_b)	_dt_set_errno(_a,_b,__FILE__,__LINE__)
+#endif
 extern void dt_set_errmsg(dtrace_hdl_t *, const char *, const char *,
     const char *, int, const char *, va_list);
 
+#if defined(sun)
 extern int dt_ioctl(dtrace_hdl_t *, int, void *);
+#else
+extern int dt_ioctl(dtrace_hdl_t *, u_long, void *);
+#endif
 extern int dt_status(dtrace_hdl_t *, processorid_t);
 extern long dt_sysconf(dtrace_hdl_t *, int);
 extern ssize_t dt_write(dtrace_hdl_t *, int, const void *, size_t);
@@ -584,7 +611,15 @@ extern void dt_buffered_destroy(dtrace_hdl_t *);
 
 extern uint64_t dt_stddev(uint64_t *, uint64_t);
 
+extern int dt_rw_read_held(pthread_rwlock_t *);
+extern int dt_rw_write_held(pthread_rwlock_t *);
+extern int dt_mutex_held(pthread_mutex_t *);
 extern int dt_options_load(dtrace_hdl_t *);
+
+#define DT_RW_READ_HELD(x)	dt_rw_read_held(x)	 
+#define DT_RW_WRITE_HELD(x)	dt_rw_write_held(x)	 
+#define DT_RW_LOCK_HELD(x)	(DT_RW_READ_HELD(x) || DT_RW_WRITE_HELD(x))
+#define DT_MUTEX_HELD(x)	dt_mutex_held(x)
 
 extern void dt_dprintf(const char *, ...);
 

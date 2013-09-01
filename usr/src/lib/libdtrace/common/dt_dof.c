@@ -25,10 +25,14 @@
  */
 
 #include <sys/types.h>
+#if defined(sun)
 #include <sys/sysmacros.h>
+#endif
 
 #include <strings.h>
+#if defined(sun)
 #include <alloca.h>
+#endif
 #include <assert.h>
 #include <stdlib.h>
 #include <errno.h>

@@ -21,7 +21,6 @@
 /*
  * Copyright (c) 2005, 2010, Oracle and/or its affiliates. All rights reserved.
  * Copyright (c) 2013 by Delphix. All rights reserved.
- * Copyright (c) 2013 Martin Matuska. All rights reserved.
  */
 
 #include <sys/zfs_context.h>

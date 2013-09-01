@@ -36,7 +36,6 @@
 
 static int real_LZ4_compress(const char *source, char *dest, int isize,
     int osize);
-static int real_LZ4_uncompress(const char *source, char *dest, int osize);
 static int LZ4_compressBound(int isize);
 static int LZ4_uncompress_unknownOutputSize(const char *source, char *dest,
     int isize, int maxOutputSize);
@@ -104,16 +103,6 @@ lz4_decompress(void *s_start, void *d_start, size_t s_len, size_t d_len, int n)
  * 		situations (input data not compressible) worst case size
  * 		evaluation is provided by function LZ4_compressBound().
  *
- * real_LZ4_uncompress() :
- * 	osize  : is the output size, therefore the original size
- * 	return : the number of bytes read in the source buffer.
- * 		If the source stream is malformed, the function will stop
- * 		decoding and return a negative result, indicating the byte
- * 		position of the faulty instruction. This function never
- * 		writes beyond dest + osize, and is therefore protected
- * 		against malicious data packets.
- * 	note : destination buffer must be already allocated
- *
  * Advanced Functions
  *
  * LZ4_compressBound() :
@@ -137,7 +126,6 @@ lz4_decompress(void *s_start, void *d_start, size_t s_len, size_t d_len, int n)
  * 		maxOutputSize, and is therefore protected against malicious
  * 		data packets.
  * 	note   : Destination buffer must be already allocated.
- *		This version is slightly slower than real_LZ4_uncompress()
  *
  * LZ4_compressCtx() :
  * 	This function explicitly handles the CTX memory structure.
@@ -197,27 +185,27 @@ lz4_decompress(void *s_start, void *d_start, size_t s_len, size_t d_len, int n)
     defined(__amd64) || defined(__ppc64__) || defined(_WIN64) || \
     defined(__LP64__) || defined(_LP64))
 #define	LZ4_ARCH64 1
+/*
+ * Illumos: On amd64 we have 20k of stack and 24k on sun4u and sun4v, so we
+ * can spend 16k on the algorithm
+ */
+/* FreeBSD: Use heap for all platforms for now */
+#define	STACKLIMIT 0
 #else
 #define	LZ4_ARCH64 0
-#endif
-
 /*
- * Limits the amount of stack space that the algorithm may consume to hold
- * the compression lookup table. The value `9' here means we'll never use
- * more than 2k of stack (see above for a description of COMPRESSIONLEVEL).
- * If more memory is needed, it is allocated from the heap.
+ * Illumos: On i386 we only have 12k of stack, so in order to maintain the
+ * same COMPRESSIONLEVEL we have to use heap allocation. Performance will
+ * suck, but alas, it's ZFS on 32-bit we're talking about, so...
  */
-#define	STACKLIMIT 9
+#define	STACKLIMIT 0
+#endif
 
 /*
  * Little Endian or Big Endian?
  * Note: overwrite the below #define if you know your architecture endianess.
  */
-#if (defined(__BIG_ENDIAN__) || defined(__BIG_ENDIAN) || \
-	defined(_BIG_ENDIAN) || defined(_ARCH_PPC) || defined(__PPC__) || \
-	defined(__PPC) || defined(PPC) || defined(__powerpc__) || \
-	defined(__powerpc) || defined(powerpc) || \
-	((defined(__BYTE_ORDER__)&&(__BYTE_ORDER__ == __ORDER_BIG_ENDIAN__))))
+#if BYTE_ORDER == BIG_ENDIAN
 #define	LZ4_BIG_ENDIAN 1
 #else
 /*
@@ -237,7 +225,15 @@ lz4_decompress(void *s_start, void *d_start, size_t s_len, size_t d_len, int n)
 #define	LZ4_FORCE_UNALIGNED_ACCESS 1
 #endif
 
-/* #define	LZ4_FORCE_SW_BITCOUNT */
+/*
+ * FreeBSD: can't use GCC's __builtin_ctz when using sparc64 because
+ * gcc currently rely on libcompiler_rt.
+ *
+ * TODO: revisit this when situation changes.
+ */
+#if defined(__sparc64__)
+#define	LZ4_FORCE_SW_BITCOUNT
+#endif
 
 /*
  * Compiler Options
@@ -249,54 +245,27 @@ lz4_decompress(void *s_start, void *d_start, size_t s_len, size_t d_len, int n)
 #define	restrict
 #endif
 
-#define	GCC_VERSION (__GNUC__ * 100 + __GNUC_MINOR__)
-
-#ifdef _MSC_VER
-/* Visual Studio */
-/* Visual is not C99, but supports some kind of inline */
-#define	inline __forceinline
-#if LZ4_ARCH64
-/* For Visual 2005 */
-#pragma intrinsic(_BitScanForward64)
-#pragma intrinsic(_BitScanReverse64)
-#else /* !LZ4_ARCH64 */
-/* For Visual 2005 */
-#pragma intrinsic(_BitScanForward)
-#pragma intrinsic(_BitScanReverse)
-#endif /* !LZ4_ARCH64 */
-#endif /* _MSC_VER */
-
-#ifdef _MSC_VER
-#define	lz4_bswap16(x) _byteswap_ushort(x)
-#else /* !_MSC_VER */
 #define	lz4_bswap16(x) ((unsigned short int) ((((x) >> 8) & 0xffu) | \
 	(((x) & 0xffu) << 8)))
-#endif /* !_MSC_VER */
 
-#if (GCC_VERSION >= 302) || (__INTEL_COMPILER >= 800) || defined(__clang__)
 #define	expect(expr, value)    (__builtin_expect((expr), (value)))
-#else
-#define	expect(expr, value)    (expr)
+
+#if defined(likely)
+#undef likely
+#endif
+#if defined(unlikely)
+#undef unlikely
 #endif
 
 #define	likely(expr)	expect((expr) != 0, 1)
 #define	unlikely(expr)	expect((expr) != 0, 0)
 
 /* Basic types */
-#if defined(_MSC_VER)
-/* Visual Studio does not support 'stdint' natively */
-#define	BYTE	unsigned __int8
-#define	U16	unsigned __int16
-#define	U32	unsigned __int32
-#define	S32	__int32
-#define	U64	unsigned __int64
-#else /* !defined(_MSC_VER) */
 #define	BYTE	uint8_t
 #define	U16	uint16_t
 #define	U32	uint32_t
 #define	S32	int32_t
 #define	U64	uint64_t
-#endif /* !defined(_MSC_VER) */
 
 #ifndef LZ4_FORCE_UNALIGNED_ACCESS
 #pragma pack(1)
@@ -407,12 +376,7 @@ static inline int
 LZ4_NbCommonBytes(register U64 val)
 {
 #if defined(LZ4_BIG_ENDIAN)
-#if defined(_MSC_VER) && !defined(LZ4_FORCE_SW_BITCOUNT)
-	unsigned long r = 0;
-	_BitScanReverse64(&r, val);
-	return (int)(r >> 3);
-#elif defined(__GNUC__) && (GCC_VERSION >= 304) && \
-	!defined(LZ4_FORCE_SW_BITCOUNT)
+#if !defined(LZ4_FORCE_SW_BITCOUNT)
 	return (__builtin_clzll(val) >> 3);
 #else
 	int r;
@@ -432,12 +396,7 @@ LZ4_NbCommonBytes(register U64 val)
 	return (r);
 #endif
 #else
-#if defined(_MSC_VER) && !defined(LZ4_FORCE_SW_BITCOUNT)
-	unsigned long r = 0;
-	_BitScanForward64(&r, val);
-	return (int)(r >> 3);
-#elif defined(__GNUC__) && (GCC_VERSION >= 304) && \
-	!defined(LZ4_FORCE_SW_BITCOUNT)
+#if !defined(LZ4_FORCE_SW_BITCOUNT)
 	return (__builtin_ctzll(val) >> 3);
 #else
 	static const int DeBruijnBytePos[64] =
@@ -458,12 +417,7 @@ static inline int
 LZ4_NbCommonBytes(register U32 val)
 {
 #if defined(LZ4_BIG_ENDIAN)
-#if defined(_MSC_VER) && !defined(LZ4_FORCE_SW_BITCOUNT)
-	unsigned long r = 0;
-	_BitScanReverse(&r, val);
-	return (int)(r >> 3);
-#elif defined(__GNUC__) && (GCC_VERSION >= 304) && \
-	!defined(LZ4_FORCE_SW_BITCOUNT)
+#if !defined(LZ4_FORCE_SW_BITCOUNT)
 	return (__builtin_clz(val) >> 3);
 #else
 	int r;
@@ -478,12 +432,7 @@ LZ4_NbCommonBytes(register U32 val)
 	return (r);
 #endif
 #else
-#if defined(_MSC_VER) && !defined(LZ4_FORCE_SW_BITCOUNT)
-	unsigned long r = 0;
-	_BitScanForward(&r, val);
-	return (int)(r >> 3);
-#elif defined(__GNUC__) && (GCC_VERSION >= 304) && \
-	!defined(LZ4_FORCE_SW_BITCOUNT)
+#if !defined(LZ4_FORCE_SW_BITCOUNT)
 	return (__builtin_ctz(val) >> 3);
 #else
 	static const int DeBruijnBytePos[32] = {
@@ -918,126 +867,14 @@ real_LZ4_compress(const char *source, char *dest, int isize, int osize)
 /* Decompression functions */
 
 /*
- * Note: The decoding functions real_LZ4_uncompress() and
- *	LZ4_uncompress_unknownOutputSize() are safe against "buffer overflow"
- *	attack type. They will never write nor read outside of the provided
- *	output buffers. LZ4_uncompress_unknownOutputSize() also insures that
- *	it will never read outside of the input buffer. A corrupted input
- *	will produce an error result, a negative int, indicating the position
- *	of the error within input stream.
+ * Note: The decoding functionLZ4_uncompress_unknownOutputSize() is safe
+ *	against "buffer overflow" attack type. They will never write nor
+ *	read outside of the provided output buffers.
+ *	LZ4_uncompress_unknownOutputSize() also insures that it will never
+ *	read outside of the input buffer.  A corrupted input will produce
+ *	an error result, a negative int, indicating the position of the
+ *	error within input stream.
  */
-
-static int
-real_LZ4_uncompress(const char *source, char *dest, int osize)
-{
-	/* Local Variables */
-	const BYTE *restrict ip = (const BYTE *) source;
-	const BYTE *ref;
-
-	BYTE *op = (BYTE *) dest;
-	BYTE *const oend = op + osize;
-	BYTE *cpy;
-
-	unsigned token;
-
-	size_t length;
-	size_t dec32table[] = {0, 3, 2, 3, 0, 0, 0, 0};
-#if LZ4_ARCH64
-	size_t dec64table[] = {0, 0, 0, (size_t)-1, 0, 1, 2, 3};
-#endif
-
-	/* Main Loop */
-	for (;;) {
-		/* get runlength */
-		token = *ip++;
-		if ((length = (token >> ML_BITS)) == RUN_MASK) {
-			size_t len;
-			for (; (len = *ip++) == 255; length += 255) {
-			}
-			length += len;
-		}
-		/* copy literals */
-		cpy = op + length;
-		if unlikely(cpy > oend - COPYLENGTH) {
-			if (cpy != oend)
-				/* Error: we must necessarily stand at EOF */
-				goto _output_error;
-			(void) memcpy(op, ip, length);
-			ip += length;
-			break;	/* EOF */
-			}
-		LZ4_WILDCOPY(ip, op, cpy);
-		ip -= (op - cpy);
-		op = cpy;
-
-		/* get offset */
-		LZ4_READ_LITTLEENDIAN_16(ref, cpy, ip);
-		ip += 2;
-		if unlikely(ref < (BYTE * const) dest)
-			/*
-			 * Error: offset create reference outside destination
-			 * buffer
-			 */
-			goto _output_error;
-
-		/* get matchlength */
-		if ((length = (token & ML_MASK)) == ML_MASK) {
-			for (; *ip == 255; length += 255) {
-				ip++;
-			}
-			length += *ip++;
-		}
-		/* copy repeated sequence */
-		if unlikely(op - ref < STEPSIZE) {
-#if LZ4_ARCH64
-			size_t dec64 = dec64table[op-ref];
-#else
-			const int dec64 = 0;
-#endif
-			op[0] = ref[0];
-			op[1] = ref[1];
-			op[2] = ref[2];
-			op[3] = ref[3];
-			op += 4;
-			ref += 4;
-			ref -= dec32table[op-ref];
-			A32(op) = A32(ref);
-			op += STEPSIZE - 4;
-			ref -= dec64;
-		} else {
-			LZ4_COPYSTEP(ref, op);
-		}
-		cpy = op + length - (STEPSIZE - 4);
-		if (cpy > oend - COPYLENGTH) {
-			if (cpy > oend)
-				/*
-				 * Error: request to write beyond destination
-				 * buffer
-				 */
-				goto _output_error;
-			LZ4_SECURECOPY(ref, op, (oend - COPYLENGTH));
-			while (op < cpy)
-				*op++ = *ref++;
-			op = cpy;
-			if (op == oend)
-				/*
-				 * Check EOF (should never happen, since last
-				 * 5 bytes are supposed to be literals)
-				 */
-				goto _output_error;
-			continue;
-		}
-		LZ4_SECURECOPY(ref, op, cpy);
-		op = cpy;	/* correction */
-	}
-
-	/* end of decoding */
-	return (int)(((char *)ip) - source);
-
-	/* write overflow error detected */
-	_output_error:
-	return (int)(-(((char *)ip) - source));
-}
 
 static int
 LZ4_uncompress_unknownOutputSize(const char *source, char *dest, int isize,

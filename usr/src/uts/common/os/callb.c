@@ -24,25 +24,21 @@
  */
 
 #include <sys/param.h>
-#include <sys/t_lock.h>
 #include <sys/types.h>
 #include <sys/time.h>
 #include <sys/sysmacros.h>
 #include <sys/systm.h>
-#include <sys/cpuvar.h>
-#include <sys/user.h>
 #include <sys/proc.h>
+#include <sys/mutex.h>
+#include <sys/condvar.h>
 #include <sys/callb.h>
 #include <sys/kmem.h>
 #include <sys/cmn_err.h>
-#include <sys/swap.h>
-#include <sys/vmsystm.h>
-#include <sys/class.h>
 #include <sys/debug.h>
-#include <sys/thread.h>
 #include <sys/kobj.h>
-#include <sys/ddi.h>	/* for delay() */
+#include <sys/systm.h>	/* for delay() */
 #include <sys/taskq.h>  /* For TASKQ_NAMELEN */
+#include <sys/kernel.h>
 
 #define	CB_MAXNAME	TASKQ_NAMELEN
 
@@ -99,11 +95,38 @@ callb_cpr_t	callb_cprinfo_safe = {
  * Init all callb tables in the system.
  */
 void
-callb_init()
+callb_init(void *dummy __unused)
 {
 	callb_table.ct_busy = 0;	/* mark table open for additions */
 	mutex_init(&callb_safe_mutex, NULL, MUTEX_DEFAULT, NULL);
 	mutex_init(&callb_table.ct_lock, NULL, MUTEX_DEFAULT, NULL);
+}
+
+void
+callb_fini(void *dummy __unused)
+{
+	callb_t *cp;
+	int i;
+
+	mutex_enter(&ct->ct_lock);
+	for (i = 0; i < 16; i++) {
+		while ((cp = ct->ct_freelist) != NULL) {
+			ct->ct_freelist = cp->c_next;
+			ct->ct_ncallb--;
+			kmem_free(cp, sizeof (callb_t));
+		}
+		if (ct->ct_ncallb == 0)
+			break;
+		/* Not all callbacks finished, waiting for the rest. */
+		mutex_exit(&ct->ct_lock);
+		tsleep(ct, 0, "callb", hz / 4);
+		mutex_enter(&ct->ct_lock);
+	}
+	if (ct->ct_ncallb > 0)
+		printf("%s: Leaked %d callbacks!\n", __func__, ct->ct_ncallb);
+	mutex_exit(&ct->ct_lock);
+	mutex_destroy(&callb_safe_mutex);
+	mutex_destroy(&callb_table.ct_lock);
 }
 
 /*
@@ -345,6 +368,7 @@ callb_unlock_table(void)
 	mutex_exit(&ct->ct_lock);
 }
 
+#ifdef sun
 /*
  * Return a boolean value indicating whether a particular kernel thread is
  * stopped in accordance with the cpr callback protocol.  If returning
@@ -408,3 +432,7 @@ callb_is_stopped(kthread_id_t tp, caddr_t *thread_name)
 	mutex_exit(&ct->ct_lock);
 	return (ret_val);
 }
+#endif	/* sun */
+
+SYSINIT(sol_callb, SI_SUB_DRIVERS, SI_ORDER_FIRST, callb_init, NULL);
+SYSUNINIT(sol_callb, SI_SUB_DRIVERS, SI_ORDER_FIRST, callb_fini, NULL);

@@ -25,6 +25,8 @@
 
 #include "libuutil_common.h"
 
+#define HAVE_ASSFAIL	1
+
 #include <assert.h>
 #include <errno.h>
 #include <libintl.h>
@@ -72,10 +74,7 @@ static uint32_t		_uu_main_error;
 void
 uu_set_error(uint_t code)
 {
-	if (thr_main() != 0) {
-		_uu_main_error = code;
-		return;
-	}
+
 #if defined(PTHREAD_ONCE_KEY_NP)
 	if (pthread_key_create_once_np(&uu_error_key, NULL) != 0)
 		uu_error_key_setup = -1;
@@ -101,8 +100,6 @@ uu_set_error(uint_t code)
 uint32_t
 uu_error(void)
 {
-	if (thr_main() != 0)
-		return (_uu_main_error);
 
 	if (uu_error_key_setup < 0)	/* can't happen? */
 		return (UU_ERROR_UNKNOWN);

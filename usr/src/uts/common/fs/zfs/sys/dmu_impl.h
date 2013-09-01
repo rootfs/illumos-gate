@@ -22,6 +22,7 @@
  * Copyright 2010 Sun Microsystems, Inc.  All rights reserved.
  * Use is subject to license terms.
  * Copyright (c) 2012, Joyent, Inc. All rights reserved.
+ * Copyright (c) 2012, Martin Matuska <mm@FreeBSD.org>. All rights reserved.
  */
 
 #ifndef _SYS_DMU_IMPL_H
@@ -30,6 +31,7 @@
 #include <sys/txg_impl.h>
 #include <sys/zio.h>
 #include <sys/dnode.h>
+#include <sys/kstat.h>
 #include <sys/zfs_context.h>
 #include <sys/zfs_ioctl.h>
 
@@ -281,7 +283,8 @@ typedef enum {
 typedef struct dmu_sendarg {
 	list_node_t dsa_link;
 	dmu_replay_record_t *dsa_drr;
-	vnode_t *dsa_vp;
+	kthread_t *dsa_td;
+	struct file *dsa_fp;
 	int dsa_outfd;
 	struct proc *dsa_proc;
 	offset_t *dsa_off;

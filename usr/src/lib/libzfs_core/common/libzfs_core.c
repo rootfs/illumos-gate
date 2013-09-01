@@ -70,6 +70,8 @@
  *  since that will be the supported, stable interface going forwards.
  */
 
+#define _IN_LIBZFS_CORE_
+
 #include <libzfs_core.h>
 #include <ctype.h>
 #include <unistd.h>
@@ -83,6 +85,12 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <sys/zfs_ioctl.h>
+#include "libzfs_core_compat.h"
+#include "libzfs_compat.h"
+
+#ifdef __FreeBSD__
+extern int zfs_ioctl_version;
+#endif
 
 static int g_fd;
 static pthread_mutex_t g_lock = PTHREAD_MUTEX_INITIALIZER;
@@ -101,6 +109,7 @@ libzfs_core_init(void)
 	}
 	g_refcount++;
 	(void) pthread_mutex_unlock(&g_lock);
+
 	return (0);
 }
 
@@ -122,11 +131,26 @@ lzc_ioctl(zfs_ioc_t ioc, const char *name,
 	zfs_cmd_t zc = { 0 };
 	int error = 0;
 	char *packed;
+#ifdef __FreeBSD__
+	nvlist_t *oldsource;
+#endif
 	size_t size;
 
 	ASSERT3S(g_refcount, >, 0);
 
 	(void) strlcpy(zc.zc_name, name, sizeof (zc.zc_name));
+
+#ifdef __FreeBSD__
+	if (zfs_ioctl_version == ZFS_IOCVER_UNDEF)
+		zfs_ioctl_version = get_zfs_ioctl_version();
+
+	if (zfs_ioctl_version < ZFS_IOCVER_LZC) {
+		oldsource = source;
+		error = lzc_compat_pre(&zc, &ioc, &source);
+		if (error)
+			return (error);
+	}
+#endif
 
 	packed = fnvlist_pack(source, &size);
 	zc.zc_nvlist_src = (uint64_t)(uintptr_t)packed;
@@ -137,7 +161,11 @@ lzc_ioctl(zfs_ioc_t ioc, const char *name,
 		zc.zc_nvlist_dst_size = MAX(size * 2, 128 * 1024);
 		zc.zc_nvlist_dst = (uint64_t)(uintptr_t)
 		    malloc(zc.zc_nvlist_dst_size);
+#ifdef illumos
 		if (zc.zc_nvlist_dst == NULL) {
+#else
+		if (zc.zc_nvlist_dst == 0) {
+#endif
 			error = ENOMEM;
 			goto out;
 		}
@@ -149,7 +177,11 @@ lzc_ioctl(zfs_ioc_t ioc, const char *name,
 			zc.zc_nvlist_dst_size *= 2;
 			zc.zc_nvlist_dst = (uint64_t)(uintptr_t)
 			    malloc(zc.zc_nvlist_dst_size);
+#ifdef illumos
 			if (zc.zc_nvlist_dst == NULL) {
+#else
+			if (zc.zc_nvlist_dst == 0) {
+#endif
 				error = ENOMEM;
 				goto out;
 			}
@@ -158,12 +190,27 @@ lzc_ioctl(zfs_ioc_t ioc, const char *name,
 			break;
 		}
 	}
+
+#ifdef __FreeBSD__
+	if (zfs_ioctl_version < ZFS_IOCVER_LZC)
+		lzc_compat_post(&zc, ioc);
+#endif
 	if (zc.zc_nvlist_dst_filled) {
 		*resultp = fnvlist_unpack((void *)(uintptr_t)zc.zc_nvlist_dst,
 		    zc.zc_nvlist_dst_size);
 	}
-
+#ifdef __FreeBSD__
+	if (zfs_ioctl_version < ZFS_IOCVER_LZC)
+		lzc_compat_outnvl(&zc, ioc, resultp);
+#endif
 out:
+#ifdef __FreeBSD__
+	if (zfs_ioctl_version < ZFS_IOCVER_LZC) {
+		if (source != oldsource)
+			nvlist_free(source);
+		source = oldsource;
+	}
+#endif
 	fnvlist_pack_free(packed, size);
 	free((void *)(uintptr_t)zc.zc_nvlist_dst);
 	return (error);

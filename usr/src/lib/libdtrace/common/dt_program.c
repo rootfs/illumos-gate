@@ -30,7 +30,9 @@
 #include <errno.h>
 #include <assert.h>
 #include <ctype.h>
+#if defined(sun)
 #include <alloca.h>
+#endif
 
 #include <dt_impl.h>
 #include <dt_program.h>
@@ -151,6 +153,7 @@ int
 dtrace_program_exec(dtrace_hdl_t *dtp, dtrace_prog_t *pgp,
     dtrace_proginfo_t *pip)
 {
+	dtrace_enable_io_t args;
 	void *dof;
 	int n, err;
 
@@ -159,7 +162,9 @@ dtrace_program_exec(dtrace_hdl_t *dtp, dtrace_prog_t *pgp,
 	if ((dof = dtrace_dof_create(dtp, pgp, DTRACE_D_STRIP)) == NULL)
 		return (-1);
 
-	n = dt_ioctl(dtp, DTRACEIOC_ENABLE, dof);
+	args.dof = dof;
+	args.n_matched = 0;
+	n = dt_ioctl(dtp, DTRACEIOC_ENABLE, &args);
 	dtrace_dof_destroy(dtp, dof);
 
 	if (n == -1) {
@@ -184,7 +189,7 @@ dtrace_program_exec(dtrace_hdl_t *dtp, dtrace_prog_t *pgp,
 	}
 
 	if (pip != NULL)
-		pip->dpi_matches += n;
+		pip->dpi_matches += args.n_matched;
 
 	return (0);
 }
@@ -554,6 +559,10 @@ dt_header_provider(dtrace_hdl_t *dtp, dt_provider_t *pvp, FILE *out)
 	info.dthi_pfname = alloca(strlen(pvp->pv_desc.dtvd_name) + 1 + i);
 	dt_header_fmt_func(info.dthi_pfname, pvp->pv_desc.dtvd_name);
 
+#ifdef __FreeBSD__
+	if (fprintf(out, "#include <sys/sdt.h>\n\n") < 0)
+		return (dt_set_errno(dtp, errno));
+#endif
 	if (fprintf(out, "#if _DTRACE_VERSION\n\n") < 0)
 		return (dt_set_errno(dtp, errno));
 

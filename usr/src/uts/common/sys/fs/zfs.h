@@ -24,6 +24,7 @@
  * Copyright (c) 2012 by Delphix. All rights reserved.
  * Copyright 2011 Nexenta Systems, Inc.  All rights reserved.
  * Copyright (c) 2012, Joyent, Inc. All rights reserved.
+ * Copyright (c) 2012, Martin Matuska <mm@FreeBSD.org>. All rights reserved.
  */
 
 /* Portions Copyright 2010 Robert Milkowski */
@@ -31,6 +32,8 @@
 #ifndef	_SYS_FS_ZFS_H
 #define	_SYS_FS_ZFS_H
 
+#include <sys/types.h>
+#include <sys/ioccom.h>
 #include <sys/time.h>
 
 #ifdef	__cplusplus
@@ -242,7 +245,6 @@ const char *zfs_prop_to_name(zfs_prop_t);
 zfs_prop_t zfs_name_to_prop(const char *);
 boolean_t zfs_prop_user(const char *);
 boolean_t zfs_prop_userquota(const char *);
-boolean_t zfs_prop_written(const char *);
 int zfs_prop_index_to_string(zfs_prop_t, uint64_t, const char **);
 int zfs_prop_string_to_index(zfs_prop_t, const char *, uint64_t *);
 uint64_t zfs_prop_random_value(zfs_prop_t, uint64_t seed);
@@ -579,7 +581,7 @@ typedef struct zpool_rewind_policy {
  * The location of the pool configuration repository, shared between kernel and
  * userland.
  */
-#define	ZPOOL_CACHE		"/etc/zfs/zpool.cache"
+#define	ZPOOL_CACHE		"/boot/zfs/zpool.cache"
 
 /*
  * vdev states are ordered from least to most healthy.
@@ -741,7 +743,8 @@ typedef struct ddt_histogram {
 
 #define	ZVOL_DRIVER	"zvol"
 #define	ZFS_DRIVER	"zfs"
-#define	ZFS_DEV		"/dev/zfs"
+#define	ZFS_DEV_NAME	"zfs"
+#define	ZFS_DEV		"/dev/" ZFS_DEV_NAME
 
 /* general zvol path */
 #define	ZVOL_DIR		"/dev/zvol"
@@ -758,8 +761,7 @@ typedef struct ddt_histogram {
  * /dev/zfs ioctl numbers.
  */
 typedef enum zfs_ioc {
-	ZFS_IOC_FIRST =	('Z' << 8),
-	ZFS_IOC = ZFS_IOC_FIRST,
+	ZFS_IOC_FIRST =	0,
 	ZFS_IOC_POOL_CREATE = ZFS_IOC_FIRST,
 	ZFS_IOC_POOL_DESTROY,
 	ZFS_IOC_POOL_IMPORT,
@@ -795,6 +797,7 @@ typedef enum zfs_ioc {
 	ZFS_IOC_ERROR_LOG,
 	ZFS_IOC_CLEAR,
 	ZFS_IOC_PROMOTE,
+	ZFS_IOC_DESTROY_SNAPS,
 	ZFS_IOC_SNAPSHOT,
 	ZFS_IOC_DSOBJ_TO_DSNAME,
 	ZFS_IOC_OBJ_TO_PATH,
@@ -817,12 +820,13 @@ typedef enum zfs_ioc {
 	ZFS_IOC_DIFF,
 	ZFS_IOC_TMP_SNAPSHOT,
 	ZFS_IOC_OBJ_TO_STATS,
+	ZFS_IOC_JAIL,
+	ZFS_IOC_UNJAIL,
+	ZFS_IOC_POOL_REGUID,
 	ZFS_IOC_SPACE_WRITTEN,
 	ZFS_IOC_SPACE_SNAPS,
-	ZFS_IOC_DESTROY_SNAPS,
-	ZFS_IOC_POOL_REGUID,
-	ZFS_IOC_POOL_REOPEN,
 	ZFS_IOC_SEND_PROGRESS,
+	ZFS_IOC_POOL_REOPEN,
 	ZFS_IOC_LOG_HISTORY,
 	ZFS_IOC_SEND_NEW,
 	ZFS_IOC_SEND_SPACE,

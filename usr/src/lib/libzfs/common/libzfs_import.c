@@ -51,10 +51,8 @@
 #include <sys/stat.h>
 #include <unistd.h>
 #include <fcntl.h>
-#include <sys/vtoc.h>
-#include <sys/dktp/fdisk.h>
-#include <sys/efi_partition.h>
 #include <thread_pool.h>
+#include <libgeom.h>
 
 #include <sys/vdev_impl.h>
 
@@ -950,6 +948,7 @@ slice_cache_compare(const void *arg1, const void *arg2)
 	return (rv > 0 ? 1 : -1);
 }
 
+#ifdef sun
 static void
 check_one_slice(avl_tree_t *r, char *diskname, uint_t partno,
     diskaddr_t size, uint_t blksz)
@@ -972,10 +971,12 @@ check_one_slice(avl_tree_t *r, char *diskname, uint_t partno,
 	    (node = avl_find(r, &tmpnode, NULL)))
 		node->rn_nozpool = B_TRUE;
 }
+#endif	/* sun */
 
 static void
 nozpool_all_slices(avl_tree_t *r, const char *sname)
 {
+#ifdef sun
 	char diskname[MAXNAMELEN];
 	char *ptr;
 	int i;
@@ -991,11 +992,13 @@ nozpool_all_slices(avl_tree_t *r, const char *sname)
 	ptr[0] = 'p';
 	for (i = 0; i <= FD_NUMPART; i++)
 		check_one_slice(r, diskname, i, 0, 1);
+#endif	/* sun */
 }
 
 static void
 check_slices(avl_tree_t *r, int fd, const char *sname)
 {
+#ifdef sun
 	struct extvtoc vtoc;
 	struct dk_gpt *gpt;
 	char diskname[MAXNAMELEN];
@@ -1025,6 +1028,7 @@ check_slices(avl_tree_t *r, int fd, const char *sname)
 			check_one_slice(r, diskname, i, 0, 1);
 		efi_free(gpt);
 	}
+#endif	/* sun */
 }
 
 static void
@@ -1083,8 +1087,8 @@ zpool_open_func(void *arg)
 
 /*
  * Given a file descriptor, clear (zero) the label information.  This function
- * is currently only used in the appliance stack as part of the ZFS sysevent
- * module.
+ * is used in the appliance stack as part of the ZFS sysevent module and
+ * to implement the "zpool labelclear" command.
  */
 int
 zpool_clear_label(int fd)
@@ -1128,7 +1132,7 @@ zpool_find_import_impl(libzfs_handle_t *hdl, importargs_t *iarg)
 	char *end, **dir = iarg->path;
 	size_t pathleft;
 	nvlist_t *ret = NULL;
-	static char *default_dir = "/dev/dsk";
+	static char *default_dir = "/dev";
 	pool_list_t pools = { 0 };
 	pool_entry_t *pe, *penext;
 	vdev_entry_t *ve, *venext;
@@ -1170,7 +1174,7 @@ zpool_find_import_impl(libzfs_handle_t *hdl, importargs_t *iarg)
 		 * close(2) processing, so we replace /dev/dsk with /dev/rdsk.
 		 */
 		if (strcmp(path, "/dev/dsk/") == 0)
-			rdsk = "/dev/rdsk/";
+			rdsk = "/dev/";
 		else
 			rdsk = path;
 
@@ -1185,6 +1189,39 @@ zpool_find_import_impl(libzfs_handle_t *hdl, importargs_t *iarg)
 
 		avl_create(&slice_cache, slice_cache_compare,
 		    sizeof (rdsk_node_t), offsetof(rdsk_node_t, rn_node));
+
+		if (strcmp(rdsk, "/dev/") == 0) {
+			struct gmesh mesh;
+			struct gclass *mp;
+			struct ggeom *gp;
+			struct gprovider *pp;
+
+			errno = geom_gettree(&mesh);
+			if (errno != 0) {
+				zfs_error_aux(hdl, strerror(errno));
+				(void) zfs_error_fmt(hdl, EZFS_BADPATH,
+				    dgettext(TEXT_DOMAIN, "cannot get GEOM tree"));
+				goto error;
+			}
+
+			LIST_FOREACH(mp, &mesh.lg_class, lg_class) {
+		        	LIST_FOREACH(gp, &mp->lg_geom, lg_geom) {
+					LIST_FOREACH(pp, &gp->lg_provider, lg_provider) {
+						slice = zfs_alloc(hdl, sizeof (rdsk_node_t));
+						slice->rn_name = zfs_strdup(hdl, pp->lg_name);
+						slice->rn_avl = &slice_cache;
+						slice->rn_dfd = dfd;
+						slice->rn_hdl = hdl;
+						slice->rn_nozpool = B_FALSE;
+						avl_add(&slice_cache, slice);
+					}
+				}
+			}
+
+			geom_deletetree(&mesh);
+			goto skipdir;
+		}
+
 		/*
 		 * This is not MT-safe, but we have no MT consumers of libzfs
 		 */
@@ -1202,6 +1239,7 @@ zpool_find_import_impl(libzfs_handle_t *hdl, importargs_t *iarg)
 			slice->rn_nozpool = B_FALSE;
 			avl_add(&slice_cache, slice);
 		}
+skipdir:
 		/*
 		 * create a thread pool to do all of this in parallel;
 		 * rn_nozpool is not protected, so this is racy in that

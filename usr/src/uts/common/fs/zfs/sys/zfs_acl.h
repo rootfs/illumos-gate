@@ -26,8 +26,7 @@
 #define	_SYS_FS_ZFS_ACL_H
 
 #ifdef _KERNEL
-#include <sys/isa_defs.h>
-#include <sys/types32.h>
+#include <sys/cred.h>
 #endif
 #include <sys/acl.h>
 #include <sys/dmu.h>
