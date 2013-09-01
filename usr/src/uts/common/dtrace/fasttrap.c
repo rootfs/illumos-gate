@@ -508,6 +508,7 @@ fasttrap_fork(proc_t *p, proc_t *cp)
 	mtx_unlock_spin(&cp->p_slock);
 #else
 	_PHOLD(cp);
+	PROC_UNLOCK(cp);
 #endif
 
 	/*
@@ -542,6 +543,7 @@ fasttrap_fork(proc_t *p, proc_t *cp)
 	mutex_enter(&cp->p_lock);
 	sprunlock(cp);
 #else
+	PROC_LOCK(cp);
 	_PRELE(cp);
 #endif
 }
@@ -2369,6 +2371,14 @@ fasttrap_load(void)
 	(void) dtrace_meta_register("fasttrap", &fasttrap_mops, NULL,
 	    &fasttrap_meta_id);
 
+	/*
+	 * Install our hooks into fork(2), exec(2), and exit(2).
+	 */
+	atomic_store_rel_int(&dtrace_fasttrap_hook_counter, 0);
+	dtrace_fasttrap_fork = &fasttrap_fork;
+	dtrace_fasttrap_exit = &fasttrap_exec_exit;
+	dtrace_fasttrap_exec = &fasttrap_exec_exit;
+
 	return (0);
 }
 
@@ -2451,6 +2461,22 @@ fasttrap_unload(void)
 		return (-1);
 	}
 
+	/*
+	 * Prevent any new processes from entering these hooks.
+	 * Then wait for the hook counter to drain to 0 so we know that it's
+	 * safe to free fasttrap_provs and unload the module
+	 */
+	ASSERT(dtrace_fasttrap_fork == &fasttrap_fork);
+	dtrace_fasttrap_fork = NULL;
+
+	ASSERT(dtrace_fasttrap_exec == &fasttrap_exec_exit);
+	dtrace_fasttrap_exec = NULL;
+
+	ASSERT(dtrace_fasttrap_exit == &fasttrap_exec_exit);
+	dtrace_fasttrap_exit = NULL;
+
+	while (atomic_load_acq_int(&dtrace_fasttrap_hook_counter) > 0) ;
+
 #ifdef DEBUG
 	mutex_enter(&fasttrap_count_mtx);
 	ASSERT(fasttrap_pid_count == 0);
@@ -2468,22 +2494,6 @@ fasttrap_unload(void)
 	kmem_free(fasttrap_procs.fth_table,
 	    fasttrap_procs.fth_nent * sizeof (fasttrap_bucket_t));
 	fasttrap_procs.fth_nent = 0;
-
-	/*
-	 * We know there are no tracepoints in any process anywhere in
-	 * the system so there is no process which has its p_dtrace_count
-	 * greater than zero, therefore we know that no thread can actively
-	 * be executing code in fasttrap_fork(). Similarly for p_dtrace_probes
-	 * and fasttrap_exec() and fasttrap_exit().
-	 */
-	ASSERT(dtrace_fasttrap_fork == &fasttrap_fork);
-	dtrace_fasttrap_fork = NULL;
-
-	ASSERT(dtrace_fasttrap_exec == &fasttrap_exec_exit);
-	dtrace_fasttrap_exec = NULL;
-
-	ASSERT(dtrace_fasttrap_exit == &fasttrap_exec_exit);
-	dtrace_fasttrap_exit = NULL;
 
 #if !defined(sun)
 	destroy_dev(fasttrap_cdev);

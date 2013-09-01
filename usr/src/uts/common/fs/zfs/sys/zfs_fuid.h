@@ -30,6 +30,7 @@
 #ifdef _KERNEL
 #include <sys/kidmap.h>
 #include <sys/dmu.h>
+#include <sys/security_id.h>
 #include <sys/zfs_vfsops.h>
 #endif
 #include <sys/avl.h>
@@ -104,10 +105,15 @@ extern uid_t zfs_fuid_map_id(zfsvfs_t *, uint64_t, cred_t *, zfs_fuid_type_t);
 extern void zfs_fuid_node_add(zfs_fuid_info_t **, const char *, uint32_t,
     uint64_t, uint64_t, zfs_fuid_type_t);
 extern void zfs_fuid_destroy(zfsvfs_t *);
+extern uint64_t zfs_fuid_create_rid_domain(zfsvfs_t *zfsvfs,
+    zfs_fuid_type_t type, uint32_t rid, const char *domain,
+    zfs_fuid_info_t **fuidp);
 extern uint64_t zfs_fuid_create_cred(zfsvfs_t *, zfs_fuid_type_t,
     cred_t *, zfs_fuid_info_t **);
 extern uint64_t zfs_fuid_create(zfsvfs_t *, uint64_t, cred_t *, zfs_fuid_type_t,
     zfs_fuid_info_t **);
+extern int zfs_fuid_map_sid(zfsvfs_t *, uint64_t, zfs_fuid_type_t,
+    struct sid **);
 extern void zfs_fuid_map_ids(struct znode *zp, cred_t *cr,
     uid_t *uid, uid_t *gid);
 extern zfs_fuid_info_t *zfs_fuid_info_alloc(void);

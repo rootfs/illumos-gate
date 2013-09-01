@@ -57,6 +57,10 @@ uint64_t zfs_write_limit_override = 0;
 
 kmutex_t zfs_write_limit_lock;
 
+#ifdef ZFS_DEBUG
+zio_t *syncer_zio = NULL;
+#endif
+
 static pgcnt_t old_physmem = 0;
 
 SYSCTL_DECL(_vfs_zfs);
@@ -410,6 +414,9 @@ dsl_pool_sync(dsl_pool_t *dp, uint64_t txg)
 		dsl_dataset_sync(ds, zio, tx);
 	}
 	DTRACE_PROBE(pool_sync__1setup);
+#ifdef ZFS_DEBUG
+	syncer_zio = zio;
+#endif
 	err = zio_wait(zio);
 
 	write_time = gethrtime() - start;
@@ -437,6 +444,9 @@ dsl_pool_sync(dsl_pool_t *dp, uint64_t txg)
 		dmu_buf_rele(ds->ds_dbuf, ds);
 		dsl_dataset_sync(ds, zio, tx);
 	}
+#ifdef ZFS_DEBUG
+	syncer_zio = zio;
+#endif
 	err = zio_wait(zio);
 
 	/*
@@ -480,6 +490,9 @@ dsl_pool_sync(dsl_pool_t *dp, uint64_t txg)
 	    list_head(&mos->os_free_dnodes[txg & TXG_MASK]) != NULL) {
 		zio = zio_root(dp->dp_spa, NULL, NULL, ZIO_FLAG_MUSTSUCCEED);
 		dmu_objset_sync(mos, zio, tx);
+#ifdef ZFS_DEBUG
+		syncer_zio = zio;
+#endif
 		err = zio_wait(zio);
 		ASSERT(err == 0);
 		dprintf_bp(&dp->dp_meta_rootbp, "meta objset rootbp is %s", "");

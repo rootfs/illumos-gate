@@ -109,7 +109,6 @@ typedef struct zap_leaf_phys {
 		uint16_t lh_nfree;		/* number free chunks */
 		uint16_t lh_nentries;		/* number of entries */
 		uint16_t lh_prefix_len;		/* num bits used to id this */
-
 		/* Private to zap_leaf */
 		uint16_t lh_freelist;		/* chunk head of free list */
 		uint8_t lh_flags;		/* ZLF_* flags */
@@ -126,6 +125,11 @@ typedef struct zap_leaf_phys {
 
 	uint16_t l_hash[1];
 } zap_leaf_phys_t;
+
+typedef struct zap_leaf_dbuf {
+	uint8_t zldb_pad[offsetof(dmu_buf_t, db_data)];
+	zap_leaf_phys_t *zldb_data;
+} zap_leaf_dbuf_t;
 
 typedef union zap_leaf_chunk {
 	struct zap_leaf_entry {
@@ -152,13 +156,19 @@ typedef union zap_leaf_chunk {
 } zap_leaf_chunk_t;
 
 typedef struct zap_leaf {
+	/* Dbuf user eviction data for this instance. */
+	dmu_buf_user_t l_dbu;
 	krwlock_t l_rwlock;
 	uint64_t l_blkid;		/* 1<<ZAP_BLOCK_SHIFT byte block off */
 	int l_bs;			/* block size shift */
-	dmu_buf_t *l_dbuf;
-	zap_leaf_phys_t *l_phys;
+	union {
+		dmu_buf_t *l_dmu_db;
+		zap_leaf_dbuf_t *l_db;
+	} zl_db_u;
 } zap_leaf_t;
 
+#define	l_dbuf zl_db_u.l_dmu_db
+#define	l_phys zl_db_u.l_db->zldb_data
 
 typedef struct zap_entry_handle {
 	/* Set by zap_leaf and public to ZAP */
@@ -213,7 +223,7 @@ extern int zap_entry_update(zap_entry_handle_t *zeh,
 extern void zap_entry_remove(zap_entry_handle_t *zeh);
 
 /*
- * Create an entry. An equal entry must not exist, and this entry must
+ * Create an entry.  An equal entry must not exist, and this entry must
  * belong in this leaf (according to its hash value).  Fills in the
  * entry handle on success.  Returns 0 on success or ENOSPC on failure.
  */

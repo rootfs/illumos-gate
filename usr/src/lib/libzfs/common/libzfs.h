@@ -326,6 +326,7 @@ typedef enum {
 	ZPOOL_STATUS_RESILVERING,	/* device being resilvered */
 	ZPOOL_STATUS_OFFLINE_DEV,	/* device online */
 	ZPOOL_STATUS_REMOVED_DEV,	/* removed device */
+	ZPOOL_STATUS_NON_NATIVE_ASHIFT,	/* (e.g. 512e dev with ashift of 9) */
 
 	/*
 	 * Finally, the following indicates a healthy pool.
@@ -369,6 +370,7 @@ typedef struct importargs {
 	int can_be_active : 1;	/* can the pool be active?		*/
 	int unique : 1;		/* does 'poolname' already exist?	*/
 	int exists : 1;		/* set on return if pool already exists	*/
+	int can_be_destroyed : 1;	/* can the pool be destroyed?	*/
 } importargs_t;
 
 extern nvlist_t *zpool_search_import(libzfs_handle_t *, importargs_t *);

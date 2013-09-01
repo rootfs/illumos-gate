@@ -273,6 +273,33 @@ SYSCTL_UQUAD(_vfs_zfs, OID_AUTO, deadman_synctime, CTLFLAG_RDTUN,
     &zfs_deadman_synctime, 0,
     "Stalled ZFS I/O expiration time in units of vfs.zfs.txg_synctime_ms");
 
+static int
+sysctl_vfs_zfs_debug_flags(SYSCTL_HANDLER_ARGS)
+{
+	int err, val;
+
+	val = zfs_flags;
+	err = sysctl_handle_int(oidp, &val, 0, req);
+	if (err != 0 || req->newptr == NULL)
+		return (err);
+
+	/*
+	 * ZFS_DEBUG_MODIFY must be enabled prior to boot so all
+	 * arc buffers in the system have the necessary additional
+	 * checksum data.  However, it is safe to disable at any
+	 * time.
+	 */
+	if (!(zfs_flags & ZFS_DEBUG_MODIFY))
+		val &= ~ZFS_DEBUG_MODIFY;
+	zfs_flags = val;
+
+	return (0);
+}
+TUNABLE_INT("vfs.zfs.debug_flags", &zfs_flags);
+SYSCTL_PROC(_vfs_zfs, OID_AUTO, debug_flags,
+    CTLTYPE_UINT | CTLFLAG_MPSAFE | CTLFLAG_RW, 0, sizeof(int),
+    sysctl_vfs_zfs_debug_flags, "IU", "Debug flags for ZFS testing.");
+
 /*
  * Default value of -1 for zfs_deadman_enabled is resolved in
  * zfs_deadman_init()
@@ -512,7 +539,8 @@ spa_add(const char *name, nvlist_t *config, const char *altroot)
 	mutex_init(&spa->spa_suspend_lock, NULL, MUTEX_DEFAULT, NULL);
 	mutex_init(&spa->spa_vdev_top_lock, NULL, MUTEX_DEFAULT, NULL);
 
-	cv_init(&spa->spa_async_cv, NULL, CV_DEFAULT, NULL);
+	cv_init(&spa->spa_async_sd_cv, NULL, CV_DEFAULT, NULL);
+	cv_init(&spa->spa_async_wu_cv, NULL, CV_DEFAULT, NULL);
 	cv_init(&spa->spa_proc_cv, NULL, CV_DEFAULT, NULL);
 	cv_init(&spa->spa_scrub_io_cv, NULL, CV_DEFAULT, NULL);
 	cv_init(&spa->spa_suspend_cv, NULL, CV_DEFAULT, NULL);
@@ -527,6 +555,10 @@ spa_add(const char *name, nvlist_t *config, const char *altroot)
 	spa->spa_load_max_txg = UINT64_MAX;
 	spa->spa_proc = &p0;
 	spa->spa_proc_state = SPA_PROC_NONE;
+	spa->spa_async_suspended = 0;
+	spa->spa_async_suspend_done = 0;
+	spa->spa_async_shutdown = 0;
+	spa->spa_async_thread = NULL;
 
 #ifdef illumos
 	hdlr.cyh_func = spa_deadman;
@@ -657,7 +689,8 @@ spa_remove(spa_t *spa)
 	for (int t = 0; t < TXG_SIZE; t++)
 		bplist_destroy(&spa->spa_free_bplist[t]);
 
-	cv_destroy(&spa->spa_async_cv);
+	cv_destroy(&spa->spa_async_sd_cv);
+	cv_destroy(&spa->spa_async_wu_cv);
 	cv_destroy(&spa->spa_proc_cv);
 	cv_destroy(&spa->spa_scrub_io_cv);
 	cv_destroy(&spa->spa_suspend_cv);
@@ -972,6 +1005,7 @@ spa_l2cache_activate(vdev_t *vd)
 
 /*
  * Lock the given spa_t for the purpose of adding or removing a vdev.
+ *
  * Grabs the global spa_namespace_lock plus the spa config lock for writing.
  * It returns the next transaction group for the spa_t.
  */
@@ -1021,6 +1055,8 @@ spa_vdev_config_exit(spa_t *spa, vdev_t *vd, uint64_t txg, int error, char *tag)
 	if (error == 0 && !list_is_empty(&spa->spa_config_dirty_list)) {
 		config_changed = B_TRUE;
 		spa->spa_config_generation++;
+		ASSERT(txg > spa->spa_config_update_txg);
+		spa->spa_config_update_txg = txg;
 	}
 
 	/*
@@ -1086,25 +1122,43 @@ spa_vdev_state_enter(spa_t *spa, int oplocks)
 	int locks = SCL_STATE_ALL | oplocks;
 
 	/*
-	 * Root pools may need to read of the underlying devfs filesystem
-	 * when opening up a vdev.  Unfortunately if we're holding the
-	 * SCL_ZIO lock it will result in a deadlock when we try to issue
-	 * the read from the root filesystem.  Instead we "prefetch"
-	 * the associated vnodes that we need prior to opening the
-	 * underlying devices and cache them so that we can prevent
-	 * any I/O when we are doing the actual open.
+	 * In order for vdev state changes to be atomic, it is necessary to
+	 * wait until any previous changes have been committed to disk and
+	 * synchronized in-core.  This is because some operations that
+	 * affect the in-core config attempt to reload it from the vdev
+	 * labels directly, then panic if they don't match the in-core config.
 	 */
-	if (spa_is_root(spa)) {
-		int low = locks & ~(SCL_ZIO - 1);
-		int high = locks & ~low;
+	for (;;) {
+		uint64_t updated_txg;
 
-		spa_config_enter(spa, high, spa, RW_WRITER);
-		vdev_hold(spa->spa_root_vdev);
-		spa_config_enter(spa, low, spa, RW_WRITER);
-	} else {
-		spa_config_enter(spa, locks, spa, RW_WRITER);
+		/*
+		 * Root pools may need to read the underlying devfs when
+		 * opening up a vdev.  Unfortunately if we're holding the
+		 * SCL_ZIO lock it will result in a deadlock when we try to
+		 * issue the read from the root filesystem.  Instead we
+		 * "prefetch" the associated vnodes that we need prior to
+		 * opening the underlying devices and cache them so that we
+		 * can prevent any I/O when we are doing the actual open.
+		 */
+		if (spa_is_root(spa)) {
+			int low = locks & ~(SCL_ZIO - 1);
+			int high = locks & ~low;
+
+			spa_config_enter(spa, high, spa, RW_WRITER);
+			vdev_hold(spa->spa_root_vdev);
+			spa_config_enter(spa, low, spa, RW_WRITER);
+		} else {
+			spa_config_enter(spa, locks, spa, RW_WRITER);
+		}
+		spa->spa_vdev_locks = locks;
+
+		updated_txg = spa->spa_config_update_txg;
+		ASSERT(updated_txg >= spa->spa_config_txg);
+		if (spa->spa_config_txg == updated_txg)
+			break;
+		spa_config_exit(spa, locks, spa);
+		txg_wait_synced(spa_get_dsl(spa), updated_txg);
 	}
-	spa->spa_vdev_locks = locks;
 }
 
 int
@@ -1124,6 +1178,9 @@ spa_vdev_state_exit(spa_t *spa, vdev_t *vd, int error)
 
 	if (spa_is_root(spa))
 		vdev_rele(spa->spa_root_vdev);
+
+	if (vd != NULL)
+		vdev_propagate_state(vd);
 
 	ASSERT3U(spa->spa_vdev_locks, >=, SCL_STATE_ALL);
 	spa_config_exit(spa, spa->spa_vdev_locks, spa);
@@ -1407,7 +1464,10 @@ zfs_strtonum(const char *str, char **nptr)
 boolean_t
 spa_shutting_down(spa_t *spa)
 {
-	return (spa->spa_async_suspended);
+	if (spa->spa_async_suspended || spa->spa_async_shutdown)
+		return (B_TRUE);
+	else
+		return (B_FALSE);
 }
 
 dsl_pool_t *
@@ -1701,6 +1761,27 @@ spa_boot_init()
 EVENTHANDLER_DEFINE(mountroot, spa_boot_init, NULL, 0);
 #endif
 
+uint_t zfs_fsyncer_key;
+uint_t rrw_tsd_key;
+uint_t zfs_async_io_key;
+uint_t zfs_geom_probe_vdev_key;
+
+void
+zfs_tsd_init(void)
+{
+	tsd_create(&zfs_fsyncer_key, NULL);
+	tsd_create(&rrw_tsd_key, rrw_tsd_destroy);
+	tsd_create(&zfs_async_io_key, dmu_thread_context_destroy);
+}
+
+void
+zfs_tsd_fini(void)
+{
+	tsd_destroy(&zfs_fsyncer_key);
+	tsd_destroy(&rrw_tsd_key);
+	tsd_destroy(&zfs_async_io_key);
+}
+
 void
 spa_init(int mode)
 {
@@ -1780,7 +1861,7 @@ spa_fini(void)
 }
 
 /*
- * Return whether this pool has slogs. No locking needed.
+ * Return whether this pool has slogs.  No locking needed.
  * It's not a problem if the wrong answer is returned as it's only for
  * performance and not correctness
  */

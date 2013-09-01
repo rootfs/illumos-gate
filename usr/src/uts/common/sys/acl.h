@@ -31,8 +31,8 @@
 
 #if defined(_KERNEL)
 /*
- * When compiling OpenSolaris kernel code, this file is getting
- * included instead of FreeBSD one.  Pull the original sys/acl.h as well.
+ * When compiling OpenSolaris code, this file is included instead of
+ * the FreeBSD one.  Pull the original sys/acl.h as well.
  */
 #undef _SYS_ACL_H
 #include_next <sys/acl.h>
@@ -128,8 +128,6 @@ typedef struct acl_info acl_t;
 #define	ACL_FLAGS_ALL			(ACL_AUTO_INHERIT|ACL_PROTECTED| \
     ACL_DEFAULTED)
 
-#ifdef _KERNEL
-
 /*
  * These are only applicable in a CIFS context.
  */
@@ -148,6 +146,8 @@ typedef struct acl_info acl_t;
 #define	ACE_SYSTEM_ALARM_CALLBACK_OBJECT_ACE_TYPE	0x10
 
 #define	ACE_ALL_TYPES	0x001F
+
+#ifdef _KERNEL
 
 typedef struct ace_object {
 	uid_t		a_who;		/* uid or gid */

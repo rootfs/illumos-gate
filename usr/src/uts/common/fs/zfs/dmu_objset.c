@@ -37,10 +37,11 @@
 #include <sys/dsl_deleg.h>
 #include <sys/dnode.h>
 #include <sys/dbuf.h>
-#include <sys/zvol.h>
 #include <sys/dmu_tx.h>
 #include <sys/zap.h>
 #include <sys/zil.h>
+#include <sys/dsl_destroy.h>
+#include <sys/zvol.h>
 #include <sys/dmu_impl.h>
 #include <sys/zfs_ioctl.h>
 #include <sys/sa.h>
@@ -463,13 +464,26 @@ dmu_objset_hold(const char *name, void *tag, objset_t **osp)
 		dsl_pool_rele(dp, tag);
 		return (err);
 	}
-
 	err = dmu_objset_from_ds(ds, osp);
 	if (err != 0) {
 		dsl_dataset_rele(ds, tag);
 		dsl_pool_rele(dp, tag);
 	}
+	return (err);
+}
 
+int
+dmu_objset_set_owner(objset_t *os, void *tag)
+{
+	int err = dsl_dataset_set_owner(os->os_dsl_dataset, tag);
+
+	/*
+	 * The tag must be the same one passed to dmu_objset_hold().  The
+	 * pool is only released on success because the caller will expect
+	 * to call dmu_objset_rele() on error.
+	 */
+	if (err == 0)
+		dsl_pool_rele(dmu_objset_pool(os), tag);
 	return (err);
 }
 
@@ -482,30 +496,23 @@ int
 dmu_objset_own(const char *name, dmu_objset_type_t type,
     boolean_t readonly, void *tag, objset_t **osp)
 {
-	dsl_pool_t *dp;
-	dsl_dataset_t *ds;
+	objset_t *os;
 	int err;
 
-	err = dsl_pool_hold(name, FTAG, &dp);
+	*osp = NULL;
+	err = dmu_objset_hold(name, tag, &os);
 	if (err != 0)
 		return (err);
-	err = dsl_dataset_own(dp, name, tag, &ds);
-	if (err != 0) {
-		dsl_pool_rele(dp, FTAG);
-		return (err);
-	}
-
-	err = dmu_objset_from_ds(ds, osp);
-	dsl_pool_rele(dp, FTAG);
-	if (err != 0) {
-		dsl_dataset_disown(ds, tag);
-	} else if (type != DMU_OST_ANY && type != (*osp)->os_phys->os_type) {
-		dsl_dataset_disown(ds, tag);
-		return (SET_ERROR(EINVAL));
-	} else if (!readonly && dsl_dataset_is_snapshot(ds)) {
-		dsl_dataset_disown(ds, tag);
-		return (SET_ERROR(EROFS));
-	}
+	if (type != DMU_OST_ANY && type != os->os_phys->os_type)
+		err = SET_ERROR(EINVAL);
+	else if (!readonly && dsl_dataset_is_snapshot(os->os_dsl_dataset))
+		err = SET_ERROR(EROFS);
+	if (err == 0)
+		err = dmu_objset_set_owner(os, tag);
+	if (err != 0)
+		dmu_objset_rele(os, tag);
+	else
+		*osp = os;
 	return (err);
 }
 
@@ -520,7 +527,7 @@ dmu_objset_rele(objset_t *os, void *tag)
 void
 dmu_objset_disown(objset_t *os, void *tag)
 {
-	dsl_dataset_disown(os->os_dsl_dataset, tag);
+	dsl_dataset_remove_owner(os->os_dsl_dataset, tag);
 }
 
 void
@@ -570,10 +577,9 @@ dmu_objset_evict(objset_t *os)
 		ASSERT(!dmu_objset_is_dirty(os, t));
 
 	if (ds) {
-		if (!dsl_dataset_is_snapshot(ds)) {
-			VERIFY0(dsl_prop_unregister(ds,
-			    zfs_prop_to_name(ZFS_PROP_CHECKSUM),
-			    checksum_changed_cb, os));
+		/* Snapshots do not have these properties. */
+		if (dsl_prop_unregister(ds, zfs_prop_to_name(ZFS_PROP_CHECKSUM),
+		    checksum_changed_cb, os) == 0) {
 			VERIFY0(dsl_prop_unregister(ds,
 			    zfs_prop_to_name(ZFS_PROP_COMPRESSION),
 			    compression_changed_cb, os));
@@ -696,16 +702,6 @@ dmu_objset_create_impl(spa_t *spa, dsl_dataset_t *ds, blkptr_t *bp,
 	return (os);
 }
 
-typedef struct dmu_objset_create_arg {
-	const char *doca_name;
-	cred_t *doca_cred;
-	void (*doca_userfunc)(objset_t *os, void *arg,
-	    cred_t *cr, dmu_tx_t *tx);
-	void *doca_userarg;
-	dmu_objset_type_t doca_type;
-	uint64_t doca_flags;
-} dmu_objset_create_arg_t;
-
 /*ARGSUSED*/
 static int
 dmu_objset_create_check(void *arg, dmu_tx_t *tx)
@@ -767,7 +763,7 @@ int
 dmu_objset_create(const char *name, dmu_objset_type_t type, uint64_t flags,
     void (*func)(objset_t *os, void *arg, cred_t *cr, dmu_tx_t *tx), void *arg)
 {
-	dmu_objset_create_arg_t doca;
+	dmu_objset_create_arg_t doca = {};
 
 	doca.doca_name = name;
 	doca.doca_cred = CRED();
@@ -776,15 +772,19 @@ dmu_objset_create(const char *name, dmu_objset_type_t type, uint64_t flags,
 	doca.doca_userarg = arg;
 	doca.doca_type = type;
 
-	return (dsl_sync_task(name,
-	    dmu_objset_create_check, dmu_objset_create_sync, &doca, 5));
-}
+#ifdef _KERNEL
+	doca.doca_error = zvol_create_init(&doca);
+#endif
 
-typedef struct dmu_objset_clone_arg {
-	const char *doca_clone;
-	const char *doca_origin;
-	cred_t *doca_cred;
-} dmu_objset_clone_arg_t;
+	if (doca.doca_error == 0)
+		doca.doca_error = dsl_sync_task(name, dmu_objset_create_check,
+		    dmu_objset_create_sync, &doca, 5);
+
+	if (doca.doca_user_cleanupfunc != NULL)
+		doca.doca_user_cleanupfunc(&doca);
+
+	return (doca.doca_error);
+}
 
 /*ARGSUSED*/
 static int
@@ -855,6 +855,10 @@ dmu_objset_clone_sync(void *arg, dmu_tx_t *tx)
 	dsl_dataset_name(origin, namebuf);
 	spa_history_log_internal_ds(ds, "clone", tx,
 	    "origin=%s (%llu)", namebuf, origin->ds_object);
+
+	if (doca->doca_user_syncfunc != NULL)
+		doca->doca_user_syncfunc(doca, ds);
+
 	dsl_dataset_rele(ds, FTAG);
 	dsl_dataset_rele(origin, FTAG);
 	dsl_dir_rele(pdd, FTAG);
@@ -863,14 +867,26 @@ dmu_objset_clone_sync(void *arg, dmu_tx_t *tx)
 int
 dmu_objset_clone(const char *clone, const char *origin)
 {
-	dmu_objset_clone_arg_t doca;
+	dmu_objset_clone_arg_t doca = {};
+	int err;
 
 	doca.doca_clone = clone;
 	doca.doca_origin = origin;
 	doca.doca_cred = CRED();
 
-	return (dsl_sync_task(clone,
-	    dmu_objset_clone_check, dmu_objset_clone_sync, &doca, 5));
+#ifdef _KERNEL
+	err = zvol_clone_init(&doca);
+	if (err)
+		return (err);
+#endif
+
+	err = dsl_sync_task(clone,
+	    dmu_objset_clone_check, dmu_objset_clone_sync, &doca, 5);
+
+	if (doca.doca_user_cleanupfunc != NULL)
+		doca.doca_user_cleanupfunc(&doca);
+
+	return (err);
 }
 
 int
@@ -1158,16 +1174,13 @@ dmu_objset_do_userquota_updates(objset_t *os, dmu_tx_t *tx)
 static void *
 dmu_objset_userquota_find_data(dmu_buf_impl_t *db, dmu_tx_t *tx)
 {
-	dbuf_dirty_record_t *dr, **drp;
+	dbuf_dirty_record_t *dr;
 	void *data;
 
 	if (db->db_dirtycnt == 0)
 		return (db->db.db_data);  /* Nothing is changing */
 
-	for (drp = &db->db_last_dirty; (dr = *drp) != NULL; drp = &dr->dr_next)
-		if (dr->dr_txg == tx->tx_txg)
-			break;
-
+	dr = dbuf_get_dirty_record_for_txg(db, tx->tx_txg);
 	if (dr == NULL) {
 		data = NULL;
 	} else {
@@ -1689,7 +1702,7 @@ dmu_objset_find_impl(spa_t *spa, const char *name,
 	kmem_free(attr, sizeof (zap_attribute_t));
 	dsl_pool_config_exit(dp, FTAG);
 
-	if (err != 0)
+	if (err != 0 || (flags & DS_FIND_IGNORE_SELF))
 		return (err);
 
 	/* Apply to self. */

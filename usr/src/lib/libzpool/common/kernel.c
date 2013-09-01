@@ -37,6 +37,7 @@
 #include <sys/zmod.h>
 #include <sys/utsname.h>
 #include <sys/systeminfo.h>
+#include <sys/zfs_ioctl.h>
 
 /*
  * Emulation of kernel services in userland.
@@ -593,6 +594,23 @@ dprintf_setup(int *argc, char **argv)
 
 /*
  * =========================================================================
+ * sysctl support
+ * =========================================================================
+ */
+int
+sysctl_handle_int(SYSCTL_HANDLER_ARGS)
+{
+	return (0);
+}
+
+int
+sysctl_handle_64(SYSCTL_HANDLER_ARGS)
+{
+	return (0);
+}
+
+/*
+ * =========================================================================
  * debug printfs
  * =========================================================================
  */
@@ -620,7 +638,7 @@ __dprintf(const char *file, const char *func, int line, const char *fmt, ...)
 		if (dprintf_find_string("pid"))
 			(void) printf("%d ", getpid());
 		if (dprintf_find_string("tid"))
-			(void) printf("%u ", thr_self());
+			(void) printf("%lu ", thr_self());
 #if 0
 		if (dprintf_find_string("cpu"))
 			(void) printf("%u ", getcpuid());
@@ -909,12 +927,13 @@ kernel_init(int mode)
 
 	spa_init(mode);
 
-	tsd_create(&rrw_tsd_key, rrw_tsd_destroy);
+	zfs_tsd_init();
 }
 
 void
 kernel_fini(void)
 {
+	zfs_tsd_fini();
 	spa_fini();
 
 	system_taskq_fini();

@@ -86,12 +86,12 @@ typedef struct sa_bulk_attr {
 
 /*
  * special macro for adding entries for bulk attr support
- * bulk - sa_bulk_attr_t
+ * bulk  - sa_bulk_attr_t
  * count - integer that will be incremented during each add
- * attr - attribute to manipulate
- * func - function for accessing data.
- * data - pointer to data.
- * len - length of data
+ * attr  - attribute to manipulate
+ * func  - function for accessing data.
+ * data  - pointer to data.
+ * len   - length of data
  */
 
 #define	SA_ADD_BULK_ATTR(b, idx, attr, func, data, len) \

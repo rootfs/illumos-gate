@@ -154,7 +154,6 @@
 #include "zinject.h"
 
 libzfs_handle_t *g_zfs;
-int zfs_fd;
 
 #ifndef ECKSUM
 #define	ECKSUM	EBADE
@@ -301,7 +300,7 @@ iter_handlers(int (*func)(int, const char *, zinject_record_t *, void *),
 	zfs_cmd_t zc = { 0 };
 	int ret;
 
-	while (ioctl(zfs_fd, ZFS_IOC_INJECT_LIST_NEXT, &zc) == 0)
+	while (zfs_ioctl(g_zfs, ZFS_IOC_INJECT_LIST_NEXT, &zc) == 0)
 		if ((ret = func((int)zc.zc_guid, zc.zc_name,
 		    &zc.zc_inject_record, data)) != 0)
 			return (ret);
@@ -427,7 +426,7 @@ cancel_one_handler(int id, const char *pool, zinject_record_t *record,
 
 	zc.zc_guid = (uint64_t)id;
 
-	if (ioctl(zfs_fd, ZFS_IOC_CLEAR_FAULT, &zc) != 0) {
+	if (zfs_ioctl(g_zfs, ZFS_IOC_CLEAR_FAULT, &zc) != 0) {
 		(void) fprintf(stderr, "failed to remove handler %d: %s\n",
 		    id, strerror(errno));
 		return (1);
@@ -460,7 +459,7 @@ cancel_handler(int id)
 
 	zc.zc_guid = (uint64_t)id;
 
-	if (ioctl(zfs_fd, ZFS_IOC_CLEAR_FAULT, &zc) != 0) {
+	if (zfs_ioctl(g_zfs, ZFS_IOC_CLEAR_FAULT, &zc) != 0) {
 		(void) fprintf(stderr, "failed to remove handler %d: %s\n",
 		    id, strerror(errno));
 		return (1);
@@ -484,7 +483,7 @@ register_handler(const char *pool, int flags, zinject_record_t *record,
 	zc.zc_inject_record = *record;
 	zc.zc_guid = flags;
 
-	if (ioctl(zfs_fd, ZFS_IOC_INJECT_FAULT, &zc) != 0) {
+	if (zfs_ioctl(g_zfs, ZFS_IOC_INJECT_FAULT, &zc) != 0) {
 		(void) fprintf(stderr, "failed to add handler: %s\n",
 		    strerror(errno));
 		return (1);
@@ -542,10 +541,7 @@ perform_action(const char *pool, zinject_record_t *record, int cmd)
 	zc.zc_guid = record->zi_guid;
 	zc.zc_cookie = cmd;
 
-	if (ioctl(zfs_fd, ZFS_IOC_VDEV_SET_STATE, &zc) == 0)
-		return (0);
-
-	return (1);
+	return (zfs_ioctl(g_zfs, ZFS_IOC_VDEV_SET_STATE, &zc));
 }
 
 int
@@ -582,11 +578,6 @@ main(int argc, char **argv)
 	}
 
 	libzfs_print_on_error(g_zfs, B_TRUE);
-
-	if ((zfs_fd = open(ZFS_DEV, O_RDWR)) < 0) {
-		(void) fprintf(stderr, "failed to open ZFS device\n");
-		return (1);
-	}
 
 	if (argc == 1) {
 		/*

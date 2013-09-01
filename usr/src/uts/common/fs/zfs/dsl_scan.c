@@ -65,10 +65,11 @@ unsigned int zfs_scan_idle = 50;	/* idle window in clock ticks */
 
 unsigned int zfs_scan_min_time_ms = 1000; /* min millisecs to scrub per txg */
 unsigned int zfs_free_min_time_ms = 1000; /* min millisecs to free per txg */
-unsigned int zfs_resilver_min_time_ms = 3000; /* min millisecs to resilver
-						 per txg */
+/* min millisecs to resilver per txg */
+unsigned int zfs_resilver_min_time_ms = 3000;
 boolean_t zfs_no_scrub_io = B_FALSE; /* set to disable scrub i/o */
-boolean_t zfs_no_scrub_prefetch = B_FALSE; /* set to disable srub prefetching */
+/* set to disable scrub prefetching */
+boolean_t zfs_no_scrub_prefetch = B_FALSE;
 
 SYSCTL_DECL(_vfs_zfs);
 TUNABLE_INT("vfs.zfs.top_maxinflight", &zfs_top_maxinflight);
@@ -207,10 +208,13 @@ static void
 dsl_scan_setup_sync(void *arg, dmu_tx_t *tx)
 {
 	dsl_scan_t *scn = dmu_tx_pool(tx)->dp_scan;
+	dsl_scan_phys_t *scnphys = &scn->scn_phys;
 	pool_scan_func_t *funcp = arg;
 	dmu_object_type_t ot = 0;
 	dsl_pool_t *dp = scn->scn_dp;
 	spa_t *spa = dp->dp_spa;
+	spa_history_log_t shl;
+	char *scan_event_class;
 
 	ASSERT(scn->scn_phys.scn_state != DSS_SCANNING);
 	ASSERT(*funcp > POOL_SCAN_NONE && *funcp < POOL_SCAN_FUNCS);
@@ -234,9 +238,9 @@ dsl_scan_setup_sync(void *arg, dmu_tx_t *tx)
 
 		if (vdev_resilver_needed(spa->spa_root_vdev,
 		    &scn->scn_phys.scn_min_txg, &scn->scn_phys.scn_max_txg)) {
-			spa_event_notify(spa, NULL, ESC_ZFS_RESILVER_START);
+			scan_event_class = ESC_ZFS_RESILVER_START;
 		} else {
-			spa_event_notify(spa, NULL, ESC_ZFS_SCRUB_START);
+			scan_event_class = ESC_ZFS_SCRUB_START;
 		}
 
 		spa->spa_scrub_started = B_TRUE;
@@ -266,9 +270,14 @@ dsl_scan_setup_sync(void *arg, dmu_tx_t *tx)
 
 	dsl_scan_sync_state(scn, tx);
 
-	spa_history_log_internal(spa, "scan setup", tx,
-	    "func=%u mintxg=%llu maxtxg=%llu",
-	    *funcp, scn->scn_phys.scn_min_txg, scn->scn_phys.scn_max_txg);
+	VERIFY0(spa_history_log_start(spa, tx, &shl));
+	spa_history_log_internal_str(&shl,
+	    "func=%u mintxg=%llu maxtxg=%llu bytes_to_scan=%llu",
+	    *funcp, scnphys->scn_min_txg, scnphys->scn_max_txg,
+	    scnphys->scn_to_examine);
+	fnvlist_add_uint64(shl.nvl, ZPOOL_HIST_TIME, scnphys->scn_start_time);
+	spa_history_log_event_class(&shl, scan_event_class);
+	spa_history_log_complete(&shl, "scan setup");
 }
 
 /* ARGSUSED */
@@ -287,8 +296,11 @@ dsl_scan_done(dsl_scan_t *scn, boolean_t complete, dmu_tx_t *tx)
 		NULL
 	};
 
+	dsl_scan_phys_t *scnphys = &scn->scn_phys;
 	dsl_pool_t *dp = scn->scn_dp;
 	spa_t *spa = dp->dp_spa;
+	spa_history_log_t shl;
+	char *scan_event_class = NULL;
 	int i;
 
 	/* Remove any remnants of an old-style scrub. */
@@ -315,9 +327,6 @@ dsl_scan_done(dsl_scan_t *scn, boolean_t complete, dmu_tx_t *tx)
 	else
 		scn->scn_phys.scn_state = DSS_CANCELED;
 
-	spa_history_log_internal(spa, "scan done", tx,
-	    "complete=%u", complete);
-
 	if (DSL_SCAN_IS_SCRUB_RESILVER(scn)) {
 		mutex_enter(&spa->spa_scrub_lock);
 		while (spa->spa_scrub_inflight > 0) {
@@ -336,8 +345,11 @@ dsl_scan_done(dsl_scan_t *scn, boolean_t complete, dmu_tx_t *tx)
 		vdev_dtl_reassess(spa->spa_root_vdev, tx->tx_txg,
 		    complete ? scn->scn_phys.scn_max_txg : 0, B_TRUE);
 		if (complete) {
-			spa_event_notify(spa, NULL, scn->scn_phys.scn_min_txg ?
-			    ESC_ZFS_RESILVER_FINISH : ESC_ZFS_SCRUB_FINISH);
+			scan_event_class = scn->scn_phys.scn_min_txg ?
+			    ESC_ZFS_RESILVER_FINISH : ESC_ZFS_SCRUB_FINISH;
+		} else {
+			ASSERT0(scn->scn_phys.scn_min_txg);
+			scan_event_class = ESC_ZFS_SCRUB_CANCELLED;
 		}
 		spa_errlog_rotate(spa);
 
@@ -349,6 +361,14 @@ dsl_scan_done(dsl_scan_t *scn, boolean_t complete, dmu_tx_t *tx)
 	}
 
 	scn->scn_phys.scn_end_time = gethrestime_sec();
+
+	VERIFY0(spa_history_log_start(spa, tx, &shl));
+	spa_history_log_internal_str(&shl, "complete=%u errors=%llu",
+	    complete, scnphys->scn_errors);
+	fnvlist_add_uint64(shl.nvl, ZPOOL_HIST_TIME, scnphys->scn_end_time);
+	if (scan_event_class != NULL)
+		spa_history_log_event_class(&shl, scan_event_class);
+	spa_history_log_complete(&shl, "scan done");
 }
 
 /* ARGSUSED */
@@ -1395,6 +1415,46 @@ dsl_scan_active(dsl_scan_t *scn)
 	return (used != 0);
 }
 
+static void
+dsl_scan_sync_update(dsl_scan_t *scn)
+{
+	sysevent_id_t eid;
+	char *ev;
+	nvlist_t *nvl;
+	spa_t *spa;
+	uint64_t bytes_done_since, bytes_to_process, threshold;
+
+	if (scn->scn_phys.scn_state != DSS_SCANNING)
+		return;
+
+	if (scn->scn_phys.scn_func == POOL_SCAN_RESILVER)
+		ev = ESC_ZFS_RESILVER_UPDATE;
+	else if (scn->scn_phys.scn_func == POOL_SCAN_SCRUB)
+		ev = ESC_ZFS_SCRUB_UPDATE;
+	else
+		return;
+
+	spa = scn->scn_dp->dp_spa;
+
+	/*
+	 * XXXPOLICY
+	 * Rate limit update events to require a bytes scanned % bump >= 0.1.
+	 * Note this will be further rate limited by how often we're called.
+	 */
+	threshold = spa->spa_root_vdev->vdev_stat.vs_alloc / 1000;
+	bytes_done_since = scn->scn_phys.scn_examined - scn->scn_examined_event;
+	if (bytes_done_since < threshold)
+		return;
+
+	scn->scn_examined_event = scn->scn_phys.scn_examined;
+	nvl = fnvlist_alloc();
+	fnvlist_add_string(nvl, ZFS_EV_POOL_NAME, spa_name(spa));
+	fnvlist_add_uint64(nvl, ZFS_EV_POOL_GUID, spa_guid(spa));
+	fnvlist_add_uint64(nvl, "bytes_scanned", scn->scn_phys.scn_examined);
+	ddi_log_sysevent(NULL, SUNW_VENDOR, EC_ZFS, ev, nvl, &eid, DDI_SLEEP);
+	fnvlist_free(nvl);
+}
+
 void
 dsl_scan_sync(dsl_pool_t *dp, dmu_tx_t *tx)
 {
@@ -1538,6 +1598,7 @@ dsl_scan_sync(dsl_pool_t *dp, dmu_tx_t *tx)
 	}
 
 	dsl_scan_sync_state(scn, tx);
+	dsl_scan_sync_update(scn);
 }
 
 /*

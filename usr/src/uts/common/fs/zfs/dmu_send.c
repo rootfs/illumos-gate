@@ -880,7 +880,8 @@ dmu_recv_begin_sync(void *arg, dmu_tx_t *tx)
 		dsl_dir_rele(dd, FTAG);
 		drba->drba_cookie->drc_newfs = B_TRUE;
 	}
-	VERIFY0(dsl_dataset_own_obj(dp, dsobj, dmu_recv_tag, &newds));
+	VERIFY0(dsl_dataset_hold_obj(dp, dsobj, dmu_recv_tag, &newds));
+	VERIFY0(dsl_dataset_set_owner(newds, dmu_recv_tag));
 
 	dmu_buf_will_dirty(newds->ds_dbuf, tx);
 	newds->ds_phys->ds_flags |= DS_FLAG_INCONSISTENT;
@@ -1417,7 +1418,7 @@ dmu_recv_cleanup_ds(dmu_recv_cookie_t *drc)
 {
 	char name[MAXNAMELEN];
 	dsl_dataset_name(drc->drc_ds, name);
-	dsl_dataset_disown(drc->drc_ds, dmu_recv_tag);
+	dsl_dataset_remove_owner(drc->drc_ds, dmu_recv_tag);
 	(void) dsl_destroy_head(name);
 }
 
@@ -1675,7 +1676,7 @@ dmu_recv_end_sync(void *arg, dmu_tx_t *tx)
 	 * we return to open context, so that when we free the dataset's dnode,
 	 * we can evict its bonus buffer.
 	 */
-	dsl_dataset_disown(drc->drc_ds, dmu_recv_tag);
+	dsl_dataset_remove_owner(drc->drc_ds, dmu_recv_tag);
 	drc->drc_ds = NULL;
 }
 

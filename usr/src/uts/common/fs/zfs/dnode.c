@@ -456,13 +456,13 @@ dnode_destroy(dnode_t *dn)
 	dn->dn_assigned_txg = 0;
 
 	dn->dn_dirtyctx = 0;
-	if (dn->dn_dirtyctx_firstset != NULL) {
-		kmem_free(dn->dn_dirtyctx_firstset, 1);
-		dn->dn_dirtyctx_firstset = NULL;
-	}
+	dn->dn_dirtyctx_firstset = NULL;
 	if (dn->dn_bonus != NULL) {
+		list_t evict_list;
+		dmu_buf_create_user_evict_list(&evict_list);
 		mutex_enter(&dn->dn_bonus->db_mtx);
-		dbuf_evict(dn->dn_bonus);
+		dbuf_evict(dn->dn_bonus, &evict_list);
+		dmu_buf_destroy_user_evict_list(&evict_list);
 		dn->dn_bonus = NULL;
 	}
 	dn->dn_zio = NULL;
@@ -549,10 +549,7 @@ dnode_allocate(dnode_t *dn, dmu_object_type_t ot, int blocksize, int ibs,
 	dn->dn_dirtyctx = 0;
 
 	dn->dn_free_txg = 0;
-	if (dn->dn_dirtyctx_firstset) {
-		kmem_free(dn->dn_dirtyctx_firstset, 1);
-		dn->dn_dirtyctx_firstset = NULL;
-	}
+	dn->dn_dirtyctx_firstset = NULL;
 
 	dn->dn_allocated_txg = tx->tx_txg;
 	dn->dn_id_flags = 0;
@@ -962,15 +959,12 @@ dnode_special_open(objset_t *os, dnode_phys_t *dnp, uint64_t object,
 }
 
 static void
-dnode_buf_pageout(dmu_buf_t *db, void *arg)
+dnode_buf_pageout(dmu_buf_user_t *dbu)
 {
-	dnode_children_t *children_dnodes = arg;
+	dnode_children_t *children_dnodes = (dnode_children_t *)dbu;
 	int i;
-	int epb = db->db_size >> DNODE_SHIFT;
 
-	ASSERT(epb == children_dnodes->dnc_count);
-
-	for (i = 0; i < epb; i++) {
+	for (i = 0; i < children_dnodes->dnc_count; i++) {
 		dnode_handle_t *dnh = &children_dnodes->dnc_children[i];
 		dnode_t *dn;
 
@@ -1000,14 +994,17 @@ dnode_buf_pageout(dmu_buf_t *db, void *arg)
 		dnh->dnh_dnode = NULL;
 	}
 	kmem_free(children_dnodes, sizeof (dnode_children_t) +
-	    (epb - 1) * sizeof (dnode_handle_t));
+	    (children_dnodes->dnc_count - 1) * sizeof (dnode_handle_t));
 }
 
 /*
- * errors:
+ * Succeeds even for free dnodes.
+ *
+ * returns:
+ * 0 - success.
  * EINVAL - invalid object number.
  * EIO - i/o error.
- * succeeds even for free dnodes.
+ * others: other errors.
  */
 int
 dnode_hold_impl(objset_t *os, uint64_t object, int flag,
@@ -1080,7 +1077,7 @@ dnode_hold_impl(objset_t *os, uint64_t object, int flag,
 	idx = object & (epb-1);
 
 	ASSERT(DB_DNODE(db)->dn_type == DMU_OT_DNODE);
-	children_dnodes = dmu_buf_get_user(&db->db);
+	children_dnodes = (dnode_children_t *)dmu_buf_get_user(&db->db);
 	if (children_dnodes == NULL) {
 		int i;
 		dnode_children_t *winner;
@@ -1092,8 +1089,10 @@ dnode_hold_impl(objset_t *os, uint64_t object, int flag,
 			zrl_init(&dnh[i].dnh_zrlock);
 			dnh[i].dnh_dnode = NULL;
 		}
-		if (winner = dmu_buf_set_user(&db->db, children_dnodes, NULL,
-		    dnode_buf_pageout)) {
+		dmu_buf_init_user(&children_dnodes->dnc_dbu,
+		    dnode_buf_pageout, NULL);
+		winner = dmu_buf_set_user(&db->db, &children_dnodes->dnc_dbu);
+		if (winner) {
 			kmem_free(children_dnodes, sizeof (dnode_children_t) +
 			    (epb - 1) * sizeof (dnode_handle_t));
 			children_dnodes = winner;
@@ -1155,7 +1154,7 @@ dnode_hold(objset_t *os, uint64_t object, void *tag, dnode_t **dnp)
 /*
  * Can only add a reference if there is already at least one
  * reference on the dnode.  Returns FALSE if unable to add a
- * new reference.
+ * new reference, TRUE otherwise.
  */
 boolean_t
 dnode_add_ref(dnode_t *dn, void *tag)
@@ -1210,6 +1209,7 @@ dnode_rele(dnode_t *dn, void *tag)
 void
 dnode_setdirty(dnode_t *dn, dmu_tx_t *tx)
 {
+	dmu_buf_impl_t *db;
 	objset_t *os = dn->dn_objset;
 	uint64_t txg = tx->tx_txg;
 
@@ -1242,7 +1242,7 @@ dnode_setdirty(dnode_t *dn, dmu_tx_t *tx)
 		return;
 	}
 
-	ASSERT(!refcount_is_zero(&dn->dn_holds) || list_head(&dn->dn_dbufs));
+	ASSERT(!refcount_is_zero(&dn->dn_holds));
 	ASSERT(dn->dn_datablksz != 0);
 	ASSERT0(dn->dn_next_bonuslen[txg&TXG_MASK]);
 	ASSERT0(dn->dn_next_blksz[txg&TXG_MASK]);
@@ -1270,7 +1270,8 @@ dnode_setdirty(dnode_t *dn, dmu_tx_t *tx)
 	 */
 	VERIFY(dnode_add_ref(dn, (void *)(uintptr_t)tx->tx_txg));
 
-	(void) dbuf_dirty(dn->dn_dbuf, tx);
+	db = dn->dn_dbuf;
+	(void) dbuf_dirty(db, tx);
 
 	dsl_dataset_dirty(os->os_dsl_dataset, tx);
 }
@@ -1353,7 +1354,7 @@ dnode_set_blksz(dnode_t *dn, uint64_t size, int ibs, dmu_tx_t *tx)
 		goto fail;
 
 	/* resize the old block */
-	err = dbuf_hold_impl(dn, 0, 0, TRUE, FTAG, &db);
+	err = dbuf_hold_impl(dn, 0, 0, TRUE, FTAG, &db, /*buf_set*/NULL);
 	if (err == 0)
 		dbuf_new_size(db, size, tx);
 	else if (err != ENOENT)
@@ -1461,6 +1462,31 @@ out:
 		rw_downgrade(&dn->dn_struct_rwlock);
 }
 
+/*
+ * Mark a dnode as dirty if it is not already, using the tag to track the
+ * first dirty of the dnode.
+ */
+void
+dnode_set_dirtyctx(dnode_t *dn, dmu_tx_t *tx, void *tag)
+{
+
+	mutex_enter(&dn->dn_mtx);
+	/*
+	 * Don't set dirtyctx to SYNC if we're just modifying this as we
+	 * initialize the objset.
+	 */
+	if (dn->dn_dirtyctx == DN_UNDIRTIED) {
+		if (!BP_IS_HOLE(dn->dn_objset->os_rootbp)) {
+			if (dmu_tx_is_syncing(tx))
+				dn->dn_dirtyctx = DN_DIRTY_SYNC;
+			else
+				dn->dn_dirtyctx = DN_DIRTY_OPEN;
+		}
+		dn->dn_dirtyctx_firstset = tag;
+	}
+	mutex_exit(&dn->dn_mtx);
+}
+
 void
 dnode_clear_range(dnode_t *dn, uint64_t blkid, uint64_t nblks, dmu_tx_t *tx)
 {
@@ -1564,11 +1590,11 @@ dnode_free_range(dnode_t *dn, uint64_t off, uint64_t len, dmu_tx_t *tx)
 		if (len < head)
 			head = len;
 		if (dbuf_hold_impl(dn, 0, dbuf_whichblock(dn, off), TRUE,
-		    FTAG, &db) == 0) {
+		    FTAG, &db, /*buf_set*/NULL) == 0) {
 			caddr_t data;
 
 			/* don't dirty if it isn't on disk and isn't dirty */
-			if (db->db_last_dirty ||
+			if (!list_is_empty(&db->db_dirty_records) ||
 			    (db->db_blkptr && !BP_IS_HOLE(db->db_blkptr))) {
 				rw_exit(&dn->dn_struct_rwlock);
 				dbuf_will_dirty(db, tx);
@@ -1602,9 +1628,9 @@ dnode_free_range(dnode_t *dn, uint64_t off, uint64_t len, dmu_tx_t *tx)
 		if (len < tail)
 			tail = len;
 		if (dbuf_hold_impl(dn, 0, dbuf_whichblock(dn, off+len),
-		    TRUE, FTAG, &db) == 0) {
+		    TRUE, FTAG, &db, /*buf_set*/NULL) == 0) {
 			/* don't dirty if not on disk and not dirty */
-			if (db->db_last_dirty ||
+			if (!list_is_empty(&db->db_dirty_records) ||
 			    (db->db_blkptr && !BP_IS_HOLE(db->db_blkptr))) {
 				rw_exit(&dn->dn_struct_rwlock);
 				dbuf_will_dirty(db, tx);
@@ -1850,7 +1876,8 @@ dnode_next_offset_level(dnode_t *dn, int flags, uint64_t *offset,
 		data = dn->dn_phys->dn_blkptr;
 	} else {
 		uint64_t blkid = dbuf_whichblock(dn, *offset) >> (epbs * lvl);
-		error = dbuf_hold_impl(dn, lvl, blkid, TRUE, FTAG, &db);
+		error = dbuf_hold_impl(dn, lvl, blkid, TRUE, FTAG, &db,
+		    /*buf_set*/NULL);
 		if (error) {
 			if (error != ENOENT)
 				return (error);

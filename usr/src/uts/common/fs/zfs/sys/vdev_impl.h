@@ -54,10 +54,10 @@ typedef struct vdev_cache vdev_cache_t;
 typedef struct vdev_cache_entry vdev_cache_entry_t;
 
 /*
- * Virtual device operations
+ * Virtual device operation types, used only for vdev_ops table
  */
 typedef int	vdev_open_func_t(vdev_t *vd, uint64_t *size, uint64_t *max_size,
-    uint64_t *ashift);
+    uint64_t *logical_ashift, uint64_t *physical_ashift);
 typedef void	vdev_close_func_t(vdev_t *vd);
 typedef uint64_t vdev_asize_func_t(vdev_t *vd, uint64_t psize);
 typedef int	vdev_io_start_func_t(zio_t *zio);
@@ -122,7 +122,29 @@ struct vdev {
 	uint64_t	vdev_asize;	/* allocatable device capacity	*/
 	uint64_t	vdev_min_asize;	/* min acceptable asize		*/
 	uint64_t	vdev_max_asize;	/* max acceptable asize		*/
-	uint64_t	vdev_ashift;	/* block alignment shift	*/
+	/*
+	 * Logical block alignment shift: Forces all IO to this VDev to be
+	 * aligned to multiples of (1 << vdev_ashift) bytes.
+	 */
+	uint64_t	vdev_ashift;
+	/*
+	 * Logical block alignment shift
+	 *
+	 * The smallest sized/aligned I/O supported by the device.
+	 */
+	uint64_t	vdev_logical_ashift;	
+	/*
+	 * Physical block alignment shift
+	 *
+	 * The device supports logical I/Os with vdev_logical_ashift
+	 * size/alignment, but optimum performance will be achieved by
+	 * aligning/sizing requests to vdev_physical_ashift.  Smaller
+	 * requests may be inflated or incur device level read-modify-write
+	 * operations.
+	 *
+	 * May be 0 to indicate no preference (i.e. use vdev_logical_ashift).
+	 */
+	uint64_t	vdev_physical_ashift;	
 	uint64_t	vdev_state;	/* see VDEV_STATE_* #defines	*/
 	uint64_t	vdev_prevstate;	/* used when reopening a vdev	*/
 	vdev_ops_t	*vdev_ops;	/* vdev operations		*/
@@ -328,6 +350,7 @@ extern void vdev_set_min_asize(vdev_t *vd);
  */
 /* zdb uses this tunable, so it must be declared here to make lint happy. */
 extern int zfs_vdev_cache_size;
+extern uint_t zfs_geom_probe_vdev_key;
 
 #ifdef	__cplusplus
 }

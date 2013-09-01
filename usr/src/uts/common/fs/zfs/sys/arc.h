@@ -39,8 +39,8 @@ extern "C" {
 
 typedef struct arc_buf_hdr arc_buf_hdr_t;
 typedef struct arc_buf arc_buf_t;
-typedef void arc_done_func_t(zio_t *zio, arc_buf_t *buf, void *priv);
-typedef int arc_evict_func_t(void *priv);
+typedef void arc_done_func_t(zio_t *zio, arc_buf_t *buf, void *cb_private);
+typedef int arc_evict_func_t(void *cb_private);
 
 /* generic arc_done_func_t's which you can use */
 arc_done_func_t arc_bcopy_func;
@@ -53,6 +53,7 @@ struct arc_buf {
 	void			*b_data;
 	arc_evict_func_t	*b_efunc;
 	void			*b_private;
+	void			*b_last_dbuf;
 };
 
 typedef enum arc_buf_contents {
@@ -69,6 +70,7 @@ typedef enum arc_buf_contents {
 #define	ARC_CACHED	(1 << 4)	/* I/O was already in cache */
 #define	ARC_L2CACHE	(1 << 5)	/* cache in L2ARC */
 #define	ARC_L2COMPRESS	(1 << 6)	/* compress in L2ARC */
+#define	ARC_CACHED_ONLY	(1 << 7)	/* cache lookup only */
 
 /*
  * The following breakdows of arc_size exist for kstat only.
@@ -97,14 +99,22 @@ void arc_release(arc_buf_t *buf, void *tag);
 int arc_released(arc_buf_t *buf);
 int arc_has_callback(arc_buf_t *buf);
 void arc_buf_freeze(arc_buf_t *buf);
+boolean_t arc_buf_frozen(arc_buf_t *buf, boolean_t should_be_frozen);
 void arc_buf_thaw(arc_buf_t *buf);
 boolean_t arc_buf_eviction_needed(arc_buf_t *buf);
 #ifdef ZFS_DEBUG
 int arc_referenced(arc_buf_t *buf);
 #endif
 
+static inline void
+arc_discard_buf(arc_buf_t *buf, void *tag)
+{
+	arc_release(buf, tag);
+	VERIFY(arc_buf_remove_ref(buf, tag) == 1);
+}
+
 int arc_read(zio_t *pio, spa_t *spa, const blkptr_t *bp,
-    arc_done_func_t *done, void *priv, int priority, int flags,
+    arc_done_func_t *done, void *cb_private, int priority, int flags,
     uint32_t *arc_flags, const zbookmark_t *zb);
 zio_t *arc_write(zio_t *pio, spa_t *spa, uint64_t txg,
     blkptr_t *bp, arc_buf_t *buf, boolean_t l2arc, boolean_t l2arc_compress,
@@ -112,7 +122,7 @@ zio_t *arc_write(zio_t *pio, spa_t *spa, uint64_t txg,
     void *priv, int priority, int zio_flags, const zbookmark_t *zb);
 void arc_freed(spa_t *spa, const blkptr_t *bp);
 
-void arc_set_callback(arc_buf_t *buf, arc_evict_func_t *func, void *priv);
+void arc_set_callback(arc_buf_t *buf, arc_evict_func_t *func, void *cb_private);
 int arc_buf_evict(arc_buf_t *buf);
 
 void arc_flush(spa_t *spa);

@@ -106,7 +106,6 @@ zap_leaf_byteswap(zap_leaf_phys_t *buf, int size)
 	int i;
 	zap_leaf_t l;
 	l.l_bs = highbit(size)-1;
-	l.l_phys = buf;
 
 	buf->l_hdr.lh_block_type = 	BSWAP_64(buf->l_hdr.lh_block_type);
 	buf->l_hdr.lh_prefix = 		BSWAP_64(buf->l_hdr.lh_prefix);
@@ -661,6 +660,7 @@ zap_entry_create(zap_leaf_t *l, zap_name_t *zn, uint32_t cd,
 
 /*
  * Determine if there is another entry with the same normalized form.
+ *
  * For performance purposes, either zn or name must be provided (the
  * other can be NULL).  Note, there usually won't be any hash
  * conflicts, in which case we don't need the concatenated/normalized
@@ -832,7 +832,7 @@ zap_leaf_stats(zap_t *zap, zap_leaf_t *l, zap_stats_t *zs)
 {
 	int i, n;
 
-	n = zap->zap_f.zap_phys->zap_ptrtbl.zt_shift -
+	n = zap->zap_f_phys->zap_ptrtbl.zt_shift -
 	    l->l_phys->l_hdr.lh_prefix_len;
 	n = MIN(n, ZAP_HISTOGRAM_SIZE-1);
 	zs->zs_leafs_with_2n_pointers[n]++;

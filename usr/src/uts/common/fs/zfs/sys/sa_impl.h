@@ -155,7 +155,6 @@ struct sa_os {
  * of "lengths" depending on the number of variable sized
  * attribues which are determined by the "layout number"
  */
-
 #define	SA_MAGIC	0x2F505A  /* ZFS SA */
 typedef struct sa_hdr_phys {
 	uint32_t sa_magic;
@@ -206,8 +205,9 @@ typedef enum sa_data_op {
  *
  * This needs to be kept as small as possible.
  */
-
 struct sa_handle {
+	/* Dbuf user eviction data for this instance. */
+	dmu_buf_user_t	sa_dbu;
 	kmutex_t	sa_lock;
 	dmu_buf_t	*sa_bonus;
 	dmu_buf_t	*sa_spill;

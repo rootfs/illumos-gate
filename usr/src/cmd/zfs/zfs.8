@@ -1791,7 +1791,7 @@ only dataset that can be renamed recursively.
 .Nm
 .Cm list
 .Op Fl r Ns | Ns Fl d Ar depth
-.Op Fl H
+.Op Fl Hp
 .Op Fl o Ar property Ns Oo , Ns Ar property Oc Ns ...
 .Op Fl t Ar type Ns Oo , Ns Ar type Oc Ns ...
 .Oo Fl s Ar property Oc Ns ...
@@ -1822,6 +1822,8 @@ will display only the dataset and its direct children.
 .It Fl H
 Used for scripting mode. Do not print headers and separate fields by a single
 tab instead of arbitrary white space.
+.It Fl p
+Display numbers in parseable (exact) values.
 .It Fl o Ar property Ns Oo , Ns Ar property Oc Ns ...
 A comma-separated list of properties to display. The property must be:
 .Bl -bullet -offset 2n

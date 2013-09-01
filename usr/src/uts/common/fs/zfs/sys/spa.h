@@ -90,6 +90,17 @@ struct dsl_dataset;
 #define	SPA_MINBLOCKSIZE	(1ULL << SPA_MINBLOCKSHIFT)
 #define	SPA_MAXBLOCKSIZE	(1ULL << SPA_MAXBLOCKSHIFT)
 
+/*
+ * Maximum supported logical ashift.
+ * 
+ * The current 8k allocation block size limit is due to the 8k
+ * aligned/sized operations performed by vdev_probe() on
+ * vdev_label->vl_pad2.  Using another "safe region" for these tests
+ * would allow the limit to be raised to 16k, at the expense of
+ * only having 8 available uberblocks in the label area.
+ */
+#define	SPA_MAXASHIFT		13
+
 #define	SPA_BLOCKSIZES		(SPA_MAXBLOCKSHIFT - SPA_MINBLOCKSHIFT + 1)
 
 /*
@@ -436,6 +447,8 @@ extern void spa_async_request(spa_t *spa, int flag);
 extern void spa_async_unrequest(spa_t *spa, int flag);
 extern void spa_async_suspend(spa_t *spa);
 extern void spa_async_resume(spa_t *spa);
+extern void spa_async_create(spa_t *spa);
+extern void spa_async_shutdown(spa_t *spa);
 extern spa_t *spa_inject_addref(char *pool);
 extern void spa_inject_delref(spa_t *spa);
 extern void spa_scan_stat_init(spa_t *spa);
@@ -633,11 +646,28 @@ extern uint64_t zfs_strtonum(const char *str, char **nptr);
 
 extern char *spa_his_ievent_table[];
 
+typedef struct spa_history_log {
+	uint64_t flags;
+#define	SPA_HISTORY_CREATED_TX	0x1
+	spa_t *spa;
+	dmu_tx_t *tx;
+	nvlist_t *nvl;
+	char *ev_class;
+} spa_history_log_t;
+
 extern void spa_history_create_obj(spa_t *spa, dmu_tx_t *tx);
 extern int spa_history_get(spa_t *spa, uint64_t *offset, uint64_t *len_read,
     char *his_buf);
 extern int spa_history_log(spa_t *spa, const char *his_buf);
 extern int spa_history_log_nvl(spa_t *spa, nvlist_t *nvl);
+extern int spa_history_log_start(spa_t *spa, dmu_tx_t *tx,
+    spa_history_log_t *shl);
+extern void spa_history_log_internal_str(spa_history_log_t *shl,
+    const char *fmt, ...);
+extern void spa_history_log_event_class(spa_history_log_t *shl,
+    char *ev_class);
+extern void spa_history_log_complete(spa_history_log_t *shl,
+    const char *operation);
 extern void spa_history_log_version(spa_t *spa, const char *operation);
 extern void spa_history_log_internal(spa_t *spa, const char *operation,
     dmu_tx_t *tx, const char *fmt, ...);
@@ -649,11 +679,12 @@ extern void spa_history_log_internal_dd(dsl_dir_t *dd, const char *operation,
 /* error handling */
 struct zbookmark;
 extern void spa_log_error(spa_t *spa, zio_t *zio);
-extern void zfs_ereport_post(const char *cls, spa_t *spa, vdev_t *vd,
+extern void zfs_ereport_post(const char *subclass, spa_t *spa, vdev_t *vd,
     zio_t *zio, uint64_t stateoroffset, uint64_t length);
 extern void zfs_post_remove(spa_t *spa, vdev_t *vd);
 extern void zfs_post_state_change(spa_t *spa, vdev_t *vd);
 extern void zfs_post_autoreplace(spa_t *spa, vdev_t *vd);
+extern void zfs_ereport_spa_history(spa_history_log_t *shl);
 extern uint64_t spa_get_errlog_size(spa_t *spa);
 extern int spa_get_errlog(spa_t *spa, void *uaddr, size_t *count);
 extern void spa_errlog_rotate(spa_t *spa);
@@ -668,6 +699,8 @@ extern void vdev_cache_stat_fini(void);
 /* Initialization and termination */
 extern void spa_init(int flags);
 extern void spa_fini(void);
+extern void zfs_tsd_init(void);
+extern void zfs_tsd_fini(void);
 extern void spa_boot_init();
 
 /* properties */

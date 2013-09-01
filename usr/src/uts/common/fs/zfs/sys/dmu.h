@@ -22,6 +22,9 @@
 /*
  * Copyright (c) 2005, 2010, Oracle and/or its affiliates. All rights reserved.
  * Copyright (c) 2012 by Delphix. All rights reserved.
+ * Copyright (c) 2011-2012 Spectra Logic Corporation.  All rights reserved.
+ */
+/*
  * Copyright 2011 Nexenta Systems, Inc. All rights reserved.
  * Copyright (c) 2012, Joyent, Inc. All rights reserved.
  */
@@ -39,6 +42,7 @@
  * dmu_spa.h.
  */
 
+#include <sys/zfs_context.h>
 #include <sys/types.h>
 #include <sys/param.h>
 #include <sys/cred.h>
@@ -231,8 +235,12 @@ void zfs_oldacl_byteswap(void *buf, size_t size);
 void zfs_acl_byteswap(void *buf, size_t size);
 void zfs_znode_byteswap(void *buf, size_t size);
 
+#define	DS_FIND_SELF		(0)
 #define	DS_FIND_SNAPSHOTS	(1<<0)
 #define	DS_FIND_CHILDREN	(1<<1)
+#define	DS_FIND_IGNORE_SELF	(1<<2)
+#define	DS_FIND_ALL		(DS_FIND_SNAPSHOTS|DS_FIND_CHILDREN)
+#define	DS_FIND_ALL_BUT_SELF	(DS_FIND_ALL|DS_FIND_IGNORE_SELF)
 
 /*
  * The maximum number of bytes that can be accessed as part of one
@@ -248,8 +256,8 @@ void zfs_znode_byteswap(void *buf, size_t size);
 /*
  * artificial blkids for bonus buffer and spill blocks
  */
-#define	DMU_BONUS_BLKID		(-1ULL)
-#define	DMU_SPILL_BLKID		(-2ULL)
+#define	DMU_BONUS_BLKID		(ULLONG_MAX)
+#define	DMU_SPILL_BLKID		(ULLONG_MAX - 1)
 /*
  * Public routines to create, destroy, open, and close objsets.
  */
@@ -283,7 +291,259 @@ typedef struct dmu_buf {
 	void *db_data;			/* data in buffer */
 } dmu_buf_t;
 
-typedef void dmu_buf_evict_func_t(struct dmu_buf *db, void *user_ptr);
+/*
+ * These structures are for DMU consumers that want async
+ * callbacks.
+ */
+struct dmu_context;
+struct dmu_buf_set;
+struct zio;
+typedef void (*dmu_context_callback_t)(struct dmu_context *);
+typedef void (*dmu_buf_set_callback_t)(struct dmu_buf_set *);
+typedef void (*dmu_buf_transfer_callback_t)(struct dmu_buf_set *, dmu_buf_t *,
+    uint64_t, uint64_t);
+
+typedef struct dmu_context {
+
+	/*
+	 * Lock protecting parts of the DMU context where necessary;
+	 * currently only used for err.
+	 */
+	kmutex_t mtx;
+
+	/* The primary data associated with this context. */
+	uint64_t size;		/* Requested total I/O size. */
+	uint64_t resid;		/* Remaining bytes to process. */
+	uint64_t dn_start;	/* Starting block offset into the dnode. */
+	uint64_t dn_offset;	/* Current block offset. */
+	dmu_tx_t *tx;		/* Caller's transaction, if specified. */
+	void *data_buf;		/* UIO or char pointer */
+
+	/* The dnode held in association with this context. */
+	struct dnode *dn;
+	objset_t *os;		/* Object set associated with the dnode. */
+	uint64_t object;	/* Object ID associated with the dnode. */
+
+	/* Number of buffer sets left to complete. */
+	int holds;
+
+	/* The tag used for this context. */
+	void *tag;
+
+	/* The callback to call once an I/O completes entirely. */
+	dmu_context_callback_t context_cb;
+
+	/* The callback to call to transfer a buffer set. */
+	dmu_buf_set_callback_t buf_set_transfer_cb;
+
+	/* The callback to call to transfer a buffer. */
+	dmu_buf_transfer_callback_t buf_transfer_cb;
+
+	/*
+	 * The callback to call to move a specific block's contents.  This
+	 * is normally only set by dmu_context_init().
+	 */
+	dmu_buf_transfer_callback_t move_cb;
+
+	/* Total number of bytes transferred. */
+	uint64_t completed_size;
+
+	/* Flags for this DMU context. */
+	uint32_t flags;
+#define	DMU_CTX_FLAG_READ	(1 << 1)
+#define	DMU_CTX_FLAG_UIO	(1 << 2)
+#define	DMU_CTX_FLAG_PREFETCH	(1 << 3)
+#define	DMU_CTX_FLAG_NO_HOLD	(1 << 4)
+#define	DMU_CTX_FLAG_SUN_PAGES	(1 << 5)
+#define	DMU_CTX_FLAG_NOFILL	(1 << 6)
+#define	DMU_CTX_FLAG_ASYNC	(1 << 7)
+
+#define	DMU_CTX_WRITER_FLAGS	(DMU_CTX_FLAG_SUN_PAGES|DMU_CTX_FLAG_NOFILL)
+#define	DMU_CTX_READER_FLAGS	(DMU_CTX_FLAG_PREFETCH)
+
+#define	DMU_CTX_BUF_IS_CHAR(dmu_ctx) \
+	(((dmu_ctx)->flags & (DMU_CTX_FLAG_UIO|DMU_CTX_FLAG_SUN_PAGES)) == 0)
+
+	/* The number of errors that occurred. */
+	int err;
+
+} dmu_context_t;
+
+typedef struct dmu_buf_set {
+
+	/* The DMU context that this buffer set is associated with. */
+	dmu_context_t *dmu_ctx;
+
+	/* Number of dmu_bufs associated with this context. */
+	int count;
+
+	/* Length of dbp; only used to free the correct size. */
+	int dbp_length;
+
+	/* Number of dmu_bufs left to complete. */
+	int holds;
+
+	/* The starting offset, relative to the associated dnode. */
+	uint64_t dn_start;
+	/* The size of the I/O. */
+	uint64_t size;
+	/* The amount of data remaining to process for this buffer set. */
+	uint64_t resid;
+
+	/* For writes only, if the context doesn't have a transaction. */
+	dmu_tx_t *tx;
+#define	DMU_BUF_SET_TX(buf_set) \
+	((buf_set)->dmu_ctx->tx ? (buf_set)->dmu_ctx->tx : (buf_set)->tx)
+
+	/* The number of errors that occurred. */
+	int err;
+
+	/* The ZIO associated with this context. */
+	struct zio *zio;
+
+	/* The set of buffers themselves. */
+	struct dmu_buf *dbp[0];
+
+} dmu_buf_set_t;
+
+void dmu_buf_set_rele(dmu_buf_set_t *buf_set, int err);
+int dmu_context_init(dmu_context_t *dmu_ctx, struct dnode *dn, objset_t *os,
+    uint64_t object, uint64_t offset, uint64_t size, void *data_buf, void *tag,
+    uint32_t flags);
+void dmu_context_seek(dmu_context_t *dmu_ctx, uint64_t offset, uint64_t size,
+    void *data_buf);
+void dmu_context_rele(dmu_context_t *dmu_ctx);
+void dmu_buf_set_transfer(dmu_buf_set_t *buf_set);
+void dmu_buf_set_transfer_write(dmu_buf_set_t *buf_set);
+
+/* Optional context setters; use after calling dmu_context_init*(). */
+static inline void
+dmu_context_set_context_cb(dmu_context_t *ctx, dmu_context_callback_t cb)
+{
+	ctx->context_cb = cb;
+}
+static inline void
+dmu_context_set_buf_set_transfer_cb(dmu_context_t *ctx,
+    dmu_buf_set_callback_t cb)
+{
+	ctx->buf_set_transfer_cb = cb;
+}
+static inline void
+dmu_context_set_buf_transfer_cb(dmu_context_t *ctx,
+    dmu_buf_transfer_callback_t cb)
+{
+	ctx->buf_transfer_cb = cb;
+}
+static inline void
+dmu_context_set_dmu_tx(dmu_context_t *ctx, dmu_tx_t *tx)
+{
+	ASSERT(tx != NULL && ((ctx->flags & DMU_CTX_FLAG_READ) == 0));
+	dmu_context_set_buf_set_transfer_cb(ctx, dmu_buf_set_transfer);
+	ctx->tx = tx;
+}
+
+/* DMU thread context handlers. */
+int dmu_thread_context_create(void);
+void dmu_thread_context_process(void);
+void dmu_thread_context_destroy(void *);
+
+struct dmu_buf_user;
+
+typedef void dmu_buf_evict_func_t(struct dmu_buf_user *);
+
+/*
+ * The DMU buffer user object is used to allow private data to be
+ * associated with a dbuf for the duration of its lifetime.  This private
+ * data must include a dmu_buf_user_t as its first member, which is passed
+ * into the DMU user data API and can be attached to a dbuf.  Clients can
+ * regain access to their private data structure with a cast.
+ *
+ * DMU buffer users can be notified via a callback when their associated
+ * dbuf has been evicted.  This is typically used to free the user's
+ * private data.  The eviction callback is executed without the dbuf
+ * mutex held or any other type of mechanism to guarantee that the
+ * dbuf is still available.  For this reason, users must assume the dbuf
+ * has already been freed and not reference the dbuf from the callback
+ * context.
+ *
+ * Users requestion "immediate eviction" are notified as soon as the dbuf
+ * is only referenced by dirty records (dirties == holds).  Otherwise the
+ * eviction callback occurs after the last reference to the dbuf is dropped.
+ *
+ * Eviction Callback Processing
+ * ============================
+ * In any context where a dbuf reference drop may trigger an eviction, an
+ * eviction queue object must be provided.  This queue must then be
+ * processed while not holding any dbuf locks.  In this way, the user can
+ * perform any work needed in their eviction function without fear of
+ * lock order reversals.
+ */
+typedef struct dmu_buf_user {
+	/*
+	 * This instance's link in the eviction queue.  Set when the buffer
+	 * has evicted and the callback needs to be called.
+	 */
+	list_node_t dbu_evict_queue_link;
+	/* This instance's eviction function pointer. */
+	dmu_buf_evict_func_t *dbu_evict_func;
+#ifdef ZFS_DEBUG
+	/*
+	 * Pointer to user's dbuf pointer.  NULL for clients that do
+	 * not associate a dbuf with their user data.
+	 *
+	 * The pointer will be cleared upon eviction so as to catch
+	 * use-after-evict bugs in clients.
+	 */
+	dmu_buf_t **dbu_clear_on_evict_dbufp;
+#endif
+} dmu_buf_user_t;
+
+/*
+ * Initialize the given dmu_buf_user_t instance with the eviction function
+ * evict_func, to be called when the user is evicted.
+ *
+ * NOTE: This function should only be called once on a given object.  To
+ *	 help enforce this, dbu should already be zeroed on entry.
+ */
+static inline void
+dmu_buf_init_user(dmu_buf_user_t *dbu, dmu_buf_evict_func_t *evict_func,
+    dmu_buf_t **clear_on_evict_dbufp)
+{
+	ASSERT(dbu->dbu_evict_func == NULL);
+	ASSERT(!list_link_active(&dbu->dbu_evict_queue_link));
+	dbu->dbu_evict_func = evict_func;
+#ifdef ZFS_DEBUG
+	dbu->dbu_clear_on_evict_dbufp = clear_on_evict_dbufp;
+#endif
+}
+
+/* DMU buffer user eviction routines. */
+static inline void
+dmu_buf_create_user_evict_list(list_t *evict_list_p)
+{
+	list_create(evict_list_p, sizeof(dmu_buf_user_t),
+	    offsetof(dmu_buf_user_t, dbu_evict_queue_link));
+}
+static inline void
+dmu_buf_process_user_evicts(list_t *evict_list_p)
+{
+	dmu_buf_user_t *dbu;
+
+	while ((dbu = (dmu_buf_user_t *)list_head(evict_list_p)) != NULL) {
+		list_remove(evict_list_p, dbu);
+#ifdef ZFS_DEBUG
+		if (dbu->dbu_clear_on_evict_dbufp != NULL)
+			*dbu->dbu_clear_on_evict_dbufp = NULL;
+#endif
+		dbu->dbu_evict_func(dbu);
+	}
+}
+static inline void
+dmu_buf_destroy_user_evict_list(list_t *evict_list_p)
+{
+	dmu_buf_process_user_evicts(evict_list_p);
+	list_destroy(evict_list_p);
+}
 
 /*
  * The names of zap entries in the DIRECTORY_OBJECT of the MOS.
@@ -312,6 +572,9 @@ typedef void dmu_buf_evict_func_t(struct dmu_buf *db, void *user_ptr);
 #define	DMU_POOL_EMPTY_BPOBJ		"empty_bpobj"
 
 /*
+ * Chooses an unallocated object number and returns a new object that
+ * uses it in *objectp.
+ *
  * Allocate an object from this objset.  The range of object numbers
  * available is (0, DN_MAX_OBJECT).  Object 0 is the meta-dnode.
  *
@@ -319,15 +582,15 @@ typedef void dmu_buf_evict_func_t(struct dmu_buf *db, void *user_ptr);
  * object will be "held" in the transaction (ie. you can modify the
  * newly allocated object in this transaction).
  *
- * dmu_object_alloc() chooses an object and returns it in *objectp.
- *
- * dmu_object_claim() allocates a specific object number.  If that
- * number is already allocated, it fails and returns EEXIST.
- *
- * Return 0 on success, or ENOSPC or EEXIST as specified above.
+ * Return 0 on success.
  */
 uint64_t dmu_object_alloc(objset_t *os, dmu_object_type_t ot,
     int blocksize, dmu_object_type_t bonus_type, int bonus_len, dmu_tx_t *tx);
+
+/*
+ * Allocates an object for the specified object number.  
+ * Returns 0 on success, or EEXIST of the object number is already allocated.
+ */
 int dmu_object_claim(objset_t *os, uint64_t object, dmu_object_type_t ot,
     int blocksize, dmu_object_type_t bonus_type, int bonus_len, dmu_tx_t *tx);
 int dmu_object_reclaim(objset_t *os, uint64_t object, dmu_object_type_t ot,
@@ -393,15 +656,16 @@ void dmu_object_set_checksum(objset_t *os, uint64_t object, uint8_t checksum,
 void dmu_object_set_compress(objset_t *os, uint64_t object, uint8_t compress,
     dmu_tx_t *tx);
 
-/*
- * Decide how to write a block: checksum, compression, number of copies, etc.
- */
 #define	WP_NOFILL	0x1
 #define	WP_DMU_SYNC	0x2
 #define	WP_SPILL	0x4
 
+/*
+ * Decide how to write a block: checksum, compression, number of copies, etc.
+ */
 void dmu_write_policy(objset_t *os, struct dnode *dn, int level, int wp,
     struct zio_prop *zp);
+
 /*
  * The bonus data is accessed more or less like a regular buffer.
  * You must dmu_bonus_hold() to get the buffer, which will give you a
@@ -450,54 +714,15 @@ void dmu_buf_add_ref(dmu_buf_t *db, void* tag);
 void dmu_buf_rele(dmu_buf_t *db, void *tag);
 uint64_t dmu_buf_refcount(dmu_buf_t *db);
 
-/*
- * dmu_buf_hold_array holds the DMU buffers which contain all bytes in a
- * range of an object.  A pointer to an array of dmu_buf_t*'s is
- * returned (in *dbpp).
- *
- * dmu_buf_rele_array releases the hold on an array of dmu_buf_t*'s, and
- * frees the array.  The hold on the array of buffers MUST be released
- * with dmu_buf_rele_array.  You can NOT release the hold on each buffer
- * individually with dmu_buf_rele.
- */
-int dmu_buf_hold_array_by_bonus(dmu_buf_t *db, uint64_t offset,
-    uint64_t length, int read, void *tag, int *numbufsp, dmu_buf_t ***dbpp);
-void dmu_buf_rele_array(dmu_buf_t **, int numbufs, void *tag);
-
-/*
- * Returns NULL on success, or the existing user ptr if it's already
- * been set.
- *
- * user_ptr is for use by the user and can be obtained via dmu_buf_get_user().
- *
- * user_data_ptr_ptr should be NULL, or a pointer to a pointer which
- * will be set to db->db_data when you are allowed to access it.  Note
- * that db->db_data (the pointer) can change when you do dmu_buf_read(),
- * dmu_buf_tryupgrade(), dmu_buf_will_dirty(), or dmu_buf_will_fill().
- * *user_data_ptr_ptr will be set to the new value when it changes.
- *
- * If non-NULL, pageout func will be called when this buffer is being
- * excised from the cache, so that you can clean up the data structure
- * pointed to by user_ptr.
- *
- * dmu_evict_user() will call the pageout func for all buffers in a
- * objset with a given pageout func.
- */
-void *dmu_buf_set_user(dmu_buf_t *db, void *user_ptr, void *user_data_ptr_ptr,
-    dmu_buf_evict_func_t *pageout_func);
-/*
- * set_user_ie is the same as set_user, but request immediate eviction
- * when hold count goes to zero.
- */
-void *dmu_buf_set_user_ie(dmu_buf_t *db, void *user_ptr,
-    void *user_data_ptr_ptr, dmu_buf_evict_func_t *pageout_func);
-void *dmu_buf_update_user(dmu_buf_t *db_fake, void *old_user_ptr,
-    void *user_ptr, void *user_data_ptr_ptr,
-    dmu_buf_evict_func_t *pageout_func);
+void *dmu_buf_set_user(dmu_buf_t *db, dmu_buf_user_t *user);
+void *dmu_buf_set_user_ie(dmu_buf_t *db, dmu_buf_user_t *user);
+void *dmu_buf_replace_user(dmu_buf_t *db, dmu_buf_user_t *old_user,
+    dmu_buf_user_t *new_user);
+void *dmu_buf_remove_user(dmu_buf_t *db, dmu_buf_user_t *user);
 void dmu_evict_user(objset_t *os, dmu_buf_evict_func_t *func);
 
 /*
- * Returns the user_ptr set with dmu_buf_set_user(), or NULL if not set.
+ * Returns the user object set with dmu_buf_set_user(), or NULL if not set.
  */
 void *dmu_buf_get_user(dmu_buf_t *db);
 
@@ -514,6 +739,8 @@ struct blkptr *dmu_buf_get_blkptr(dmu_buf_t *db);
  * (ie. you've called dmu_tx_hold_object(tx, db->db_object)).
  */
 void dmu_buf_will_dirty(dmu_buf_t *db, dmu_tx_t *tx);
+void dmu_buf_will_dirty_range(dmu_buf_t *db, dmu_tx_t *tx, int offset,
+    int size);
 
 /*
  * Tells if the given dbuf is freeable.
@@ -555,12 +782,10 @@ int dmu_tx_assign(dmu_tx_t *tx, enum txg_how txg_how);
 void dmu_tx_wait(dmu_tx_t *tx);
 void dmu_tx_commit(dmu_tx_t *tx);
 
+typedef void dmu_tx_callback_func_t(void *dcb_data, int error);
+
 /*
- * To register a commit callback, dmu_tx_callback_register() must be called.
- *
- * dcb_data is a pointer to caller private data that is passed on as a
- * callback parameter. The caller is responsible for properly allocating and
- * freeing it.
+ * Registers a commit callback.
  *
  * When registering a callback, the transaction must be already created, but
  * it cannot be committed or aborted. It can be assigned to a txg or not.
@@ -569,11 +794,13 @@ void dmu_tx_commit(dmu_tx_t *tx);
  * to stable storage and will also be called if the dmu_tx is aborted.
  * If there is any error which prevents the transaction from being committed to
  * disk, the callback will be called with a value of error != 0.
+ *
+ * dcb_data is a pointer to caller private data that is passed on as a
+ * callback parameter. The caller is responsible for properly allocating and
+ * freeing it.
  */
-typedef void dmu_tx_callback_func_t(void *dcb_data, int error);
-
-void dmu_tx_callback_register(dmu_tx_t *tx, dmu_tx_callback_func_t *dcb_func,
-    void *dcb_data);
+void dmu_tx_callback_register(dmu_tx_t *tx, dmu_tx_callback_func_t *func,
+    void *data);
 
 /*
  * Free up the data blocks for a defined range of a file.  If size is
@@ -585,19 +812,24 @@ int dmu_free_long_range(objset_t *os, uint64_t object, uint64_t offset,
 	uint64_t size);
 int dmu_free_object(objset_t *os, uint64_t object);
 
+void dmu_buf_cb_process(void);
+
 /*
  * Convenience functions.
  *
  * Canfail routines will return 0 on success, or an errno if there is a
  * nonrecoverable I/O error.
  */
+// XXX REMOVE THESE IN FAVOR OF DMU_CTX_FLAG_PREFETCH
 #define	DMU_READ_PREFETCH	0 /* prefetch */
 #define	DMU_READ_NO_PREFETCH	1 /* don't prefetch */
+
 int dmu_read(objset_t *os, uint64_t object, uint64_t offset, uint64_t size,
 	void *buf, uint32_t flags);
+int dmu_issue(dmu_context_t *dmu_ctx);
 void dmu_write(objset_t *os, uint64_t object, uint64_t offset, uint64_t size,
 	const void *buf, dmu_tx_t *tx);
-void dmu_prealloc(objset_t *os, uint64_t object, uint64_t offset, uint64_t size,
+int dmu_prealloc(objset_t *os, uint64_t object, uint64_t offset, uint64_t size,
 	dmu_tx_t *tx);
 int dmu_read_uio(objset_t *os, uint64_t object, struct uio *uio, uint64_t size);
 int dmu_write_uio(objset_t *os, uint64_t object, struct uio *uio, uint64_t size,
@@ -664,7 +896,7 @@ extern const dmu_object_byteswap_info_t dmu_ot_byteswap[DMU_BSWAP_NUMFUNCS];
  * Get information on a DMU object.
  *
  * Return 0 on success or ENOENT if object is not allocated.
- *
+ * 
  * If doi is NULL, just indicates whether the object exists.
  */
 int dmu_object_info(objset_t *os, uint64_t object, dmu_object_info_t *doi);
@@ -802,8 +1034,8 @@ void dmu_traverse_objset(objset_t *os, uint64_t txg_start,
 int dmu_diff(const char *tosnap_name, const char *fromsnap_name,
     struct file *fp, offset_t *offp);
 
-/* CRC64 table */
 #define	ZFS_CRC64_POLY	0xC96C5795D7870F42ULL	/* ECMA-182, reflected form */
+/* CRC64 table */
 extern uint64_t zfs_crc64_table[256];
 
 #ifdef	__cplusplus

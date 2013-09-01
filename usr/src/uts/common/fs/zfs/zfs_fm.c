@@ -729,6 +729,26 @@ zfs_ereport_start_checksum(spa_t *spa, vdev_t *vd,
 }
 
 void
+zfs_ereport_spa_history(spa_history_log_t *shl)
+{
+	sysevent_id_t eid;
+
+	/*
+	 * Add pool name and guid for the purpose of event logging.  Note
+	 * that this information is useless in the on-disk log, but not for
+	 * event consumers.
+	 */
+	ASSERT(!nvlist_exists(shl->nvl, ZFS_EV_POOL_NAME));
+	ASSERT(!nvlist_exists(shl->nvl, ZFS_EV_POOL_GUID));
+	fnvlist_add_string(shl->nvl, ZFS_EV_POOL_NAME, spa_name(shl->spa));
+	fnvlist_add_uint64(shl->nvl, ZFS_EV_POOL_GUID, spa_guid(shl->spa));
+	ddi_log_sysevent(NULL, SUNW_VENDOR, EC_ZFS, shl->ev_class,
+	    shl->nvl, &eid, DDI_SLEEP);
+	fnvlist_remove(shl->nvl, ZFS_EV_POOL_GUID);
+	fnvlist_remove(shl->nvl, ZFS_EV_POOL_NAME);
+}
+
+void
 zfs_ereport_finish_checksum(zio_cksum_report_t *report,
     const void *good_data, const void *bad_data, boolean_t drop_if_identical)
 {

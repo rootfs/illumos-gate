@@ -90,7 +90,7 @@ enum zio_taskq_type {
 };
 
 /*
- * State machine for the zpool-pooname process.  The states transitions
+ * State machine for the zpool-poolname process.  The state transitions
  * are done as follows:
  *
  *	From		   To			Routine
@@ -120,6 +120,7 @@ struct spa {
 	nvlist_t	*spa_config_splitting;	/* config for splitting */
 	nvlist_t	*spa_load_info;		/* info and errors from load */
 	uint64_t	spa_config_txg;		/* txg of last config change */
+	uint64_t	spa_config_update_txg;	/* txg of config update */
 	int		spa_sync_pass;		/* iterate-to-convergence */
 	pool_state_t	spa_state;		/* pool state */
 	int		spa_inject_ref;		/* injection references */
@@ -172,6 +173,10 @@ struct spa {
 	int		spa_async_suspended;	/* async tasks suspended */
 	kcondvar_t	spa_async_cv;		/* wait for thread_exit() */
 	uint16_t	spa_async_tasks;	/* async task mask */
+	int		spa_async_suspend_done;	/* async tasks suspended */
+	int		spa_async_shutdown;	/* shutdown async task */
+	kcondvar_t	spa_async_sd_cv;	/* wait for thread_exit() */
+	kcondvar_t	spa_async_wu_cv;	/* wakeup async thread  */
 	char		*spa_root;		/* alternate root directory */
 	uint64_t	spa_ena;		/* spa-wide ereport ENA */
 	int		spa_last_open_failed;	/* error if last open failed */

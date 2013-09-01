@@ -33,6 +33,11 @@
 #include <sys/zfs_fuid.h>
 #include <sys/sa.h>
 
+#ifdef _KERNEL
+#include <sys/security_id.h>
+#include <sys/security_descriptor.h>
+#endif
+
 #ifdef	__cplusplus
 extern "C" {
 #endif
@@ -236,6 +241,10 @@ void zfs_acl_data_locator(void **, uint32_t *, uint32_t, boolean_t, void *);
 uint64_t zfs_mode_compute(uint64_t, zfs_acl_t *,
     uint64_t *, uint64_t, uint64_t);
 int zfs_acl_chown_setattr(struct znode *);
+int zfs_freebsd_getsidacls(struct znode *, struct sid_acl **, struct sid_acl **,
+    int, boolean_t, cred_t *);
+int zfs_freebsd_sidacls_to_aclp(zfsvfs_t *, vtype_t, struct sid_acl *,
+    struct sid_acl *, cred_t *, zfs_fuid_info_t **, zfs_acl_t **);
 
 #endif
 

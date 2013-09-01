@@ -26,6 +26,7 @@
  */
 
 #include <sys/zfs_context.h>
+#include <sys/fm/fs/zfs.h>
 #include <sys/spa.h>
 #include <sys/fm/fs/zfs.h>
 #include <sys/spa_impl.h>
@@ -258,8 +259,15 @@ spa_config_sync(spa_t *target, boolean_t removing, boolean_t postsysevent)
 		}
 
 		error = spa_config_write(dp, nvl);
-		if (error != 0)
+		if (error != 0) {
+	
+#ifdef NOTYET /* Strata doesn't need these errors */
+			printf("ZFS ERROR: Update of cache file %s failed: "
+			    "Errno %d\n", dp->scd_path, error);
+#endif
 			ccw_failure = B_TRUE;
+		}
+
 		nvlist_free(nvl);
 	}
 
@@ -514,8 +522,10 @@ spa_config_update(spa_t *spa, int what)
 		 */
 		for (c = 0; c < rvd->vdev_children; c++) {
 			vdev_t *tvd = rvd->vdev_child[c];
-			if (tvd->vdev_ms_array == 0)
+			if (tvd->vdev_ms_array == 0) {
+				vdev_ashift_optimize(tvd);
 				vdev_metaslab_set_size(tvd);
+			}
 			vdev_expand(tvd, txg);
 		}
 	}

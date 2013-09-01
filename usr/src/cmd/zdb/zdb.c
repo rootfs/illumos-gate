@@ -1779,7 +1779,7 @@ dump_uberblock(uberblock_t *ub, const char *header, const char *footer)
 {
 	time_t timestamp = ub->ub_timestamp;
 
-	(void) printf(header ? header : "");
+	(void) printf("%s", header ? header : "");
 	(void) printf("\tmagic = %016llx\n", (u_longlong_t)ub->ub_magic);
 	(void) printf("\tversion = %llu\n", (u_longlong_t)ub->ub_version);
 	(void) printf("\ttxg = %llu\n", (u_longlong_t)ub->ub_txg);
@@ -1791,7 +1791,7 @@ dump_uberblock(uberblock_t *ub, const char *header, const char *footer)
 		sprintf_blkptr(blkbuf, &ub->ub_rootbp);
 		(void) printf("\trootbp = %s\n", blkbuf);
 	}
-	(void) printf(footer ? footer : "");
+	(void) printf("%s", footer ? footer : "");
 }
 
 static void
@@ -3049,6 +3049,7 @@ find_zpool(char **target, nvlist_t **configp, int dirc, char **dirv)
 	args.paths = dirc;
 	args.path = dirv;
 	args.can_be_active = B_TRUE;
+	args.can_be_destroyed = B_TRUE;
 
 	if ((sepp = strpbrk(*target, "/@")) != NULL) {
 		sep = *sepp;

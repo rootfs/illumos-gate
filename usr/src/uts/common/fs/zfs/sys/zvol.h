@@ -38,12 +38,27 @@ extern "C" {
 #ifdef _KERNEL
 extern int zvol_check_volsize(uint64_t volsize, uint64_t blocksize);
 extern int zvol_check_volblocksize(uint64_t volblocksize);
+extern int zvol_namecheck(const char *name);
 extern int zvol_get_stats(objset_t *os, nvlist_t *nv);
 extern void zvol_create_cb(objset_t *os, void *arg, cred_t *cr, dmu_tx_t *tx);
-extern int zvol_create_minor(const char *);
-extern int zvol_remove_minor(const char *);
-extern void zvol_remove_minors(const char *);
+extern int zvol_create_device(const char *zv_name, void *arg);
+extern int zvol_create_from_objset(objset_t *os, const char *snapname);
+extern int zvol_destroy_device(const char *zv_name, void *arg);
+extern int zvol_create_devices(char *name_prefix, boolean_t recursive,
+    boolean_t ignore_errors);
+extern int zvol_destroy_devices(char *name_prefix, boolean_t recursive,
+    boolean_t ignore_errors);
+extern void zvol_rename_devices(const char *oldname, const char *newname);
 extern int zvol_set_volsize(const char *, major_t, uint64_t);
+
+extern void zvol_rename_cleanup(dsl_dir_rename_arg_t *);
+extern void zvol_rename_snapshot_cleanup(dsl_dataset_rename_snapshot_arg_t *);
+extern int zvol_create_init(dmu_objset_create_arg_t *);
+extern int zvol_snapshot_init(dsl_dataset_snapshot_arg_t *);
+extern int zvol_promote_init(dsl_dataset_promote_arg_t *);
+extern int zvol_clone_init(dmu_objset_clone_arg_t *);
+extern int zvol_destroy_snaps_init(dmu_snapshots_destroy_arg_t *);
+extern int zvol_destroy_head_init(dsl_destroy_head_arg_t *);
 
 #ifdef sun
 extern int zvol_open(dev_t *devp, int flag, int otyp, cred_t *cr);

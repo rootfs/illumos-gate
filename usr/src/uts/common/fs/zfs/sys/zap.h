@@ -244,7 +244,7 @@ int zap_update_uint64(objset_t *os, uint64_t zapobj, const uint64_t *key,
  * Get the length (in integers) and the integer size of the specified
  * attribute.
  *
- * If the requested attribute does not exist, the call will fail and
+ * If the specified attribute does not exist, the call will fail and
  * return ENOENT.
  */
 int zap_length(objset_t *ds, uint64_t zapobj, const char *name,
@@ -255,7 +255,7 @@ int zap_length_uint64(objset_t *os, uint64_t zapobj, const uint64_t *key,
 /*
  * Remove the specified attribute.
  *
- * If the specified attribute does not exist, the call will fail and
+ * If the requested attribute does not exist, the call will fail and
  * return ENOENT.
  */
 int zap_remove(objset_t *ds, uint64_t zapobj, const char *name, dmu_tx_t *tx);
@@ -264,10 +264,7 @@ int zap_remove_norm(objset_t *ds, uint64_t zapobj, const char *name,
 int zap_remove_uint64(objset_t *os, uint64_t zapobj, const uint64_t *key,
     int key_numints, dmu_tx_t *tx);
 
-/*
- * Returns (in *count) the number of attributes in the specified zap
- * object.
- */
+/* Returns (in *count) the number of attributes in the specified zap object. */
 int zap_count(objset_t *ds, uint64_t zapobj, uint64_t *count);
 
 /*

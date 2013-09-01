@@ -36,6 +36,10 @@
 #endif
 #include <sys/zfs_fuid.h>
 
+#include <sys/acl.h>
+#include <sys/security_id.h>
+#include <sys/security_descriptor.h>
+
 /*
  * FUID Domain table(s).
  *
@@ -132,7 +136,7 @@ zfs_fuid_table_load(objset_t *os, uint64_t fuid_obj, avl_tree_t *idx_tree,
 
 		packed = kmem_alloc(fuid_size, KM_SLEEP);
 		VERIFY(dmu_read(os, fuid_obj, 0,
-		    fuid_size, packed, DMU_READ_PREFETCH) == 0);
+		    fuid_size, packed, DMU_CTX_FLAG_PREFETCH) == 0);
 		VERIFY(nvlist_unpack(packed, fuid_size,
 		    &nvp, 0) == 0);
 		VERIFY(nvlist_lookup_nvlist_array(nvp, FUID_NVP_ARRAY,
@@ -360,7 +364,6 @@ retry:
  * Query domain table by index, returning domain string
  *
  * Returns a pointer from an avl node of the domain string.
- *
  */
 const char *
 zfs_fuid_find_by_idx(zfsvfs_t *zfsvfs, uint32_t idx)
@@ -383,6 +386,25 @@ zfs_fuid_find_by_idx(zfsvfs_t *zfsvfs, uint32_t idx)
 
 	ASSERT(domain);
 	return (domain);
+}
+
+int
+zfs_fuid_map_sid(zfsvfs_t *zfsvfs, uint64_t fuid, zfs_fuid_type_t type,
+    struct sid **psid)
+{
+	uint32_t index = FUID_INDEX(fuid);
+	const char *domain;
+
+	/*
+	 * Default to the NULL authority, until mapping
+	 * services are available for POSIX ids.
+	 */
+	domain = "S-1-0";
+	if (index != 0)
+		domain = zfs_fuid_find_by_idx(zfsvfs, index);
+	ASSERT(domain != NULL);
+
+	return (sid_from_domain_and_rid(psid, domain, FUID_RID(fuid)));
 }
 
 void
@@ -484,6 +506,31 @@ zfs_fuid_node_add(zfs_fuid_info_t **fuidpp, const char *domain, uint32_t rid,
 		else
 			fuidp->z_fuid_group = FUID_ENCODE(fuididx, rid);
 	}
+}
+
+/*
+ * Create a file system FUID from domain relative id and domain.
+ */
+uint64_t
+zfs_fuid_create_rid_domain(zfsvfs_t *zfsvfs, zfs_fuid_type_t type,
+    uint32_t rid, const char *domain, zfs_fuid_info_t **fuidp)
+{
+	uint64_t	idx;
+	ksid_t		*ksid;
+	char 		*kdomain;
+	uid_t		id;
+
+	if (!zfsvfs->z_use_fuids) {
+		id = rid;
+
+		return ((uint64_t)id);
+	}
+
+	idx = zfs_fuid_find_by_domain(zfsvfs, domain, &kdomain, B_TRUE);
+
+	zfs_fuid_node_add(fuidp, kdomain, rid, idx, id, type);
+
+	return (FUID_ENCODE(idx, rid));
 }
 
 /*

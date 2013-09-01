@@ -132,12 +132,40 @@ struct objset {
 
 #define	DMU_OS_IS_L2COMPRESSIBLE(os)	((os)->os_compress != ZIO_COMPRESS_OFF)
 
+struct dmu_objset_clone_arg;
+typedef void (*dmu_objset_clone_syncfunc)(struct dmu_objset_clone_arg *,
+    struct dsl_dataset *);
+typedef void (*dmu_objset_clone_cleanupfunc)(struct dmu_objset_clone_arg *);
+typedef struct dmu_objset_clone_arg {
+	const char *doca_clone;
+	const char *doca_origin;
+	cred_t *doca_cred;
+	dmu_objset_clone_syncfunc doca_user_syncfunc;
+	dmu_objset_clone_cleanupfunc doca_user_cleanupfunc;
+	void *doca_user_data;
+} dmu_objset_clone_arg_t;
+
+struct dmu_objset_create_arg;
+typedef void (*dmu_objset_create_cleanupfunc)(struct dmu_objset_create_arg *);
+typedef struct dmu_objset_create_arg {
+	const char *doca_name;
+	cred_t *doca_cred;
+	void (*doca_userfunc)(objset_t *os, void *arg,
+	    cred_t *cr, dmu_tx_t *tx);
+	void *doca_userarg;
+	dmu_objset_type_t doca_type;
+	uint64_t doca_flags;
+	int doca_error;
+	dmu_objset_create_cleanupfunc doca_user_cleanupfunc;
+} dmu_objset_create_arg_t;
+
 /* called from zpl */
 int dmu_objset_hold(const char *name, void *tag, objset_t **osp);
 int dmu_objset_own(const char *name, dmu_objset_type_t type,
     boolean_t readonly, void *tag, objset_t **osp);
 void dmu_objset_rele(objset_t *os, void *tag);
 void dmu_objset_disown(objset_t *os, void *tag);
+int dmu_objset_set_owner(objset_t *os, void *tag);
 int dmu_objset_from_ds(struct dsl_dataset *ds, objset_t **osp);
 
 void dmu_objset_stats(objset_t *os, nvlist_t *nv);

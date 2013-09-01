@@ -162,12 +162,12 @@ extern "C" {
 #define	ZFS_DIRENT_TYPE(de) BF64_GET(de, 60, 4)
 #define	ZFS_DIRENT_OBJ(de) BF64_GET(de, 0, 48)
 
+#ifdef _KERNEL
 /*
  * Directory entry locks control access to directory entries.
  * They are used to protect creates, deletes, and renames.
  * Each directory znode has a mutex and a list of locked names.
  */
-#ifdef _KERNEL
 typedef struct zfs_dirlock {
 	char		*dl_name;	/* directory entry being locked */
 	uint32_t	dl_sharecnt;	/* 0 if exclusive, > 0 if shared */
@@ -211,6 +211,7 @@ typedef struct znode {
 	boolean_t	z_is_sa;	/* are we native sa? */
 } znode_t;
 
+#define	z_reclaim_td z_task.ta_context
 
 /*
  * Range locking rules
@@ -357,6 +358,8 @@ extern void zfs_log_truncate(zilog_t *zilog, dmu_tx_t *tx, int txtype,
     znode_t *zp, uint64_t off, uint64_t len);
 extern void zfs_log_setattr(zilog_t *zilog, dmu_tx_t *tx, int txtype,
     znode_t *zp, vattr_t *vap, uint_t mask_applied, zfs_fuid_info_t *fuidp);
+extern void zfs_log_sd_setattr(zilog_t *zilog, dmu_tx_t *tx, int txtype,
+    znode_t *zp, uint_t mask_applied, uint64_t mode, zfs_fuid_info_t *fuidp);
 #ifndef ZFS_NO_ACL
 extern void zfs_log_acl(zilog_t *zilog, dmu_tx_t *tx, znode_t *zp,
     vsecattr_t *vsecp, zfs_fuid_info_t *fuidp);

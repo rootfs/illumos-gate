@@ -38,13 +38,8 @@
 #include <sys/zfeature.h>
 #include <sys/zfs_ioctl.h>
 #include <sys/dsl_deleg.h>
-
-typedef struct dmu_snapshots_destroy_arg {
-	nvlist_t *dsda_snaps;
-	nvlist_t *dsda_successful_snaps;
-	boolean_t dsda_defer;
-	nvlist_t *dsda_errlist;
-} dmu_snapshots_destroy_arg_t;
+#include <sys/dsl_destroy.h>
+#include <sys/zvol.h>
 
 /*
  * ds must be owned.
@@ -465,8 +460,12 @@ dsl_destroy_snapshot_sync(void *arg, dmu_tx_t *tx)
 	    pair != NULL;
 	    pair = nvlist_next_nvpair(dsda->dsda_successful_snaps, pair)) {
 		dsl_dataset_t *ds;
+		char *dsname = nvpair_name(pair);
 
-		VERIFY0(dsl_dataset_hold(dp, nvpair_name(pair), FTAG, &ds));
+		VERIFY0(dsl_dataset_hold(dp, dsname, FTAG, &ds));
+
+		if (dsda->dsda_user_syncfunc != NULL)
+			dsda->dsda_user_syncfunc(dsda, dp, ds, dsname);
 
 		dsl_destroy_snapshot_sync_impl(ds, dsda->dsda_defer, tx);
 		dsl_dataset_rele(ds, FTAG);
@@ -490,8 +489,7 @@ int
 dsl_destroy_snapshots_nvl(nvlist_t *snaps, boolean_t defer,
     nvlist_t *errlist)
 {
-	dmu_snapshots_destroy_arg_t dsda;
-	int error;
+	dmu_snapshots_destroy_arg_t dsda = {};
 	nvpair_t *pair;
 
 	pair = nvlist_next_nvpair(snaps, NULL);
@@ -503,12 +501,21 @@ dsl_destroy_snapshots_nvl(nvlist_t *snaps, boolean_t defer,
 	dsda.dsda_defer = defer;
 	dsda.dsda_errlist = errlist;
 
-	error = dsl_sync_task(nvpair_name(pair),
-	    dsl_destroy_snapshot_check, dsl_destroy_snapshot_sync,
-	    &dsda, 0);
-	fnvlist_free(dsda.dsda_successful_snaps);
+#ifdef _KERNEL
+	dsda.dsda_error = zvol_destroy_snaps_init(&dsda);
+#endif
 
-	return (error);
+	if (dsda.dsda_error == 0)
+		dsda.dsda_error = dsl_sync_task(nvpair_name(pair),
+		    dsl_destroy_snapshot_check, dsl_destroy_snapshot_sync,
+		    &dsda, 0);
+
+	if (dsda.dsda_user_cleanupfunc != NULL)
+		dsda.dsda_user_cleanupfunc(&dsda);
+
+out:
+	fnvlist_free(dsda.dsda_successful_snaps);
+	return (dsda.dsda_error);
 }
 
 int
@@ -576,10 +583,6 @@ old_synchronous_dataset_destroy(dsl_dataset_t *ds, dmu_tx_t *tx)
 	    kill_blkptr, &ka));
 	ASSERT(!DS_UNIQUE_IS_ACCURATE(ds) || ds->ds_phys->ds_unique_bytes == 0);
 }
-
-typedef struct dsl_destroy_head_arg {
-	const char *ddha_name;
-} dsl_destroy_head_arg_t;
 
 int
 dsl_destroy_head_check_impl(dsl_dataset_t *ds, int expected_holds)
@@ -837,6 +840,8 @@ dsl_destroy_head_sync(void *arg, dmu_tx_t *tx)
 	dsl_dataset_t *ds;
 
 	VERIFY0(dsl_dataset_hold(dp, ddha->ddha_name, FTAG, &ds));
+	if (ddha->ddha_user_syncfunc != NULL)
+		ddha->ddha_user_syncfunc(ddha, ds);
 	dsl_destroy_head_sync_impl(ds, tx);
 	dsl_dataset_rele(ds, FTAG);
 }
@@ -861,7 +866,7 @@ dsl_destroy_head_begin_sync(void *arg, dmu_tx_t *tx)
 int
 dsl_destroy_head(const char *name)
 {
-	dsl_destroy_head_arg_t ddha;
+	dsl_destroy_head_arg_t ddha = {};
 	int error;
 	spa_t *spa;
 	boolean_t isenabled;
@@ -870,14 +875,19 @@ dsl_destroy_head(const char *name)
 	zfs_destroy_unmount_origin(name);
 #endif
 
-	error = spa_open(name, &spa, FTAG);
+	ddha.ddha_name = name;
+#ifdef _KERNEL
+	error = zvol_destroy_head_init(&ddha);
 	if (error != 0)
 		return (error);
+#endif
+
+	error = spa_open(name, &spa, FTAG);
+	if (error != 0)
+		goto out;
 	isenabled = spa_feature_is_enabled(spa,
 	    &spa_feature_table[SPA_FEATURE_ASYNC_DESTROY]);
 	spa_close(spa, FTAG);
-
-	ddha.ddha_name = name;
 
 	if (!isenabled) {
 		objset_t *os;
@@ -885,7 +895,7 @@ dsl_destroy_head(const char *name)
 		error = dsl_sync_task(name, dsl_destroy_head_check,
 		    dsl_destroy_head_begin_sync, &ddha, 0);
 		if (error != 0)
-			return (error);
+			goto out;
 
 		/*
 		 * Head deletion is processed in one txg on old pools;
@@ -906,8 +916,15 @@ dsl_destroy_head(const char *name)
 		}
 	}
 
-	return (dsl_sync_task(name, dsl_destroy_head_check,
-	    dsl_destroy_head_sync, &ddha, 0));
+	error = dsl_sync_task(name, dsl_destroy_head_check,
+	    dsl_destroy_head_sync, &ddha, 0);
+
+out:
+	ddha.ddha_error = error;
+	if (ddha.ddha_user_cleanupfunc != NULL)
+		ddha.ddha_user_cleanupfunc(&ddha);
+
+	return (ddha.ddha_error);
 }
 
 /*

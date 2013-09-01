@@ -176,6 +176,7 @@
 #include <sys/zfs_ctldir.h>
 #include <sys/zfs_dir.h>
 #include <sys/zfs_onexit.h>
+#include <sys/dsl_destroy.h>
 #include <sys/zvol.h>
 #include <sys/dsl_scan.h>
 #include <sys/dmu_objset.h>
@@ -203,9 +204,8 @@ static struct cdev *zfsdev;
 extern void zfs_init(void);
 extern void zfs_fini(void);
 
-uint_t zfs_fsyncer_key;
-extern uint_t rrw_tsd_key;
 static uint_t zfs_allow_log_key;
+extern uint_t zfs_geom_probe_vdev_key;
 
 typedef int zfs_ioc_legacy_func_t(zfs_cmd_t *);
 typedef int zfs_ioc_func_t(const char *, nvlist_t *, nvlist_t *);
@@ -1502,10 +1502,7 @@ zfs_ioc_pool_destroy(zfs_cmd_t *zc)
 {
 	int error;
 	zfs_log_history(zc);
-	error = spa_destroy(zc->zc_name);
-	if (error == 0)
-		zvol_remove_minors(zc->zc_name);
-	return (error);
+	return (spa_destroy(zc->zc_name));
 }
 
 static int
@@ -1555,10 +1552,7 @@ zfs_ioc_pool_export(zfs_cmd_t *zc)
 	boolean_t hardforce = (boolean_t)zc->zc_guid;
 
 	zfs_log_history(zc);
-	error = spa_export(zc->zc_name, NULL, force, hardforce);
-	if (error == 0)
-		zvol_remove_minors(zc->zc_name);
-	return (error);
+	return (spa_export(zc->zc_name, NULL, force, hardforce));
 }
 
 static int
@@ -2041,6 +2035,23 @@ zfs_ioc_objset_stats_impl(zfs_cmd_t *zc, objset_t *os)
 		    dmu_objset_type(os) == DMU_OST_ZVOL) {
 			error = zvol_get_stats(os, nv);
 			if (error == EIO)
+				return (error);
+			/* 
+			 * If the zvol's parent dataset was being destroyed
+			 * when we called zvol_get_stats, then it's possible
+			 * that the ZAP still existed but its blocks had
+			 * been already been freed when we tried to read it.
+			 * It would then appear that the ZAP had no entries.
+			 */
+			if (error == ENOENT)
+				return (error);
+			/*
+			 * a zvol's znode gets created before its zap gets
+			 * created.  So there is a short window of time in which
+			 * zvol_get_stats() can return EEXIST.  Return an
+			 * error in that case
+			 */
+			if (error == EEXIST)
 				return (error);
 			VERIFY0(error);
 		}
@@ -2998,6 +3009,7 @@ zfs_create_cb(objset_t *os, void *arg, cred_t *cr, dmu_tx_t *tx)
 /*
  * inputs:
  * os			parent objset pointer (NULL if root fs)
+ * zplver		zpl version to use if unspecified in createprops
  * fuids_ok		fuids allowed in this version of the spa?
  * sa_ok		SAs allowed in this version of the spa?
  * createprops		list of properties requested by creator
@@ -3199,6 +3211,9 @@ zfs_ioc_create(const char *fsname, nvlist_t *innvl, nvlist_t *outnvl)
 	if (type == DMU_OST_ZVOL) {
 		uint64_t volsize, volblocksize;
 
+		error = zvol_namecheck(fsname);
+		if (error)
+			return (error);
 		if (nvprops == NULL)
 			return (SET_ERROR(EINVAL));
 		if (nvlist_lookup_uint64(nvprops,
@@ -3251,10 +3266,6 @@ zfs_ioc_create(const char *fsname, nvlist_t *innvl, nvlist_t *outnvl)
 		if (error != 0)
 			(void) dsl_destroy_head(fsname);
 	}
-#ifdef __FreeBSD__
-	if (error == 0 && type == DMU_OST_ZVOL)
-		zvol_create_minors(fsname);
-#endif
 	return (error);
 }
 
@@ -3401,11 +3412,11 @@ zfs_ioc_log_history(const char *unused, nvlist_t *innvl, nvlist_t *outnvl)
 }
 
 /*
- * The dp_config_rwlock must not be held when calling this, because the
+ * The dp_config_rwlock must not be held while calling this, because the
  * unmount may need to write out data.
  *
  * This function is best-effort.  Callers must deal gracefully if it
- * remains mounted (or is remounted after this call).
+ * remains mounted (or it is remounted after this call).
  *
  * Returns 0 if the argument is not a snapshot, or it is not currently a
  * filesystem, or we were able to unmount it.  Returns error code otherwise.
@@ -3420,30 +3431,17 @@ zfs_unmount_snap(const char *snapname)
 	if (strchr(snapname, '@') == NULL)
 		return (0);
 
+	mount_lock();
 	vfsp = zfs_get_vfs(snapname);
-	if (vfsp == NULL)
-		return (0);
-
-	zfsvfs = vfsp->vfs_data;
-	ASSERT(!dsl_pool_config_held(dmu_objset_pool(zfsvfs->z_os)));
-
-	err = vn_vfswlock(vfsp->vfs_vnodecovered);
-	VFS_RELE(vfsp);
-	if (err != 0)
-		return (SET_ERROR(err));
-
-	/*
-	 * Always force the unmount for snapshots.
-	 */
-
-#ifdef illumos
-	(void) dounmount(vfsp, MS_FORCE, kcred);
-#else
-	mtx_lock(&Giant);	/* dounmount() */
-	(void) dounmount(vfsp, MS_FORCE, curthread);
-	mtx_unlock(&Giant);	/* dounmount() */
-#endif
-	return (0);
+	if (vfsp != NULL) {
+		zfsvfs = vfsp->vfs_data;
+		err = vn_vfswlock(vfsp->vfs_vnodecovered);
+		VFS_RELE(vfsp);
+		if (err == 0)
+			err = dounmount(vfsp, MS_FORCE, curthread);
+	}
+	mount_unlock();
+	return (err);
 }
 
 /* ARGSUSED */
@@ -3503,7 +3501,7 @@ zfs_ioc_destroy_snaps(const char *poolname, nvlist_t *innvl, nvlist_t *outnvl)
 	poollen = strlen(poolname);
 	for (pair = nvlist_next_nvpair(snaps, NULL); pair != NULL;
 	    pair = nvlist_next_nvpair(snaps, pair)) {
-		const char *name = nvpair_name(pair);
+		char *name = nvpair_name(pair);
 
 		/*
 		 * The snap must be in the specified pool.
@@ -3515,7 +3513,6 @@ zfs_ioc_destroy_snaps(const char *poolname, nvlist_t *innvl, nvlist_t *outnvl)
 		error = zfs_unmount_snap(name);
 		if (error != 0)
 			return (error);
-		(void) zvol_remove_minor(name);
 	}
 
 	return (dsl_destroy_snapshots_nvl(snaps, defer, outnvl));
@@ -3534,18 +3531,14 @@ zfs_ioc_destroy(zfs_cmd_t *zc)
 {
 	int err;
 
-	if (zc->zc_objset_type == DMU_OST_ZFS) {
-		err = zfs_unmount_snap(zc->zc_name);
-		if (err != 0)
-			return (err);
-	}
+	err = zfs_unmount_snap(zc->zc_name);
+	if (err)
+		return (err);
 
 	if (strchr(zc->zc_name, '@'))
 		err = dsl_destroy_snapshot(zc->zc_name, zc->zc_defer_destroy);
 	else
 		err = dsl_destroy_head(zc->zc_name);
-	if (zc->zc_objset_type == DMU_OST_ZVOL && err == 0)
-		(void) zvol_remove_minor(zc->zc_name);
 	return (err);
 }
 
@@ -3577,16 +3570,6 @@ zfs_ioc_rollback(zfs_cmd_t *zc)
 	return (error);
 }
 
-static int
-recursive_unmount(const char *fsname, void *arg)
-{
-	const char *snapname = arg;
-	char fullname[MAXNAMELEN];
-
-	(void) snprintf(fullname, sizeof (fullname), "%s@%s", fsname, snapname);
-	return (zfs_unmount_snap(fullname));
-}
-
 /*
  * inputs:
  * zc_name	old name of dataset
@@ -3599,10 +3582,12 @@ static int
 zfs_ioc_rename(zfs_cmd_t *zc)
 {
 	boolean_t recursive = zc->zc_cookie & 1;
-#ifdef __FreeBSD__
-	boolean_t allow_mounted = zc->zc_cookie & 2;
-#endif
+	boolean_t allow_mounted = B_TRUE;
 	char *at;
+
+#ifdef __FreeBSD__
+	allow_mounted = (zc->zc_cookie & 2) != 0;
+#endif
 
 	zc->zc_value[sizeof (zc->zc_value) - 1] = '\0';
 	if (dataset_namecheck(zc->zc_value, NULL, NULL) != 0 ||
@@ -3617,13 +3602,9 @@ zfs_ioc_rename(zfs_cmd_t *zc)
 		if (strncmp(zc->zc_name, zc->zc_value, at - zc->zc_name + 1))
 			return (SET_ERROR(EXDEV));
 		*at = '\0';
-#ifdef illumos
-		if (zc->zc_objset_type == DMU_OST_ZFS) {
-#else
 		if (zc->zc_objset_type == DMU_OST_ZFS && allow_mounted) {
-#endif
 			error = dmu_objset_find(zc->zc_name,
-			    recursive_unmount, at + 1,
+			    zfs_unmount_snap_cb, at + 1,
 			    recursive ? DS_FIND_CHILDREN : 0);
 			if (error != 0) {
 				*at = '@';
@@ -3636,10 +3617,6 @@ zfs_ioc_rename(zfs_cmd_t *zc)
 
 		return (error);
 	} else {
-#ifdef illumos
-		if (zc->zc_objset_type == DMU_OST_ZVOL)
-			(void) zvol_remove_minor(zc->zc_name);
-#endif
 		return (dsl_dir_rename(zc->zc_name, zc->zc_value));
 	}
 }
@@ -4116,6 +4093,11 @@ zfs_ioc_recv(zfs_cmd_t *zc)
 		} else {
 			error = dmu_recv_end(&drc);
 		}
+#ifdef _KERNEL
+		if (error == 0)
+			(void) zvol_create_devices(tofs, /*ignore_errors*/B_TRUE,
+			    DS_FIND_ALL);
+#endif
 	}
 
 	zc->zc_cookie = off - fp->f_offset;
@@ -4127,11 +4109,6 @@ zfs_ioc_recv(zfs_cmd_t *zc)
 		zfs_ioc_recv_inject_err = B_FALSE;
 		error = 1;
 	}
-#endif
-
-#ifdef __FreeBSD__
-	if (error == 0)
-		zvol_create_minors(tofs);
 #endif
 
 	/*
@@ -5618,7 +5595,7 @@ zfsdev_minor_alloc(void)
 	static minor_t last_minor;
 	minor_t m;
 
-	ASSERT(MUTEX_HELD(&spa_namespace_lock));
+	ASSERT(MUTEX_HELD(&zfsdev_state_lock));
 
 	for (m = last_minor + 1; m != last_minor; m++) {
 		if (m > ZFSDEV_MAX_MINOR)
@@ -5638,7 +5615,7 @@ zfs_ctldev_init(struct cdev *devp)
 	minor_t minor;
 	zfs_soft_state_t *zs;
 
-	ASSERT(MUTEX_HELD(&spa_namespace_lock));
+	ASSERT(MUTEX_HELD(&zfsdev_state_lock));
 
 	minor = zfsdev_minor_alloc();
 	if (minor == 0)
@@ -5659,7 +5636,7 @@ zfs_ctldev_init(struct cdev *devp)
 static void
 zfs_ctldev_destroy(zfs_onexit_t *zo, minor_t minor)
 {
-	ASSERT(MUTEX_HELD(&spa_namespace_lock));
+	ASSERT(MUTEX_HELD(&zfsdev_state_lock));
 
 	zfs_onexit_destroy(zo);
 	ddi_soft_state_free(zfsdev_state, minor);
@@ -5689,9 +5666,9 @@ zfsdev_open(struct cdev *devp, int flag, int mode, struct thread *td)
 
 	/* This is the control device. Allocate a new minor if requested. */
 	if (flag & FEXCL) {
-		mutex_enter(&spa_namespace_lock);
+		mutex_enter(&zfsdev_state_lock);
 		error = zfs_ctldev_init(devp);
-		mutex_exit(&spa_namespace_lock);
+		mutex_exit(&zfsdev_state_lock);
 	}
 
 	return (error);
@@ -5706,14 +5683,14 @@ zfsdev_close(void *data)
 	if (minor == 0)
 		return;
 
-	mutex_enter(&spa_namespace_lock);
+	mutex_enter(&zfsdev_state_lock);
 	zo = zfsdev_get_soft_state(minor, ZSST_CTLDEV);
 	if (zo == NULL) {
-		mutex_exit(&spa_namespace_lock);
+		mutex_exit(&zfsdev_state_lock);
 		return;
 	}
 	zfs_ctldev_destroy(zo, minor);
-	mutex_exit(&spa_namespace_lock);
+	mutex_exit(&zfsdev_state_lock);
 }
 
 static int
@@ -6113,6 +6090,20 @@ zfs_allow_log_destroy(void *arg)
 }
 
 static void
+zfs_kernel_tsd_init(void)
+{
+	tsd_create(&zfs_allow_log_key, zfs_allow_log_destroy);
+	zfs_tsd_init();
+}
+
+static void
+zfs_kernel_tsd_fini(void)
+{
+	zfs_tsd_fini();
+	tsd_destroy(&zfs_allow_log_key);
+}
+
+static void
 zfsdev_init(void)
 {
 	zfsdev = make_dev(&zfs_cdevsw, 0x0, UID_ROOT, GID_OPERATOR, 0666,
@@ -6147,9 +6138,7 @@ _init(void)
 		return (error);
 	}
 
-	tsd_create(&zfs_fsyncer_key, NULL);
-	tsd_create(&rrw_tsd_key, rrw_tsd_destroy);
-	tsd_create(&zfs_allow_log_key, zfs_allow_log_destroy);
+	zfs_kernel_tsd_init();
 
 	error = ldi_ident_from_mod(&modlinkage, &zfs_li);
 	ASSERT(error == 0);
@@ -6179,7 +6168,7 @@ _fini(void)
 	if (zfs_nfsshare_inited || zfs_smbshare_inited)
 		(void) ddi_modclose(sharefs_mod);
 
-	tsd_destroy(&zfs_fsyncer_key);
+	zfs_kernel_tsd_fini();
 	ldi_ident_release(zfs_li);
 	zfs_li = NULL;
 	mutex_destroy(&zfs_share_lock);
@@ -6210,9 +6199,8 @@ zfs_modevent(module_t mod, int type, void *unused __unused)
 		zvol_init();
 		zfs_ioctl_init();
 
-		tsd_create(&zfs_fsyncer_key, NULL);
-		tsd_create(&rrw_tsd_key, rrw_tsd_destroy);
-		tsd_create(&zfs_allow_log_key, zfs_allow_log_destroy);
+		zfs_kernel_tsd_init();
+		tsd_create(&zfs_geom_probe_vdev_key, NULL);
 
 		printf("ZFS storage pool version: features support (" SPA_VERSION_STRING ")\n");
 		root_mount_rel(zfs_root_token);
@@ -6231,9 +6219,8 @@ zfs_modevent(module_t mod, int type, void *unused __unused)
 		zfs_fini();
 		spa_fini();
 
-		tsd_destroy(&zfs_fsyncer_key);
-		tsd_destroy(&rrw_tsd_key);
-		tsd_destroy(&zfs_allow_log_key);
+		tsd_destroy(&zfs_geom_probe_vdev_key);
+		zfs_kernel_tsd_fini();
 
 		mutex_destroy(&zfs_share_lock);
 		break;

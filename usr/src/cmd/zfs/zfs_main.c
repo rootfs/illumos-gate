@@ -247,7 +247,7 @@ get_usage(zfs_help_t idx)
 	case HELP_UNJAIL:
 		return (gettext("\tunjail <jailid|jailname> <filesystem>\n"));
 	case HELP_LIST:
-		return (gettext("\tlist [-rH][-d max] "
+		return (gettext("\tlist [-rHp][-d max] "
 		    "[-o property[,...]] [-t type[,...]] [-s property] ...\n"
 		    "\t    [-S property] ... "
 		    "[filesystem|volume|snapshot] ...\n"));
@@ -2069,8 +2069,8 @@ zfs_do_upgrade(int argc, char **argv)
 		(void) printf(gettext("%llu filesystems upgraded\n"),
 		    cb.cb_numupgraded);
 		if (cb.cb_numsamegraded) {
-			(void) printf(gettext("%llu filesystems already at "
-			    "this version\n"),
+			(void) printf(gettext("%llu filesystems already "
+			    "at this version\n"),
 			    cb.cb_numsamegraded);
 		}
 		if (cb.cb_numfailed != 0)
@@ -2508,7 +2508,7 @@ print_us_node(boolean_t scripted, boolean_t parsable, int *fields, int types,
 		case USFIELD_QUOTA:
 			if (type == DATA_TYPE_UINT64) {
 				if (parsable) {
-					(void) sprintf(valstr, "%llu", val64);
+					(void)sprintf(valstr, "%llu", val64);
 				} else {
 					zfs_nicenum(val64, valstr,
 					    sizeof (valstr));
@@ -2558,10 +2558,10 @@ print_us(boolean_t scripted, boolean_t parsable, int *fields, int types,
 			col = gettext(us_field_hdr[field]);
 			if (field == USFIELD_TYPE || field == USFIELD_NAME) {
 				(void) printf(first ? "%-*s" : "  %-*s",
-				    width[field], col);
+				    (int)width[field], col);
 			} else {
 				(void) printf(first ? "%*s" : "  %*s",
-				    width[field], col);
+				    (int)width[field], col);
 			}
 			first = B_FALSE;
 			cfield++;
@@ -2798,13 +2798,14 @@ zfs_do_userspace(int argc, char **argv)
 }
 
 /*
- * list [-r][-d max] [-H] [-o property[,property]...] [-t type[,type]...]
+ * list [-r][-d max] [-H] [-p] [-o property[,property]...] [-t type[,type]...]
  *      [-s property [-s property]...] [-S property [-S property]...]
  *      <dataset> ...
  *
  *	-r	Recurse over all children
  *	-d	Limit recursion by depth.
  *	-H	Scripted mode; elide headers and separate columns by tabs
+ *	-p	Display numbers in parseable (exact) values.
  *	-o	Control which fields to display.
  *	-t	Control which object types to display.
  *	-s	Specify sort columns, descending order.
@@ -2816,6 +2817,7 @@ zfs_do_userspace(int argc, char **argv)
  */
 typedef struct list_cbdata {
 	boolean_t	cb_first;
+	boolean_t	cb_literal;
 	boolean_t	cb_scripted;
 	zprop_list_t	*cb_proplist;
 } list_cbdata_t;
@@ -2853,9 +2855,9 @@ print_header(zprop_list_t *pl)
 		if (pl->pl_next == NULL && !right_justify)
 			(void) printf("%s", header);
 		else if (right_justify)
-			(void) printf("%*s", pl->pl_width, header);
+			(void) printf("%*s", (int)pl->pl_width, header);
 		else
-			(void) printf("%-*s", pl->pl_width, header);
+			(void) printf("%-*s", (int)pl->pl_width, header);
 	}
 
 	(void) printf("\n");
@@ -2866,7 +2868,8 @@ print_header(zprop_list_t *pl)
  * to the described layout.
  */
 static void
-print_dataset(zfs_handle_t *zhp, zprop_list_t *pl, boolean_t scripted)
+print_dataset(zfs_handle_t *zhp, zprop_list_t *pl, boolean_t scripted,
+	boolean_t literal)
 {
 	boolean_t first = B_TRUE;
 	char property[ZFS_MAXPROPLEN];
@@ -2893,7 +2896,7 @@ print_dataset(zfs_handle_t *zhp, zprop_list_t *pl, boolean_t scripted)
 			right_justify = zfs_prop_align_right(pl->pl_prop);
 		} else if (pl->pl_prop != ZPROP_INVAL) {
 			if (zfs_prop_get(zhp, pl->pl_prop, property,
-			    sizeof (property), NULL, NULL, 0, B_FALSE) != 0)
+			    sizeof (property), NULL, NULL, 0, literal) != 0)
 				propstr = "-";
 			else
 				propstr = property;
@@ -2901,14 +2904,14 @@ print_dataset(zfs_handle_t *zhp, zprop_list_t *pl, boolean_t scripted)
 			right_justify = zfs_prop_align_right(pl->pl_prop);
 		} else if (zfs_prop_userquota(pl->pl_user_prop)) {
 			if (zfs_prop_get_userquota(zhp, pl->pl_user_prop,
-			    property, sizeof (property), B_FALSE) != 0)
+			    property, sizeof (property), literal) != 0)
 				propstr = "-";
 			else
 				propstr = property;
 			right_justify = B_TRUE;
 		} else if (zfs_prop_written(pl->pl_user_prop)) {
 			if (zfs_prop_get_written(zhp, pl->pl_user_prop,
-			    property, sizeof (property), B_FALSE) != 0)
+			    property, sizeof (property), literal) != 0)
 				propstr = "-";
 			else
 				propstr = property;
@@ -2955,7 +2958,7 @@ list_callback(zfs_handle_t *zhp, void *data)
 		cbp->cb_first = B_FALSE;
 	}
 
-	print_dataset(zhp, cbp->cb_proplist, cbp->cb_scripted);
+	print_dataset(zhp, cbp->cb_proplist, cbp->cb_scripted, cbp->cb_literal);
 
 	return (0);
 }
@@ -2978,10 +2981,13 @@ zfs_do_list(int argc, char **argv)
 	int flags = ZFS_ITER_PROP_LISTSNAPS | ZFS_ITER_ARGS_CAN_BE_PATHS;
 
 	/* check options */
-	while ((c = getopt(argc, argv, ":d:o:rt:Hs:S:")) != -1) {
+	while ((c = getopt(argc, argv, ":d:o:rt:Hps:S:")) != -1) {
 		switch (c) {
 		case 'o':
 			fields = optarg;
+			break;
+		case 'p':
+			cb.cb_literal = B_TRUE;
 			break;
 		case 'd':
 			limit = parse_depth(optarg, &flags);
@@ -4895,7 +4901,7 @@ print_set_creat_perms(uu_avl_t *who_avl)
 		deleg_perm_node_t *deleg_node;
 
 		if (prev_weight != weight) {
-			(void) printf(*title_ptr++);
+			(void) printf("%s", *title_ptr++);
 			prev_weight = weight;
 		}
 
@@ -4950,7 +4956,7 @@ print_uge_deleg_perms(uu_avl_t *who_avl, boolean_t local, boolean_t descend,
 				const char *who = NULL;
 				if (prt_title) {
 					prt_title = B_FALSE;
-					(void) printf(title);
+					(void) printf("%s", title);
 				}
 
 				switch (who_type) {
@@ -5007,7 +5013,7 @@ print_fs_perms(fs_perm_set_t *fspset)
 		(void) snprintf(buf, ZFS_MAXNAMELEN+32,
 		    gettext("---- Permissions on %s "),
 		    node->fspn_fsperm.fsp_name);
-		(void) printf(dsname);
+		(void) printf("%s", dsname);
 		left = 70 - strlen(buf);
 		while (left-- > 0)
 			(void) printf("-");
@@ -5286,8 +5292,8 @@ print_holds(boolean_t scripted, size_t nwidth, size_t tagwidth, nvlist_t *nvl)
 		for (i = 0; i < 3; i++) {
 			col = gettext(hdr_cols[i]);
 			if (i < 2)
-				(void) printf("%-*s  ", i ? tagwidth : nwidth,
-				    col);
+				(void) printf("%-*s  ",
+				    i ? (int)tagwidth : (int)nwidth, col);
 			else
 				(void) printf("%s\n", col);
 		}
@@ -5313,8 +5319,9 @@ print_holds(boolean_t scripted, size_t nwidth, size_t tagwidth, nvlist_t *nvl)
 			(void) strftime(tsbuf, DATETIME_BUF_LEN,
 			    gettext(STRFTIME_FMT_STR), &t);
 
-			(void) printf("%-*s%*c%-*s%*c%s\n", nwidth, zname,
-			    sepnum, sep, tagwidth, tagname, sepnum, sep, tsbuf);
+			(void) printf("%-*s%*c%-*s%*c%s\n", (int)nwidth, zname,
+			    (int)sepnum, sep, (int)tagwidth, tagname,
+			    (int)sepnum, sep, tsbuf);
 		}
 	}
 }
@@ -5757,8 +5764,8 @@ append_options(char *mntopts, char *newopts)
 	/* original length plus new string to append plus 1 for the comma */
 	if (len + 1 + strlen(newopts) >= MNT_LINE_MAX) {
 		(void) fprintf(stderr, gettext("the opts argument for "
-		    "'%c' option is too long (more than %d chars)\n"),
-		    "-o", MNT_LINE_MAX);
+		    "'-o' option is too long (more than %d chars)\n"),
+		    MNT_LINE_MAX);
 		usage(B_FALSE);
 	}
 

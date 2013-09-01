@@ -46,6 +46,10 @@ struct dsl_dataset;
 struct dsl_dir;
 struct dsl_pool;
 
+#define DS_HAS_PHYS(ds) \
+	((ds)->ds_dbuf != NULL && (ds)->ds_phys != NULL)
+
+#define	DS_FLAG_CONSISTENT	(0ULL<<0)
 #define	DS_FLAG_INCONSISTENT	(1ULL<<0)
 #define	DS_IS_INCONSISTENT(ds)	\
 	((ds)->ds_phys->ds_flags & DS_FLAG_INCONSISTENT)
@@ -78,6 +82,7 @@ struct dsl_pool;
 
 #define	DS_CREATE_FLAG_NODIRTY	(1ULL<<24)
 
+/* The accounting parts of this structure are protected by ds->ds_lock. */
 typedef struct dsl_dataset_phys {
 	uint64_t ds_dir_obj;		/* DMU_OT_DSL_DIR */
 	uint64_t ds_prev_snap_obj;	/* DMU_OT_DSL_DATASET */
@@ -97,12 +102,12 @@ typedef struct dsl_dataset_phys {
 	uint64_t ds_compressed_bytes;
 	uint64_t ds_uncompressed_bytes;
 	uint64_t ds_unique_bytes;	/* only relevant to snapshots */
-	/*
-	 * The ds_fsid_guid is a 56-bit ID that can change to avoid
-	 * collisions.  The ds_guid is a 64-bit ID that will never
-	 * change, so there is a small probability that it will collide.
-	 */
+	/* A 56-bit ID that can change to avoid collisions. */
 	uint64_t ds_fsid_guid;
+	/*
+	 * A 64-bit ID that will never change, so there is a small probability
+	 * that it will collide.
+	 */
 	uint64_t ds_guid;
 	uint64_t ds_flags;		/* DS_FLAG_* */
 	blkptr_t ds_bp;
@@ -112,11 +117,21 @@ typedef struct dsl_dataset_phys {
 	uint64_t ds_pad[5]; /* pad out to 320 bytes for good measure */
 } dsl_dataset_phys_t;
 
+typedef struct dsl_dataset_dbuf {
+	uint8_t dsdb_pad[offsetof(dmu_buf_t, db_data)];
+	dsl_dataset_phys_t *dsdb_data;
+} dsl_dataset_dbuf_t;
+
 typedef struct dsl_dataset {
+	/* Dbuf user eviction data for this instance. */
+	dmu_buf_user_t ds_dbu;
+
 	/* Immutable: */
 	struct dsl_dir *ds_dir;
-	dsl_dataset_phys_t *ds_phys;
-	dmu_buf_t *ds_dbuf;
+	union {
+		dmu_buf_t *ds_dmu_db;
+		dsl_dataset_dbuf_t *ds_db;
+	} ds_db_u;
 	uint64_t ds_object;
 	uint64_t ds_fsid_guid;
 
@@ -132,7 +147,7 @@ typedef struct dsl_dataset {
 	list_node_t ds_synced_link;
 
 	/*
-	 * ds_phys->ds_<accounting> is also protected by ds_lock.
+	 * ds->ds_phys->ds_<accounting> is also protected by ds_lock.
 	 * Protected by ds_lock:
 	 */
 	kmutex_t ds_lock;
@@ -164,6 +179,64 @@ typedef struct dsl_dataset {
 	char ds_snapname[MAXNAMELEN];
 } dsl_dataset_t;
 
+#define	ds_dbuf ds_db_u.ds_dmu_db
+#define	ds_phys ds_db_u.ds_db->dsdb_data
+
+typedef struct dsl_promotenode {
+	list_node_t link;
+	dsl_dataset_t *ds;
+} dsl_promotenode_t;
+
+struct dsl_dataset_promote_arg;
+
+typedef void (*dsl_dataset_promote_user_syncfunc_t)(
+    struct dsl_dataset_promote_arg *ddpa, dsl_dataset_t *origin_ds,
+    dsl_dataset_t *clone_ds, dsl_dataset_t *snap_ds);
+
+typedef void (*dsl_dataset_promote_user_cleanupfunc_t)(
+    struct dsl_dataset_promote_arg *ddpa);
+
+typedef struct dsl_dataset_promote_arg {
+	const char *ddpa_clonename;
+	dsl_dataset_t *ddpa_clone;
+	list_t shared_snaps, origin_snaps, clone_snaps;
+	dsl_dataset_t *origin_origin; /* origin of the origin */
+	uint64_t used, comp, uncomp, unique, cloneusedsnap, originusedsnap;
+	char *err_ds;
+	dsl_dataset_promote_user_syncfunc_t ddpa_user_syncfunc;
+	dsl_dataset_promote_user_cleanupfunc_t ddpa_user_cleanupfunc;
+	void *ddpa_user_data;
+} dsl_dataset_promote_arg_t;
+
+struct dsl_dataset_snapshot_arg;
+typedef void (*dsl_dataset_snapshot_syncfunc_t)(
+    struct dsl_dataset_snapshot_arg *, dsl_dataset_t *, char *);
+typedef void (*dsl_dataset_snapshot_cleanupfunc_t)(
+    struct dsl_dataset_snapshot_arg *);
+
+typedef struct dsl_dataset_snapshot_arg {
+	nvlist_t *ddsa_snaps;
+	nvlist_t *ddsa_props;
+	nvlist_t *ddsa_errors;
+	dsl_dataset_snapshot_syncfunc_t ddsa_user_syncfunc;
+	dsl_dataset_snapshot_cleanupfunc_t ddsa_user_cleanupfunc;
+	void *ddsa_user_data;
+} dsl_dataset_snapshot_arg_t;
+
+struct dsl_dataset_rename_snapshot_arg;
+typedef void (*dsl_dataset_rename_snapshot_cleanupfunc_t)(
+    struct dsl_dataset_rename_snapshot_arg *);
+
+typedef struct dsl_dataset_rename_snapshot_arg {
+	const char *ddrsa_fsname;
+	const char *ddrsa_oldsnapname;
+	const char *ddrsa_newsnapname;
+	boolean_t ddrsa_recursive;
+	dmu_tx_t *ddrsa_tx;
+	int ddrsa_error;
+	dsl_dataset_rename_snapshot_cleanupfunc_t ddrsa_user_cleanupfunc;
+} dsl_dataset_rename_snapshot_arg_t;
+
 /*
  * The max length of a temporary tag prefix is the number of hex digits
  * required to express UINT64_MAX plus one for the hyphen.
@@ -181,13 +254,9 @@ int dsl_dataset_hold(struct dsl_pool *dp, const char *name, void *tag,
 int dsl_dataset_hold_obj(struct dsl_pool *dp, uint64_t dsobj, void *tag,
     dsl_dataset_t **);
 void dsl_dataset_rele(dsl_dataset_t *ds, void *tag);
-int dsl_dataset_own(struct dsl_pool *dp, const char *name,
-    void *tag, dsl_dataset_t **dsp);
-int dsl_dataset_own_obj(struct dsl_pool *dp, uint64_t dsobj,
-    void *tag, dsl_dataset_t **dsp);
-void dsl_dataset_disown(dsl_dataset_t *ds, void *tag);
+int dsl_dataset_set_owner(dsl_dataset_t *ds, void *tag);
+void dsl_dataset_remove_owner(dsl_dataset_t *ds, void *tag);
 void dsl_dataset_name(dsl_dataset_t *ds, char *name);
-boolean_t dsl_dataset_tryown(dsl_dataset_t *ds, void *tag);
 uint64_t dsl_dataset_create_sync(dsl_dir_t *pds, const char *lastname,
     dsl_dataset_t *origin, uint64_t flags, cred_t *, dmu_tx_t *);
 uint64_t dsl_dataset_create_sync_dd(dsl_dir_t *dd, dsl_dataset_t *origin,

@@ -45,7 +45,7 @@ zap_getflags(zap_t *zap)
 {
 	if (zap->zap_ismicro)
 		return (0);
-	return (zap->zap_u.zap_fat.zap_phys->zap_flags);
+	return (zap->zap_f_phys->zap_flags);
 }
 
 int
@@ -390,7 +390,8 @@ mzap_open(objset_t *os, uint64_t obj, dmu_buf_t *db)
 	 * it, because zap_lockdir() checks zap_ismicro without the lock
 	 * held.
 	 */
-	winner = dmu_buf_set_user(db, zap, &zap->zap_m.zap_phys, zap_evict);
+	dmu_buf_init_user(&zap->zap_dbu, zap_evict, &zap->zap_dbuf);
+	winner = dmu_buf_set_user(db, &zap->zap_dbu);
 
 	if (winner != NULL) {
 		rw_exit(&zap->zap_rwlock);
@@ -402,15 +403,14 @@ mzap_open(objset_t *os, uint64_t obj, dmu_buf_t *db)
 	}
 
 	if (zap->zap_ismicro) {
-		zap->zap_salt = zap->zap_m.zap_phys->mz_salt;
-		zap->zap_normflags = zap->zap_m.zap_phys->mz_normflags;
+		zap->zap_salt = zap->zap_m_phys->mz_salt;
+		zap->zap_normflags = zap->zap_m_phys->mz_normflags;
 		zap->zap_m.zap_num_chunks = db->db_size / MZAP_ENT_LEN - 1;
 		avl_create(&zap->zap_m.zap_avl, mze_compare,
 		    sizeof (mzap_ent_t), offsetof(mzap_ent_t, mze_node));
 
 		for (i = 0; i < zap->zap_m.zap_num_chunks; i++) {
-			mzap_ent_phys_t *mze =
-			    &zap->zap_m.zap_phys->mz_chunk[i];
+			mzap_ent_phys_t *mze = &zap->zap_m_phys->mz_chunk[i];
 			if (mze->mze_name[0]) {
 				zap_name_t *zn;
 
@@ -427,8 +427,8 @@ mzap_open(objset_t *os, uint64_t obj, dmu_buf_t *db)
 			}
 		}
 	} else {
-		zap->zap_salt = zap->zap_f.zap_phys->zap_salt;
-		zap->zap_normflags = zap->zap_f.zap_phys->zap_normflags;
+		zap->zap_salt = zap->zap_f_phys->zap_salt;
+		zap->zap_normflags = zap->zap_f_phys->zap_normflags;
 
 		ASSERT3U(sizeof (struct zap_leaf_header), ==,
 		    2*ZAP_LEAF_CHUNKSIZE);
@@ -438,7 +438,7 @@ mzap_open(objset_t *os, uint64_t obj, dmu_buf_t *db)
 		 * other members.
 		 */
 		ASSERT3P(&ZAP_EMBEDDED_PTRTBL_ENT(zap, 0), >,
-		    &zap->zap_f.zap_phys->zap_salt);
+		    &zap->zap_f_phys->zap_salt);
 
 		/*
 		 * The embedded pointer table should end at the end of
@@ -446,8 +446,7 @@ mzap_open(objset_t *os, uint64_t obj, dmu_buf_t *db)
 		 */
 		ASSERT3U((uintptr_t)&ZAP_EMBEDDED_PTRTBL_ENT(zap,
 		    1<<ZAP_EMBEDDED_PTRTBL_SHIFT(zap)) -
-		    (uintptr_t)zap->zap_f.zap_phys, ==,
-		    zap->zap_dbuf->db_size);
+		    (uintptr_t)zap->zap_f_phys, ==, zap->zap_dbuf->db_size);
 	}
 	rw_exit(&zap->zap_rwlock);
 	return (zap);
@@ -476,7 +475,7 @@ zap_lockdir(objset_t *os, uint64_t obj, dmu_tx_t *tx,
 	}
 #endif
 
-	zap = dmu_buf_get_user(db);
+	zap = (zap_t *)dmu_buf_get_user(db);
 	if (zap == NULL)
 		zap = mzap_open(os, obj, db);
 
@@ -513,8 +512,13 @@ zap_lockdir(objset_t *os, uint64_t obj, dmu_tx_t *tx,
 		if (newsz > MZAP_MAX_BLKSZ) {
 			dprintf("upgrading obj %llu: num_entries=%u\n",
 			    obj, zap->zap_m.zap_num_entries);
+			err = mzap_upgrade(&zap, tx, 0);
+			if (err) {
+				zap_unlockdir(zap);
+				zap = NULL;
+			}
 			*zapp = zap;
-			return (mzap_upgrade(zapp, tx, 0));
+			return (err);
 		}
 		err = dmu_object_set_blocksize(os, obj, newsz, 0, tx);
 		ASSERT0(err);
@@ -687,11 +691,10 @@ zap_destroy(objset_t *os, uint64_t zapobj, dmu_tx_t *tx)
 	return (dmu_object_free(os, zapobj, tx));
 }
 
-_NOTE(ARGSUSED(0))
 void
-zap_evict(dmu_buf_t *db, void *vzap)
+zap_evict(dmu_buf_user_t *dbu)
 {
-	zap_t *zap = vzap;
+	zap_t *zap = (zap_t *)dbu;
 
 	rw_destroy(&zap->zap_rwlock);
 
@@ -949,7 +952,7 @@ mzap_addent(zap_name_t *zn, uint64_t value)
 
 #ifdef ZFS_DEBUG
 	for (i = 0; i < zap->zap_m.zap_num_chunks; i++) {
-		mzap_ent_phys_t *mze = &zap->zap_m.zap_phys->mz_chunk[i];
+		mzap_ent_phys_t *mze = &zap->zap_m_phys->mz_chunk[i];
 		ASSERT(strcmp(zn->zn_key_orig, mze->mze_name) != 0);
 	}
 #endif
@@ -960,7 +963,7 @@ mzap_addent(zap_name_t *zn, uint64_t value)
 
 again:
 	for (i = start; i < zap->zap_m.zap_num_chunks; i++) {
-		mzap_ent_phys_t *mze = &zap->zap_m.zap_phys->mz_chunk[i];
+		mzap_ent_phys_t *mze = &zap->zap_m_phys->mz_chunk[i];
 		if (mze->mze_name[0] == 0) {
 			mze->mze_value = value;
 			mze->mze_cd = cd;
@@ -1161,7 +1164,7 @@ zap_remove_norm(objset_t *os, uint64_t zapobj, const char *name,
 			err = SET_ERROR(ENOENT);
 		} else {
 			zap->zap_m.zap_num_entries--;
-			bzero(&zap->zap_m.zap_phys->mz_chunk[mze->mze_chunkid],
+			bzero(&zap->zap_m_phys->mz_chunk[mze->mze_chunkid],
 			    sizeof (mzap_ent_phys_t));
 			mze_remove(zap, mze);
 		}

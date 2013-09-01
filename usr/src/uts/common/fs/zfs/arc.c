@@ -504,10 +504,10 @@ static uint64_t		arc_loaned_bytes;
 static uint64_t		arc_meta_used;
 static uint64_t		arc_meta_limit;
 static uint64_t		arc_meta_max = 0;
-SYSCTL_UQUAD(_vfs_zfs, OID_AUTO, arc_meta_used, CTLFLAG_RDTUN,
-    &arc_meta_used, 0, "ARC metadata used");
-SYSCTL_UQUAD(_vfs_zfs, OID_AUTO, arc_meta_limit, CTLFLAG_RDTUN,
-    &arc_meta_limit, 0, "ARC metadata limit");
+SYSCTL_UQUAD(_vfs_zfs, OID_AUTO, arc_meta_used, CTLFLAG_RD, &arc_meta_used, 0,
+    "ARC metadata used");
+SYSCTL_UQUAD(_vfs_zfs, OID_AUTO, arc_meta_limit, CTLFLAG_RW, &arc_meta_limit, 0,
+    "ARC metadata limit");
 
 typedef struct l2arc_buf_hdr l2arc_buf_hdr_t;
 
@@ -1091,7 +1091,7 @@ arc_cksum_verify(arc_buf_t *buf)
 	}
 	fletcher_2_native(buf->b_data, buf->b_hdr->b_size, &zc);
 	if (!ZIO_CHECKSUM_EQUAL(*buf->b_hdr->b_freeze_cksum, zc))
-		panic("buffer modified while frozen!");
+		panic("buffer %p modified while frozen!", buf);
 	mutex_exit(&buf->b_hdr->b_freeze_lock);
 }
 
@@ -1174,6 +1174,23 @@ arc_buf_watch(arc_buf_t *buf)
 }
 #endif /* illumos */
 
+boolean_t
+arc_buf_frozen(arc_buf_t *buf, boolean_t should_be_frozen)
+{
+	boolean_t frozen = B_TRUE;
+
+	if (!(zfs_flags & ZFS_DEBUG_MODIFY))
+		return (B_TRUE);
+
+	/*
+	 * NB: Does not grab or assert the mutex because the caller more
+	 * than likely cannot use the results in an atomic fashion.
+	 */
+	if (buf->b_hdr->b_freeze_cksum == NULL)
+		frozen = B_FALSE;
+	return (frozen == should_be_frozen);
+}
+
 void
 arc_buf_thaw(arc_buf_t *buf)
 {
@@ -1215,6 +1232,15 @@ arc_buf_freeze(arc_buf_t *buf)
 	hash_lock = HDR_LOCK(buf->b_hdr);
 	mutex_enter(hash_lock);
 
+#ifdef ZFS_DEBUG
+	if (buf->b_hdr->b_freeze_cksum == NULL && buf->b_hdr->b_state != arc_anon) {
+		printf("%s: invalid state: freeze_cksum=%p, b_state=%p\n",
+		    __func__, buf->b_hdr->b_freeze_cksum, buf->b_hdr->b_state);
+		printf("arc_anon=%p arc_mru=%p arc_mru_ghost=%p arc_mfu=%p "
+		    "arc_mfu_ghost=%p arc_l2c_only=%p\n", arc_anon, arc_mru,
+		    arc_mru_ghost, arc_mfu, arc_mfu_ghost, arc_l2c_only);
+	}
+#endif
 	ASSERT(buf->b_hdr->b_freeze_cksum != NULL ||
 	    buf->b_hdr->b_state == arc_anon);
 	arc_cksum_compute(buf, B_FALSE);
@@ -2077,9 +2103,17 @@ evict_start:
 	else
 		evict_data_offset = idx;
 
+	/*
+	 * Number of buffers skipped because they have I/O in progress or
+	 * are indrect prefetch buffers that have not lived long enough.
+	 */
 	if (skipped)
 		ARCSTAT_INCR(arcstat_evict_skip, skipped);
 
+	/*
+	 * Number of buffers that could not be evicted because something
+	 * else is using them.
+	 */
 	if (missed)
 		ARCSTAT_INCR(arcstat_mutex_miss, missed);
 
@@ -2207,6 +2241,7 @@ evict_start:
 		goto evict_start;
 	}
 
+	/* Number of buffers we could not obtain the hash lock for */
 	if (bufs_skipped) {
 		ARCSTAT_INCR(arcstat_mutex_miss, bufs_skipped);
 		ASSERT(bytes >= 0);
@@ -2450,7 +2485,7 @@ arc_reclaim_needed(void)
 		return (1);
 #endif	/* sun */
 
-#else
+#else	/* !_KERNEL */
 	if (spa_get_random(100) == 0)
 		return (1);
 #endif
@@ -3091,6 +3126,8 @@ arc_read(zio_t *pio, spa_t *spa, const blkptr_t *bp, arc_done_func_t *done,
 	kmutex_t *hash_lock;
 	zio_t *rzio;
 	uint64_t guid = spa_load_guid(spa);
+	boolean_t cached_only = (*arc_flags & ARC_CACHED_ONLY) != 0;
+	ASSERT(!cached_only || done != NULL);
 
 top:
 	hdr = buf_hash_find(guid, BP_IDENTITY(bp), BP_PHYSICAL_BIRTH(bp),
@@ -3101,6 +3138,20 @@ top:
 
 		if (HDR_IO_IN_PROGRESS(hdr)) {
 
+			/*
+			 * Cache-only lookups should only occur from consumers
+			 * that do not have any data yet.  However, prefetch
+			 * I/O of this block could be in progress.  Since
+			 * cache-only lookups must be synchronous, the done
+			 * callback chaining cannot occur here.  In that case, 
+			 * simply return as a cache miss.
+			 */
+			if (cached_only) {
+				*arc_flags &= ~ARC_CACHED;
+				mutex_exit(hash_lock);
+				done(NULL, NULL, private);
+				return (0);
+			}
 			if (*arc_flags & ARC_WAIT) {
 				cv_wait(&hdr->b_cv, hash_lock);
 				mutex_exit(hash_lock);
@@ -3173,6 +3224,13 @@ top:
 		vdev_t *vd = NULL;
 		uint64_t addr = 0;
 		boolean_t devw = B_FALSE;
+
+		if (cached_only) {
+			if (hdr)
+				mutex_exit(hash_lock);
+			done(NULL, NULL, private);
+			return (0);
+		}
 
 		if (hdr == NULL) {
 			/* this block is not in the cache */
@@ -3372,7 +3430,7 @@ top:
 }
 
 void
-arc_set_callback(arc_buf_t *buf, arc_evict_func_t *func, void *private)
+arc_set_callback(arc_buf_t *buf, arc_evict_func_t *func, void *cb_private)
 {
 	ASSERT(buf->b_hdr != NULL);
 	ASSERT(buf->b_hdr->b_state != arc_anon);
@@ -3381,7 +3439,7 @@ arc_set_callback(arc_buf_t *buf, arc_evict_func_t *func, void *private)
 	ASSERT(!HDR_BUF_AVAILABLE(buf->b_hdr));
 
 	buf->b_efunc = func;
-	buf->b_private = private;
+	buf->b_private = cb_private;
 }
 
 /*
@@ -5147,7 +5205,7 @@ l2arc_compress_buf(l2arc_buf_hdr_t *l2hdr)
 	len = l2hdr->b_asize;
 	cdata = zio_data_buf_alloc(len);
 	csize = zio_compress_data(ZIO_COMPRESS_LZ4, l2hdr->b_tmp_cdata,
-	    cdata, l2hdr->b_asize);
+	    cdata, l2hdr->b_asize, (size_t)SPA_MINBLOCKSIZE);
 
 	if (csize == 0) {
 		/* zero block, indicate that there's nothing to write */

@@ -130,12 +130,12 @@ spa_history_advance_bof(spa_t *spa, spa_history_phys_t *shpp)
 	firstread = MIN(sizeof (reclen), shpp->sh_phys_max_off - phys_bof);
 
 	if ((err = dmu_read(mos, spa->spa_history, phys_bof, firstread,
-	    buf, DMU_READ_PREFETCH)) != 0)
+	    buf, DMU_CTX_FLAG_PREFETCH)) != 0)
 		return (err);
 	if (firstread != sizeof (reclen)) {
 		if ((err = dmu_read(mos, spa->spa_history,
 		    shpp->sh_pool_create_len, sizeof (reclen) - firstread,
-		    buf + firstread, DMU_READ_PREFETCH)) != 0)
+		    buf + firstread, DMU_CTX_FLAG_PREFETCH)) != 0)
 			return (err);
 	}
 
@@ -232,7 +232,8 @@ spa_history_log_sync(void *arg, dmu_tx_t *tx)
 	}
 #endif
 
-	fnvlist_add_uint64(nvl, ZPOOL_HIST_TIME, gethrestime_sec());
+	if (!nvlist_exists(nvl, ZPOOL_HIST_TIME))
+		fnvlist_add_uint64(nvl, ZPOOL_HIST_TIME, gethrestime_sec());
 #ifdef _KERNEL
 	fnvlist_add_string(nvl, ZPOOL_HIST_HOST, utsname.nodename);
 #endif
@@ -418,10 +419,10 @@ spa_history_get(spa_t *spa, uint64_t *offp, uint64_t *len, char *buf)
 	}
 
 	err = dmu_read(mos, spa->spa_history, phys_read_off, read_len, buf,
-	    DMU_READ_PREFETCH);
+	    DMU_CTX_FLAG_PREFETCH);
 	if (leftover && err == 0) {
 		err = dmu_read(mos, spa->spa_history, shpp->sh_pool_create_len,
-		    leftover, buf + read_len, DMU_READ_PREFETCH);
+		    leftover, buf + read_len, DMU_CTX_FLAG_PREFETCH);
 	}
 	mutex_exit(&spa->spa_history_lock);
 
@@ -429,70 +430,105 @@ spa_history_get(spa_t *spa, uint64_t *offp, uint64_t *len, char *buf)
 	return (err);
 }
 
+void
+spa_history_log_event_class(spa_history_log_t *shl, char *ev_class)
+{
+	shl->ev_class = ev_class;
+}
+
+int
+spa_history_log_start(spa_t *spa, dmu_tx_t *tx, spa_history_log_t *shl)
+{
+	int err = 0;
+
+	shl->ev_class = ESC_ZFS_POOL_HISTORY;
+	shl->flags = 0;
+	shl->spa = spa;
+	shl->tx = tx;
+	if (tx == NULL) {
+		shl->tx = dmu_tx_create_dd(spa_get_dsl(spa)->dp_mos_dir);
+		err = dmu_tx_assign(shl->tx, TXG_WAIT);
+		if (err)
+			dmu_tx_abort(shl->tx);
+		shl->flags |= SPA_HISTORY_CREATED_TX;
+	}
+	if (err == 0)
+		shl->nvl = fnvlist_alloc();
+	return (err);
+}
+
+#define	_LOG_INTERNAL_STR(shlp, _fmt, _adx)	\
+	va_start(_adx, _fmt);			\
+	log_internal_str(shlp, _fmt, _adx);	\
+	va_end(_adx)
+
+static void
+log_internal_str(spa_history_log_t *shl, const char *fmt, va_list adx)
+{
+	va_list adx2;
+	char *msg;
+
+	va_copy(adx2, adx);
+	msg = kmem_alloc(vsnprintf(NULL, 0, fmt, adx) + 1, KM_SLEEP);
+	(void) vsprintf(msg, fmt, adx2);
+	fnvlist_add_string(shl->nvl, ZPOOL_HIST_INT_STR, msg);
+	strfree(msg);
+	va_end(adx2);
+}
+
+void
+spa_history_log_internal_str(spa_history_log_t *shl, const char *fmt, ...)
+{
+	va_list adx;
+
+	_LOG_INTERNAL_STR(shl, fmt, adx);
+}
+
 /*
  * The nvlist will be consumed by this call.
  */
-static void
-log_internal(nvlist_t *nvl, const char *operation, spa_t *spa,
-    dmu_tx_t *tx, const char *fmt, va_list adx)
+void
+spa_history_log_complete(spa_history_log_t *shl, const char *operation)
 {
-	char *msg;
-	va_list adx2;
 
 	/*
 	 * If this is part of creating a pool, not everything is
 	 * initialized yet, so don't bother logging the internal events.
 	 * Likewise if the pool is not writeable.
 	 */
-	if (tx->tx_txg == TXG_INITIAL || !spa_writeable(spa)) {
-		fnvlist_free(nvl);
+	if (shl->tx->tx_txg == TXG_INITIAL || !spa_writeable(shl->spa)) {
+		if ((shl->flags & SPA_HISTORY_CREATED_TX) != 0)
+			dmu_tx_abort(shl->tx);
+		fnvlist_free(shl->nvl);
 		return;
 	}
 
-	va_copy(adx2, adx);
+	fnvlist_add_string(shl->nvl, ZPOOL_HIST_INT_NAME, operation);
+	fnvlist_add_uint64(shl->nvl, ZPOOL_HIST_TXG, shl->tx->tx_txg);
 
-	msg = kmem_alloc(vsnprintf(NULL, 0, fmt, adx) + 1, KM_SLEEP);
-	(void) vsprintf(msg, fmt, adx2);
-	fnvlist_add_string(nvl, ZPOOL_HIST_INT_STR, msg);
-	strfree(msg);
-
-	va_end(adx2);
-
-	fnvlist_add_string(nvl, ZPOOL_HIST_INT_NAME, operation);
-	fnvlist_add_uint64(nvl, ZPOOL_HIST_TXG, tx->tx_txg);
-
-	if (dmu_tx_is_syncing(tx)) {
-		spa_history_log_sync(nvl, tx);
+	zfs_ereport_spa_history(shl);
+	if (dmu_tx_is_syncing(shl->tx)) {
+		spa_history_log_sync(shl->nvl, shl->tx);
 	} else {
-		dsl_sync_task_nowait(spa_get_dsl(spa),
-		    spa_history_log_sync, nvl, 0, tx);
+		dsl_sync_task_nowait(spa_get_dsl(shl->spa),
+		    spa_history_log_sync, shl->nvl, 0, shl->tx);
 	}
 	/* spa_history_log_sync() will free nvl */
+	if ((shl->flags & SPA_HISTORY_CREATED_TX) != 0)
+		dmu_tx_commit(shl->tx);
 }
 
 void
 spa_history_log_internal(spa_t *spa, const char *operation,
     dmu_tx_t *tx, const char *fmt, ...)
 {
-	dmu_tx_t *htx = tx;
 	va_list adx;
+	spa_history_log_t shl;
 
-	/* create a tx if we didn't get one */
-	if (tx == NULL) {
-		htx = dmu_tx_create_dd(spa_get_dsl(spa)->dp_mos_dir);
-		if (dmu_tx_assign(htx, TXG_WAIT) != 0) {
-			dmu_tx_abort(htx);
-			return;
-		}
-	}
-
-	va_start(adx, fmt);
-	log_internal(fnvlist_alloc(), operation, spa, htx, fmt, adx);
-	va_end(adx);
-
-	/* if we didn't get a tx from the caller, commit the one we made */
-	if (tx == NULL)
-		dmu_tx_commit(htx);
+	if (spa_history_log_start(spa, tx, &shl) != 0)
+		return;
+	_LOG_INTERNAL_STR(&shl, fmt, adx);
+	spa_history_log_complete(&shl, operation);
 }
 
 void
@@ -501,17 +537,18 @@ spa_history_log_internal_ds(dsl_dataset_t *ds, const char *operation,
 {
 	va_list adx;
 	char namebuf[MAXNAMELEN];
-	nvlist_t *nvl = fnvlist_alloc();
+	spa_history_log_t shl;
 
 	ASSERT(tx != NULL);
 
+	VERIFY0(spa_history_log_start(dsl_dataset_get_spa(ds), tx, &shl));
 	dsl_dataset_name(ds, namebuf);
-	fnvlist_add_string(nvl, ZPOOL_HIST_DSNAME, namebuf);
-	fnvlist_add_uint64(nvl, ZPOOL_HIST_DSID, ds->ds_object);
-
-	va_start(adx, fmt);
-	log_internal(nvl, operation, dsl_dataset_get_spa(ds), tx, fmt, adx);
-	va_end(adx);
+	fnvlist_add_string(shl.nvl, ZPOOL_HIST_DSNAME, namebuf);
+	fnvlist_add_uint64(shl.nvl, ZPOOL_HIST_DSID, ds->ds_object);
+	ASSERT(ds->ds_phys != NULL);
+	fnvlist_add_uint64(shl.nvl, ZPOOL_HIST_DSGUID, ds->ds_phys->ds_guid);
+	_LOG_INTERNAL_STR(&shl, fmt, adx);
+	spa_history_log_complete(&shl, operation);
 }
 
 void
@@ -520,18 +557,17 @@ spa_history_log_internal_dd(dsl_dir_t *dd, const char *operation,
 {
 	va_list adx;
 	char namebuf[MAXNAMELEN];
-	nvlist_t *nvl = fnvlist_alloc();
+	spa_history_log_t shl;
 
 	ASSERT(tx != NULL);
 
+	VERIFY0(spa_history_log_start(dd->dd_pool->dp_spa, tx, &shl));
 	dsl_dir_name(dd, namebuf);
-	fnvlist_add_string(nvl, ZPOOL_HIST_DSNAME, namebuf);
-	fnvlist_add_uint64(nvl, ZPOOL_HIST_DSID,
+	fnvlist_add_string(shl.nvl, ZPOOL_HIST_DSNAME, namebuf);
+	fnvlist_add_uint64(shl.nvl, ZPOOL_HIST_DSID,
 	    dd->dd_phys->dd_head_dataset_obj);
-
-	va_start(adx, fmt);
-	log_internal(nvl, operation, dd->dd_pool->dp_spa, tx, fmt, adx);
-	va_end(adx);
+	_LOG_INTERNAL_STR(&shl, fmt, adx);
+	spa_history_log_complete(&shl, operation);
 }
 
 void

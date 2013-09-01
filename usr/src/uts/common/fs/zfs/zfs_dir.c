@@ -154,7 +154,7 @@ zfs_dirent_lock(zfs_dirlock_t **dlpp, znode_t *dzp, char *name, znode_t **zpp,
 	 */
 	if (name[0] == '.' &&
 	    (name[1] == '\0' || (name[1] == '.' && name[2] == '\0')) ||
-	    zfs_has_ctldir(dzp) && strcmp(name, ZFS_CTLDIR_NAME) == 0)
+	    zfs_has_ctldir(dzp) && strcmp(name, zfsctl_ctldir_name()) == 0)
 		return (SET_ERROR(EEXIST));
 
 	/*
@@ -398,7 +398,7 @@ zfs_dirlook(znode_t *dzp, char *name, vnode_t **vpp, int flags,
 			return (error);
 		if (parent == dzp->z_id && zfsvfs->z_parent != zfsvfs) {
 			error = zfsctl_root_lookup(zfsvfs->z_parent->z_ctldir,
-			    "snapshot", vpp, NULL, 0, NULL, kcred,
+			    zfsctl_snapdir_name(), vpp, NULL, 0, NULL, kcred,
 			    NULL, NULL, NULL);
 			return (error);
 		}
@@ -414,7 +414,8 @@ zfs_dirlook(znode_t *dzp, char *name, vnode_t **vpp, int flags,
 		if (error == 0)
 			*vpp = ZTOV(zp);
 		rw_exit(&dzp->z_parent_lock);
-	} else if (zfs_has_ctldir(dzp) && strcmp(name, ZFS_CTLDIR_NAME) == 0) {
+	} else if (zfs_has_ctldir(dzp) &&
+	    strcmp(name, zfsctl_ctldir_name()) == 0) {
 		*vpp = zfsctl_root(dzp);
 	} else {
 		int zf;

@@ -33,6 +33,12 @@
 #include <sys/space_map.h>
 
 static kmem_cache_t *space_seg_cache;
+SYSCTL_DECL(_vfs_zfs);
+static int space_map_last_hope;
+TUNABLE_INT("vfs.zfs.space_map_last_hope", &space_map_last_hope);
+SYSCTL_INT(_vfs_zfs, OID_AUTO, space_map_last_hope, CTLFLAG_RDTUN,
+    &space_map_last_hope, 0,
+    "If kernel panic in space_map code on pool import, import the pool in readonly mode and backup all your data before trying this option.");
 
 void
 space_map_init(void)
@@ -114,13 +120,30 @@ space_map_add(space_map_t *sm, uint64_t start, uint64_t size)
 	VERIFY(sm->sm_space + size <= sm->sm_size);
 	VERIFY(P2PHASE(start, 1ULL << sm->sm_shift) == 0);
 	VERIFY(P2PHASE(size, 1ULL << sm->sm_shift) == 0);
-
+again:
 	ss = space_map_find(sm, start, size, &where);
 	if (ss != NULL) {
 		zfs_panic_recover("zfs: allocating allocated segment"
 		    "(offset=%llu size=%llu)\n",
 		    (longlong_t)start, (longlong_t)size);
 		return;
+	}
+	if (ss != NULL && space_map_last_hope) {
+		uint64_t sstart, ssize;
+
+		if (ss->ss_start > start)
+			sstart = ss->ss_start;
+		else
+			sstart = start;
+		if (ss->ss_end > end)
+			ssize = end - sstart;
+		else
+			ssize = ss->ss_end - sstart;
+		ZFS_LOG(0,
+		    "Removing colliding space_map range (start=%ju end=%ju). Good luck!",
+		    (uintmax_t)sstart, (uintmax_t)(sstart + ssize));
+		space_map_remove(sm, sstart, ssize);
+		goto again;
 	}
 
 	/* Make sure we don't overlap with either of our neighbors */
@@ -321,13 +344,17 @@ space_map_load(space_map_t *sm, space_map_ops_t *ops, uint8_t maptype,
 	ASSERT(MUTEX_HELD(sm->sm_lock));
 	ASSERT(!sm->sm_loaded);
 	ASSERT(!sm->sm_loading);
+	ASSERT(sm->sm_ops == NULL);
 
+	entry_map = NULL;
 	sm->sm_loading = B_TRUE;
 	end = smo->smo_objsize;
 	space = smo->smo_alloc;
 
-	ASSERT(sm->sm_ops == NULL);
-	VERIFY0(sm->sm_space);
+	if (sm->sm_space != 0) {
+		error = SET_ERROR(EIO);
+		goto out;
+	}
 
 	if (maptype == SM_FREE) {
 		space_map_add(sm, sm->sm_start, sm->sm_size);
@@ -344,15 +371,19 @@ space_map_load(space_map_t *sm, space_map_ops_t *ops, uint8_t maptype,
 
 	for (offset = 0; offset < end; offset += bufsize) {
 		size = MIN(end - offset, bufsize);
-		VERIFY(P2PHASE(size, sizeof (uint64_t)) == 0);
 		VERIFY(size != 0);
+
+		if (P2PHASE(size, sizeof(uint64_t)) != 0) {
+			error = SET_ERROR(EIO);
+			break;
+		}
 
 		dprintf("object=%llu  offset=%llx  size=%llx\n",
 		    smo->smo_object, offset, size);
 
 		mutex_exit(sm->sm_lock);
 		error = dmu_read(os, smo->smo_object, offset, size, entry_map,
-		    DMU_READ_PREFETCH);
+		    DMU_CTX_FLAG_PREFETCH);
 		mutex_enter(sm->sm_lock);
 		if (error != 0)
 			break;
@@ -371,9 +402,11 @@ space_map_load(space_map_t *sm, space_map_ops_t *ops, uint8_t maptype,
 		}
 	}
 
-	if (error == 0) {
-		VERIFY3U(sm->sm_space, ==, space);
+	if (error == 0 && sm->sm_space != space)
+		error = SET_ERROR(EIO);
 
+out:
+	if (error == 0) {
 		sm->sm_loaded = B_TRUE;
 		sm->sm_ops = ops;
 		if (ops != NULL)
@@ -382,7 +415,8 @@ space_map_load(space_map_t *sm, space_map_ops_t *ops, uint8_t maptype,
 		space_map_vacate(sm, NULL, NULL);
 	}
 
-	zio_buf_free(entry_map, bufsize);
+	if (entry_map != NULL)
+		zio_buf_free(entry_map, bufsize);
 
 	sm->sm_loading = B_FALSE;
 

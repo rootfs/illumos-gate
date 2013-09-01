@@ -52,6 +52,51 @@ SYSCTL_NODE(_vfs_zfs, OID_AUTO, vdev, CTLFLAG_RW, 0, "ZFS VDEV");
  * Virtual device management.
  */
 
+/*
+ * The limit for ZFS to automatically increase a top-level vdev's ashift
+ * from logical ashift to physical ashift.
+ *
+ * Example: one or more 512b emulation child vdevs
+ *          child->vdev_ashift = 9 (512 bytes)
+ *          child->vdev_physical_ashift = 12 (4096 bytes)
+ *          zfs_max_auto_ashift = 11 (2048 bytes)
+ *
+ * On pool creation or the addition of a new top-leve vdev, ZFS will
+ * bump the ashift of the top-level vdev to 2048.
+ *
+ * Example: one or more 512b emulation child vdevs
+ *          child->vdev_ashift = 9 (512 bytes)
+ *          child->vdev_physical_ashift = 12 (4096 bytes)
+ *          zfs_max_auto_ashift = 13 (8192 bytes)
+ *
+ * On pool creation or the addition of a new top-leve vdev, ZFS will
+ * bump the ashift of the top-level vdev to 4096.
+ */
+static uint64_t zfs_max_auto_ashift = SPA_MAXASHIFT;
+
+static int
+sysctl_vfs_zfs_max_auto_ashift(SYSCTL_HANDLER_ARGS)
+{
+	uint64_t val;
+	int err;
+
+	val = zfs_max_auto_ashift;
+	err = sysctl_handle_64(oidp, &val, 0, req);
+	if (err != 0 || req->newptr == NULL)
+		return (err);
+
+	if (val > SPA_MAXASHIFT)
+		return (EINVAL);
+
+	zfs_max_auto_ashift = val;
+
+	return (0);
+}
+SYSCTL_PROC(_vfs_zfs, OID_AUTO, max_auto_ashift,
+    CTLTYPE_U64 | CTLFLAG_MPSAFE | CTLFLAG_RW, 0, sizeof(uint64_t),
+    sysctl_vfs_zfs_max_auto_ashift, "QU",
+    "Cap on logical -> physical ashift adjustment on new top-level vdevs.");
+
 static vdev_ops_t *vdev_ops_table[] = {
 	&vdev_root_ops,
 	&vdev_raidz_ops,
@@ -68,7 +113,6 @@ static vdev_ops_t *vdev_ops_table[] = {
 	&vdev_hole_ops,
 	NULL
 };
-
 
 /*
  * Given a vdev type, return the appropriate ops vector.
@@ -104,7 +148,7 @@ vdev_default_asize(vdev_t *vd, uint64_t psize)
 }
 
 /*
- * Get the minimum allocatable size. We define the allocatable size as
+ * Get the minimum allocatable size.  We define the allocatable size as
  * the vdev's asize rounded to the nearest metaslab. This allows us to
  * replace or attach devices which don't have the same physical size but
  * can still satisfy the same number of allocations.
@@ -746,6 +790,8 @@ vdev_add_parent(vdev_t *cvd, vdev_ops_t *ops)
 	mvd->vdev_min_asize = cvd->vdev_min_asize;
 	mvd->vdev_max_asize = cvd->vdev_max_asize;
 	mvd->vdev_ashift = cvd->vdev_ashift;
+	mvd->vdev_logical_ashift = cvd->vdev_logical_ashift;
+	mvd->vdev_physical_ashift = cvd->vdev_physical_ashift;
 	mvd->vdev_state = cvd->vdev_state;
 	mvd->vdev_crtxg = cvd->vdev_crtxg;
 
@@ -777,6 +823,8 @@ vdev_remove_parent(vdev_t *cvd)
 	    mvd->vdev_ops == &vdev_replacing_ops ||
 	    mvd->vdev_ops == &vdev_spare_ops);
 	cvd->vdev_ashift = mvd->vdev_ashift;
+	cvd->vdev_logical_ashift = mvd->vdev_logical_ashift;
+	cvd->vdev_physical_ashift = mvd->vdev_physical_ashift;
 
 	vdev_remove_child(mvd, cvd);
 	vdev_remove_child(pvd, mvd);
@@ -852,7 +900,7 @@ vdev_metaslab_init(vdev_t *vd, uint64_t txg)
 			uint64_t object = 0;
 			error = dmu_read(mos, vd->vdev_ms_array,
 			    m * sizeof (uint64_t), sizeof (uint64_t), &object,
-			    DMU_READ_PREFETCH);
+			    DMU_CTX_FLAG_PREFETCH);
 			if (error)
 				return (error);
 			if (object != 0) {
@@ -1120,7 +1168,8 @@ vdev_open(vdev_t *vd)
 	uint64_t osize = 0;
 	uint64_t max_osize = 0;
 	uint64_t asize, max_asize, psize;
-	uint64_t ashift = 0;
+	uint64_t logical_ashift = 0;
+	uint64_t physical_ashift = 0;
 
 	ASSERT(vd->vdev_open_thread == curthread ||
 	    spa_config_held(spa, SCL_STATE_ALL, RW_WRITER) == SCL_STATE_ALL);
@@ -1150,7 +1199,8 @@ vdev_open(vdev_t *vd)
 		return (SET_ERROR(ENXIO));
 	}
 
-	error = vd->vdev_ops->vdev_op_open(vd, &osize, &max_osize, &ashift);
+	error = vd->vdev_ops->vdev_op_open(vd, &osize, &max_osize,
+	    &logical_ashift, &physical_ashift);
 
 	/*
 	 * Reset the vdev_reopening flag so that we actually close
@@ -1203,14 +1253,8 @@ vdev_open(vdev_t *vd)
 		vd->vdev_notrim = B_FALSE;
 		trim_map_create(vd);
 	}
+	vdev_propagate_state(vd);
 
-	for (int c = 0; c < vd->vdev_children; c++) {
-		if (vd->vdev_child[c]->vdev_state != VDEV_STATE_HEALTHY) {
-			vdev_set_state(vd, B_TRUE, VDEV_STATE_DEGRADED,
-			    VDEV_AUX_NONE);
-			break;
-		}
-	}
 
 	osize = P2ALIGN(osize, (uint64_t)sizeof (vdev_label_t));
 	max_osize = P2ALIGN(max_osize, (uint64_t)sizeof (vdev_label_t));
@@ -1248,6 +1292,17 @@ vdev_open(vdev_t *vd)
 		return (SET_ERROR(EINVAL));
 	}
 
+	vd->vdev_physical_ashift =
+	    MAX(physical_ashift, vd->vdev_physical_ashift);
+	vd->vdev_logical_ashift = MAX(logical_ashift, vd->vdev_logical_ashift);
+	vd->vdev_ashift = MAX(vd->vdev_logical_ashift, vd->vdev_ashift);
+
+	if (vd->vdev_logical_ashift > SPA_MAXASHIFT) {
+		vdev_set_state(vd, B_TRUE, VDEV_STATE_CANT_OPEN,
+		    VDEV_AUX_ASHIFT_TOO_BIG);
+		return (EINVAL);
+	}
+
 	if (vd->vdev_asize == 0) {
 		/*
 		 * This is the first-ever open, so use the computed values.
@@ -1255,12 +1310,12 @@ vdev_open(vdev_t *vd)
 		 */
 		vd->vdev_asize = asize;
 		vd->vdev_max_asize = max_asize;
-		vd->vdev_ashift = MAX(ashift, vd->vdev_ashift);
 	} else {
 		/*
 		 * Make sure the alignment requirement hasn't increased.
 		 */
-		if (ashift > vd->vdev_top->vdev_ashift) {
+		if (vd->vdev_ashift > vd->vdev_top->vdev_ashift &&
+		    vd->vdev_ops->vdev_op_leaf) {
 			vdev_set_state(vd, B_TRUE, VDEV_STATE_CANT_OPEN,
 			    VDEV_AUX_BAD_LABEL);
 			return (EINVAL);
@@ -1573,6 +1628,23 @@ vdev_metaslab_set_size(vdev_t *vd)
 	vd->vdev_ms_shift = MAX(vd->vdev_ms_shift, SPA_MAXBLOCKSHIFT);
 }
 
+/*
+ * Maximize performance by inflating the configured ashift for
+ * top level vdevs to be as close to the physical ashift as
+ * possible without exceeding the administrator specified
+ * limit.
+ */
+void
+vdev_ashift_optimize(vdev_t *vd)
+{
+	if (vd == vd->vdev_top &&
+	    (vd->vdev_ashift < vd->vdev_physical_ashift) &&
+	    (vd->vdev_ashift < zfs_max_auto_ashift)) {
+		vd->vdev_ashift = MIN(zfs_max_auto_ashift,
+		    vd->vdev_physical_ashift);
+	}
+}
+
 void
 vdev_dirty(vdev_t *vd, int flags, void *arg, uint64_t txg)
 {
@@ -1836,8 +1908,7 @@ vdev_dtl_sync(vdev_t *vd, uint64_t txg)
 		vdev_config_dirty(vd->vdev_top);
 	}
 
-	bzero(&smlock, sizeof (smlock));
-	mutex_init(&smlock, NULL, MUTEX_DEFAULT, NULL);
+	stack_mutex_init(&smlock, NULL, MUTEX_DEFAULT, NULL);
 
 	space_map_create(&smsync, sm->sm_start, sm->sm_size, sm->sm_shift,
 	    &smlock);
@@ -1962,11 +2033,16 @@ vdev_load(vdev_t *vd)
 		    VDEV_AUX_CORRUPT_DATA);
 
 	/*
-	 * If this is a leaf vdev, load its DTL.
+	 * If this is a leaf vdev, load its DTL.  If that works, or it's a
+	 * spare, make sure its state is correct.
 	 */
-	if (vd->vdev_ops->vdev_op_leaf && vdev_dtl_load(vd) != 0)
-		vdev_set_state(vd, B_FALSE, VDEV_STATE_CANT_OPEN,
-		    VDEV_AUX_CORRUPT_DATA);
+	if (vd->vdev_ops->vdev_op_leaf) {
+		if (vdev_dtl_load(vd) != 0)
+			vdev_set_state(vd, B_FALSE, VDEV_STATE_CANT_OPEN,
+			    VDEV_AUX_CORRUPT_DATA);
+		else if (vd->vdev_isspare)
+			vdev_propagate_state(vd);
+	}
 }
 
 /*
@@ -2410,7 +2486,8 @@ vdev_clear(spa_t *spa, vdev_t *vd)
 			spa_async_request(spa, SPA_ASYNC_RESILVER);
 
 		spa_event_notify(spa, vd, ESC_ZFS_VDEV_CLEAR);
-	}
+	} else
+		vdev_propagate_state(vd);
 
 	/*
 	 * When clearing a FMA-diagnosed fault, we always want to
@@ -2499,6 +2576,10 @@ vdev_get_stats(vdev_t *vd, vdev_stat_t *vs)
 	if (vd->vdev_ops->vdev_op_leaf)
 		vs->vs_rsize += VDEV_LABEL_START_SIZE + VDEV_LABEL_END_SIZE;
 	vs->vs_esize = vd->vdev_max_asize - vd->vdev_asize;
+	vs->vs_configured_ashift = vd->vdev_top != NULL
+	    ? vd->vdev_top->vdev_ashift : vd->vdev_ashift;
+	vs->vs_logical_ashift = vd->vdev_logical_ashift;
+	vs->vs_physical_ashift = vd->vdev_physical_ashift;
 	mutex_exit(&vd->vdev_stat_lock);
 
 	/*
@@ -2963,19 +3044,6 @@ vdev_set_state(vdev_t *vd, boolean_t isopen, vdev_state_t state, vdev_aux_t aux)
 	    vd->vdev_ops->vdev_op_leaf)
 		vd->vdev_ops->vdev_op_close(vd);
 
-	/*
-	 * If we have brought this vdev back into service, we need
-	 * to notify fmd so that it can gracefully repair any outstanding
-	 * cases due to a missing device.  We do this in all cases, even those
-	 * that probably don't correlate to a repaired fault.  This is sure to
-	 * catch all cases, and we let the zfs-retire agent sort it out.  If
-	 * this is a transient state it's OK, as the retire agent will
-	 * double-check the state of the vdev before repairing it.
-	 */
-	if (state == VDEV_STATE_HEALTHY && vd->vdev_ops->vdev_op_leaf &&
-	    vd->vdev_prevstate != state)
-		zfs_post_state_change(spa, vd);
-
 	if (vd->vdev_removed &&
 	    state == VDEV_STATE_CANT_OPEN &&
 	    (aux == VDEV_AUX_OPEN_FAILED || vd->vdev_checkremove)) {
@@ -3055,6 +3123,16 @@ vdev_set_state(vdev_t *vd, boolean_t isopen, vdev_state_t state, vdev_aux_t aux)
 	} else {
 		vd->vdev_removed = B_FALSE;
 	}
+
+	/*
+	 * Notify the fmd of the state change.  Be verbose and post
+	 * notifications even for stuff that's not important; the fmd agent can
+	 * sort it out.  Don't emit state change events for non-leaf vdevs since
+	 * they can't change state on their own.  The FMD can check their state
+	 * if it wants to when it sees that a leaf vdev had a state change.
+	 */
+	if (vd->vdev_ops->vdev_op_leaf)
+		zfs_post_state_change(spa, vd);
 
 	if (!isopen && vd->vdev_parent)
 		vdev_propagate_state(vd->vdev_parent);

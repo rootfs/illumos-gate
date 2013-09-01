@@ -51,6 +51,7 @@
 #include <sys/stat.h>
 
 #include <libzfs.h>
+#include <libzfs_compat.h>
 
 #include "zpool_util.h"
 #include "zfs_comutil.h"
@@ -631,7 +632,8 @@ zpool_do_remove(int argc, char **argv)
 int
 zpool_do_labelclear(int argc, char **argv)
 {
-	char *vdev, *name;
+	char *vdev, *name = NULL;
+	struct stat st;
 	int c, fd = -1, ret = 0;
 	pool_state_t state;
 	boolean_t inuse = B_FALSE;
@@ -659,22 +661,33 @@ zpool_do_labelclear(int argc, char **argv)
 		usage(B_FALSE);
 	}
 
-	vdev = argv[0];
-	if ((fd = open(vdev, O_RDWR)) < 0) {
-		(void) fprintf(stderr, gettext("Unable to open %s\n"), vdev);
-		return (B_FALSE);
+	/* Allow bare paths if they exist, otherwise prepend with /dev. */
+	if (stat(argv[0], &st) != 0 && strncmp(argv[0], "/dev/", 5) != 0)
+		ret = asprintf(&vdev, "/dev/%s", argv[0]);
+	else
+		ret = asprintf(&vdev, "%s", argv[0]);
+
+	if (ret < 0) {
+		perror("asprintf");
+		return (ret);
 	}
 
-	name = NULL;
-	if (zpool_in_use(g_zfs, fd, &state, &name, &inuse) != 0) {
+	if ((fd = open(vdev, O_RDWR)) < 0) {
+		ret = errno;
+		(void) fprintf(stderr,
+		    gettext("Unable to open %s: %s\n"), vdev, strerror(errno));
+		goto errout;
+	}
+
+	ret = zpool_in_use(g_zfs, fd, &state, &name, &inuse);
+	if (ret != 0) {
 		if (force)
 			goto wipe_label;
 		
 		(void) fprintf(stderr,
 		    gettext("Unable to determine pool state for %s\n"
 		    "Use -f to force the clearing any label data\n"), vdev);
-
-		return (1);
+		goto errout;
 	}
 
 	if (inuse) {
@@ -727,16 +740,17 @@ gettext("labelclear operation failed.\n"
 	}
 
 wipe_label:
-	if (zpool_clear_label(fd) != 0) {
+	ret = zpool_clear_label(fd);
+	if (ret != 0)
 		(void) fprintf(stderr,
 		    gettext("Label clear failed on vdev %s\n"), vdev);
-		ret = 1;
-	}
 
 errout:
-	close(fd);
+	free(vdev);
 	if (name != NULL)
 		free(name);
+	if (fd > 0)
+		close(fd);
 
 	return (ret);
 }
@@ -1294,12 +1308,13 @@ print_status_config(zpool_handle_t *zhp, const char *name, nvlist_t *nv,
     int namewidth, int depth, boolean_t isspare)
 {
 	nvlist_t **child;
-	uint_t c, children;
+	uint_t c, vsc, children;
 	pool_scan_stat_t *ps = NULL;
 	vdev_stat_t *vs;
 	char rbuf[6], wbuf[6], cbuf[6];
 	char *vname;
 	uint64_t notpresent;
+	uint64_t ashift;
 	spare_cbdata_t cb;
 	const char *state;
 
@@ -1308,7 +1323,7 @@ print_status_config(zpool_handle_t *zhp, const char *name, nvlist_t *nv,
 		children = 0;
 
 	verify(nvlist_lookup_uint64_array(nv, ZPOOL_CONFIG_VDEV_STATS,
-	    (uint64_t **)&vs, &c) == 0);
+	    (uint64_t **)&vs, &vsc) == 0);
 
 	state = zpool_state_to_name(vs->vs_state, vs->vs_aux);
 	if (isspare) {
@@ -1334,20 +1349,28 @@ print_status_config(zpool_handle_t *zhp, const char *name, nvlist_t *nv,
 
 	if (nvlist_lookup_uint64(nv, ZPOOL_CONFIG_NOT_PRESENT,
 	    &notpresent) == 0 ||
-	    vs->vs_state <= VDEV_STATE_CANT_OPEN) {
+	    vs->vs_state <= VDEV_STATE_REMOVED) {
 		char *path;
 		if (nvlist_lookup_string(nv, ZPOOL_CONFIG_PATH, &path) == 0)
 			(void) printf("  was %s", path);
 	} else if (vs->vs_aux != 0) {
+		int  has_path;
+		char *path;
+
+		has_path = !nvlist_lookup_string(nv, ZPOOL_CONFIG_PATH, &path);
 		(void) printf("  ");
 
 		switch (vs->vs_aux) {
 		case VDEV_AUX_OPEN_FAILED:
 			(void) printf(gettext("cannot open"));
+			if (has_path)
+				(void) printf("  was %s", path);
 			break;
 
 		case VDEV_AUX_BAD_GUID_SUM:
 			(void) printf(gettext("missing device"));
+			if (has_path)
+				(void) printf("  was %s", path);
 			break;
 
 		case VDEV_AUX_NO_REPLICAS:
@@ -1356,10 +1379,16 @@ print_status_config(zpool_handle_t *zhp, const char *name, nvlist_t *nv,
 
 		case VDEV_AUX_VERSION_NEWER:
 			(void) printf(gettext("newer version"));
+			if (has_path)
+				(void) printf("  was %s", path);
 			break;
 
 		case VDEV_AUX_UNSUP_FEAT:
 			(void) printf(gettext("unsupported feature(s)"));
+			break;
+
+		case VDEV_AUX_ASHIFT_TOO_BIG:
+			(void) printf(gettext("unsupported minimum blocksize"));
 			break;
 
 		case VDEV_AUX_SPARED:
@@ -1374,6 +1403,8 @@ print_status_config(zpool_handle_t *zhp, const char *name, nvlist_t *nv,
 					(void) printf(gettext("in use by "
 					    "pool '%s'"),
 					    zpool_get_name(cb.cb_zhp));
+				if (has_path)
+					(void) printf("  was %s", path);
 				zpool_close(cb.cb_zhp);
 			} else {
 				(void) printf(gettext("currently in use"));
@@ -1382,14 +1413,20 @@ print_status_config(zpool_handle_t *zhp, const char *name, nvlist_t *nv,
 
 		case VDEV_AUX_ERR_EXCEEDED:
 			(void) printf(gettext("too many errors"));
+			if (has_path)
+				(void) printf("  was %s", path);
 			break;
 
 		case VDEV_AUX_IO_FAILURE:
 			(void) printf(gettext("experienced I/O failures"));
+			if (has_path)
+				(void) printf("  was %s", path);
 			break;
 
 		case VDEV_AUX_BAD_LOG:
 			(void) printf(gettext("bad intent log"));
+			if (has_path)
+				(void) printf("  was %s", path);
 			break;
 
 		case VDEV_AUX_EXTERNAL:
@@ -1400,10 +1437,22 @@ print_status_config(zpool_handle_t *zhp, const char *name, nvlist_t *nv,
 			(void) printf(gettext("split into new pool"));
 			break;
 
+		case VDEV_AUX_BAD_LABEL:
+			(void) printf(gettext("corrupted label"));
+			if (has_path)
+				(void) printf("  was %s", path);
 		default:
 			(void) printf(gettext("corrupted data"));
+			if (has_path)
+				(void) printf("  was %s", path);
 			break;
 		}
+	} else if (children == 0 && !isspare &&
+	    VDEV_STAT_VALID(vs_physical_ashift, vsc) &&
+	    vs->vs_configured_ashift < vs->vs_physical_ashift) {
+		(void) printf(
+		    gettext("  block size: %dB configured, %dB native"),
+		    1 << vs->vs_configured_ashift, 1 << vs->vs_physical_ashift);
 	}
 
 	(void) nvlist_lookup_uint64_array(nv, ZPOOL_CONFIG_SCAN_STATS,
@@ -2132,6 +2181,7 @@ zpool_do_import(int argc, char **argv)
 	idata.poolname = searchname;
 	idata.guid = searchguid;
 	idata.cachefile = cachefile;
+	idata.can_be_destroyed = do_destroyed;
 
 	pools = zpool_search_import(g_zfs, &idata);
 
@@ -2790,9 +2840,9 @@ print_header(list_cbdata_t *cb)
 		if (pl->pl_next == NULL && !right_justify)
 			(void) printf("%s", header);
 		else if (right_justify)
-			(void) printf("%*s", width, header);
+			(void) printf("%*s", (int)width, header);
 		else
-			(void) printf("%-*s", width, header);
+			(void) printf("%-*s", (int)width, header);
 
 	}
 
@@ -2863,9 +2913,9 @@ print_pool(zpool_handle_t *zhp, list_cbdata_t *cb)
 		if (cb->cb_scripted || (pl->pl_next == NULL && !right_justify))
 			(void) printf("%s", propstr);
 		else if (right_justify)
-			(void) printf("%*s", width, propstr);
+			(void) printf("%*s", (int)width, propstr);
 		else
-			(void) printf("%-*s", width, propstr);
+			(void) printf("%-*s", (int)width, propstr);
 	}
 
 	(void) printf("\n");
@@ -2886,7 +2936,7 @@ print_one_column(zpool_prop_t prop, uint64_t value, boolean_t scripted)
 	if (scripted)
 		(void) printf("\t%s", propval);
 	else
-		(void) printf("  %*s", width, propval);
+		(void) printf("  %*s", (int)width, propval);
 }
 
 void
@@ -4265,6 +4315,15 @@ status_callback(zpool_handle_t *zhp, void *data)
 		    "device(s) and run 'zpool online',\n"
 		    "\tor ignore the intent log records by running "
 		    "'zpool clear'.\n"));
+		break;
+
+	case ZPOOL_STATUS_NON_NATIVE_ASHIFT:
+		(void) printf(gettext("status: One or more devices are "
+		    "configured to use a non-native block size.\n"
+		    "\tExpect reduced performance.\n"));
+		(void) printf(gettext("action: Replace affected devices with "
+		    "devices that support the\n\tconfigured block size, or "
+		    "migrate data to a properly configured\n\tpool.\n"));
 		break;
 
 	default:

@@ -86,6 +86,7 @@ typedef struct dsl_scan {
 
 	/* for debugging / information */
 	uint64_t scn_visited_this_txg;
+	uint64_t scn_examined_event;
 
 	dsl_scan_phys_t scn_phys;
 } dsl_scan_t;

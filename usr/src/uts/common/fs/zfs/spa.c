@@ -83,16 +83,20 @@
 /* Check hostid on import? */
 static int check_hostid = 1;
 
+/*
+ * The interval at which failed configuration cache file writes
+ * should be retried.
+ */
+static int zfs_ccw_retry_interval = 300;
+
 SYSCTL_DECL(_vfs_zfs);
 TUNABLE_INT("vfs.zfs.check_hostid", &check_hostid);
 SYSCTL_INT(_vfs_zfs, OID_AUTO, check_hostid, CTLFLAG_RW, &check_hostid, 0,
     "Check hostid on import?");
-
-/*
- * The interval, in seconds, at which failed configuration cache file writes
- * should be retried.
- */
-static int zfs_ccw_retry_interval = 300;
+TUNABLE_INT("vfs.zfs.ccw_retry_interval", &zfs_ccw_retry_interval);
+SYSCTL_INT(_vfs_zfs, OID_AUTO, ccw_retry_interval, CTLFLAG_RW,
+    &zfs_ccw_retry_interval, 0,
+    "Configuration cache file write, retry after failure, interval (seconds)");
 
 typedef enum zti_modes {
 	zti_mode_fixed,			/* value is # of threads (min 1) */
@@ -139,6 +143,7 @@ static int spa_load_impl(spa_t *spa, uint64_t, nvlist_t *config,
     spa_load_state_t state, spa_import_type_t type, boolean_t mosconfig,
     char **ereport);
 static void spa_vdev_resilver_done(spa_t *spa);
+static void spa_vdev_remove_from_namespace(spa_t *spa, vdev_t *vd);
 
 uint_t		zio_taskq_batch_pct = 100;	/* 1 thread per cpu in pset */
 #ifdef PSRSET_BIND
@@ -819,6 +824,20 @@ spa_get_errlists(spa_t *spa, avl_tree_t *last, avl_tree_t *scrub)
 	    offsetof(spa_error_entry_t, se_avl));
 }
 
+static void
+spa_zio_thread_init(void *context __unused)
+{
+
+	VERIFY0(dmu_thread_context_create());
+}
+
+static void
+spa_zio_thread_destroy(void *context)
+{
+
+	dmu_thread_context_destroy(context/*NOTUSED*/);
+}
+
 static taskq_t *
 spa_taskq_create(spa_t *spa, const char *name, enum zti_modes mode,
     uint_t value)
@@ -862,7 +881,7 @@ spa_taskq_create(spa_t *spa, const char *name, enum zti_modes mode,
 	}
 #endif
 	return (taskq_create_proc(name, value, maxclsyspri, 50, INT_MAX,
-	    spa->spa_proc, flags));
+	    spa->spa_proc, flags, spa_zio_thread_init, spa_zio_thread_destroy));
 }
 
 static void
@@ -1014,6 +1033,7 @@ spa_activate(spa_t *spa, int mode)
 	 * Start TRIM thread.
 	 */
 	trim_thread_create(spa);
+	spa_async_create(spa);
 
 	list_create(&spa->spa_config_dirty_list, sizeof (vdev_t),
 	    offsetof(vdev_t, vdev_config_dirty_node));
@@ -1164,6 +1184,7 @@ spa_unload(spa_t *spa)
 
 	ASSERT(MUTEX_HELD(&spa_namespace_lock));
 
+	ASSERT3U(spa->spa_async_suspended, !=, 0);
 	/*
 	 * Stop TRIM thread.
 	 */
@@ -1172,7 +1193,7 @@ spa_unload(spa_t *spa)
 	/*
 	 * Stop async tasks.
 	 */
-	spa_async_suspend(spa);
+	spa_async_shutdown(spa);
 
 	/*
 	 * Stop syncing.
@@ -1468,6 +1489,8 @@ spa_load_l2cache(spa_t *spa)
 			    pool != 0ULL && l2arc_vdev_present(vd))
 				l2arc_remove_vdev(vd);
 			vdev_clear_stats(vd);
+			if (list_link_active(&vd->vdev_state_dirty_node))
+				vdev_state_clean(vd);
 			vdev_free(vd);
 		}
 	}
@@ -1510,13 +1533,15 @@ load_nvlist(spa_t *spa, uint64_t obj, nvlist_t **value)
 	int error;
 	*value = NULL;
 
-	VERIFY(0 == dmu_bonus_hold(spa->spa_meta_objset, obj, FTAG, &db));
+	error = dmu_bonus_hold(spa->spa_meta_objset, obj, FTAG, &db);
+	if (error)
+		return error;
 	nvsize = *(uint64_t *)db->db_data;
 	dmu_buf_rele(db, FTAG);
 
 	packed = kmem_alloc(nvsize, KM_SLEEP);
 	error = dmu_read(spa->spa_meta_objset, obj, 0, nvsize, packed,
-	    DMU_READ_PREFETCH);
+	    DMU_CTX_FLAG_PREFETCH);
 	if (error == 0)
 		error = nvlist_unpack(packed, nvsize, value, 0);
 	kmem_free(packed, nvsize);
@@ -1751,6 +1776,7 @@ spa_aux_check_removed(spa_aux_vdev_t *sav)
 		spa_check_removed(sav->sav_vdevs[i]);
 }
 
+/* Log claim callback for zil_claim_log_block. */
 void
 spa_claim_notify(zio_t *zio)
 {
@@ -1996,6 +2022,7 @@ spa_load(spa_t *spa, spa_load_state_t state, spa_import_type_t type,
 
 	(void) nvlist_lookup_uint64(config, ZPOOL_CONFIG_POOL_TXG,
 	    &spa->spa_config_txg);
+	spa->spa_config_update_txg = spa->spa_config_txg;
 
 	if ((state == SPA_LOAD_IMPORT || state == SPA_LOAD_TRYIMPORT) &&
 	    spa_guid_exists(pool_guid, 0)) {
@@ -2615,6 +2642,8 @@ spa_load_impl(spa_t *spa, uint64_t pool_guid, nvlist_t *config,
 		 */
 		txg_wait_synced(spa->spa_dsl_pool, spa->spa_claim_max_txg);
 
+		spa_async_resume(spa);
+
 		/*
 		 * If the config cache is stale, or we have uninitialized
 		 * metaslabs (see spa_vdev_add()), then update the config.
@@ -2671,6 +2700,14 @@ static int
 spa_load_retry(spa_t *spa, spa_load_state_t state, int mosconfig)
 {
 	int mode = spa->spa_mode;
+	int old_suspend_count;
+
+	/* Support nested suspends across a retry */
+	mutex_enter(&spa->spa_async_lock);
+	old_suspend_count = spa->spa_async_suspended;
+	mutex_exit(&spa->spa_async_lock);
+
+	ASSERT3U(old_suspend_count, >, 0);
 
 	spa_unload(spa);
 	spa_deactivate(spa);
@@ -2678,7 +2715,10 @@ spa_load_retry(spa_t *spa, spa_load_state_t state, int mosconfig)
 	spa->spa_load_max_txg--;
 
 	spa_activate(spa, mode);
-	spa_async_suspend(spa);
+
+	mutex_enter(&spa->spa_async_lock);
+	spa->spa_async_suspended = old_suspend_count;
+	mutex_exit(&spa->spa_async_lock);
 
 	return (spa_load(spa, state, SPA_IMPORT_EXISTING, mosconfig));
 }
@@ -2792,7 +2832,7 @@ spa_open_common(const char *pool, spa_t **spapp, void *tag, nvlist_t *nvpolicy,
 {
 	spa_t *spa;
 	spa_load_state_t state = SPA_LOAD_OPEN;
-	int error;
+	int error = 0;
 	int locked = B_FALSE;
 	int firstopen = B_FALSE;
 
@@ -2892,17 +2932,16 @@ spa_open_common(const char *pool, spa_t **spapp, void *tag, nvlist_t *nvpolicy,
 		spa->spa_last_ubsync_txg = 0;
 		spa->spa_load_txg = 0;
 		mutex_exit(&spa_namespace_lock);
-#ifdef __FreeBSD__
 #ifdef _KERNEL
 		if (firstopen)
-			zvol_create_minors(spa->spa_name);
-#endif
+			(void) zvol_create_devices(spa_name(spa),
+			    /*ignore_errors*/B_TRUE, DS_FIND_ALL);
 #endif
 	}
 
 	*spapp = spa;
 
-	return (0);
+	return (error);
 }
 
 int
@@ -3417,6 +3456,7 @@ spa_create(const char *pool, nvlist_t *nvroot, nvlist_t *props,
 	    (error = spa_validate_aux(spa, nvroot, txg,
 	    VDEV_ALLOC_ADD)) == 0) {
 		for (int c = 0; c < rvd->vdev_children; c++) {
+			vdev_ashift_optimize(rvd->vdev_child[c]);
 			vdev_metaslab_set_size(rvd->vdev_child[c]);
 			vdev_expand(rvd->vdev_child[c], txg);
 		}
@@ -3554,9 +3594,11 @@ spa_create(const char *pool, nvlist_t *nvroot, nvlist_t *props,
 	 */
 	txg_wait_synced(spa->spa_dsl_pool, txg);
 
+	spa_async_resume(spa);
+
 	spa_config_sync(spa, B_FALSE, B_TRUE);
 
-	spa_history_log_version(spa, "create");
+	spa_history_log_version(spa, "pool create");
 
 	spa->spa_minref = refcount_count(&spa->spa_refcount);
 
@@ -4144,13 +4186,14 @@ spa_import(const char *pool, nvlist_t *config, nvlist_t *props, uint64_t flags)
 	spa_async_request(spa, SPA_ASYNC_AUTOEXPAND);
 
 	mutex_exit(&spa_namespace_lock);
+
+#ifdef _KERNEL
+	(void) zvol_create_devices(spa_name(spa), /*ignore_errors*/B_TRUE,
+	    DS_FIND_ALL);
+#endif
+
 	spa_history_log_version(spa, "import");
 
-#ifdef __FreeBSD__
-#ifdef _KERNEL
-	zvol_create_minors(pool);
-#endif
-#endif
 	return (0);
 }
 
@@ -4338,6 +4381,10 @@ spa_export_common(char *pool, int new_state, nvlist_t **oldconfig,
 	spa_event_notify(spa, NULL, ESC_ZFS_POOL_DESTROY);
 
 	if (spa->spa_state != POOL_STATE_UNINITIALIZED) {
+#ifdef _KERNEL
+		(void) zvol_destroy_devices(spa_name(spa),
+		    /*ignore_errors*/B_TRUE, DS_FIND_ALL);
+#endif
 		spa_unload(spa);
 		spa_deactivate(spa);
 	}
@@ -4665,6 +4712,7 @@ spa_vdev_attach(spa_t *spa, uint64_t guid, nvlist_t *nvroot, int replacing)
 
 	if (newvd->vdev_isspare) {
 		spa_spare_activate(newvd);
+		vdev_propagate_state(newvd);
 		spa_event_notify(spa, newvd, ESC_ZFS_VDEV_SPARE);
 	}
 
@@ -5120,6 +5168,7 @@ spa_vdev_split_mirror(spa_t *spa, char *newname, nvlist_t *config,
 	/* add the new pool to the namespace */
 	newspa = spa_add(newname, config, altroot);
 	newspa->spa_config_txg = spa->spa_config_txg;
+	newspa->spa_config_update_txg = spa->spa_config_txg;
 	spa_set_log_state(newspa, SPA_LOG_CLEAR);
 
 	/* release the spa config lock, retaining the namespace lock */
@@ -5550,6 +5599,16 @@ spa_vdev_resilver_done_hunt(vdev_t *vd)
 			    !vdev_dtl_required(newvd))
 				return (newvd);
 		}
+		/*
+		 * Once a spare parent is consistent again, clear any flags
+		 * previously set that no longer apply.
+		 */
+		if (vd->vdev_children == 2) {
+			vd->vdev_cant_read = B_FALSE;
+			vd->vdev_cant_write = B_FALSE;
+		}
+		/* Ensure that state updates are applied. */
+		vdev_propagate_state(vd);
 	}
 
 	return (NULL);
@@ -5704,6 +5763,8 @@ spa_async_remove(spa_t *spa, vdev_t *vd)
 		vd->vdev_stat.vs_checksum_errors = 0;
 
 		vdev_state_dirty(vd->vdev_top);
+		/* Tell userspace that the vdev is gone. */
+		zfs_post_remove(spa, vd);
 	}
 
 	for (int c = 0; c < vd->vdev_children; c++)
@@ -5727,7 +5788,6 @@ spa_async_autoexpand(spa_t *spa, vdev_t *vd)
 {
 	sysevent_id_t eid;
 	nvlist_t *attr;
-	char *physpath;
 
 	if (!spa->spa_autoexpand)
 		return;
@@ -5737,34 +5797,23 @@ spa_async_autoexpand(spa_t *spa, vdev_t *vd)
 		spa_async_autoexpand(spa, cvd);
 	}
 
-	if (!vd->vdev_ops->vdev_op_leaf || vd->vdev_physpath == NULL)
+	if (!vd->vdev_ops->vdev_op_leaf || vd->vdev_path == NULL)
 		return;
 
-	physpath = kmem_zalloc(MAXPATHLEN, KM_SLEEP);
-	(void) snprintf(physpath, MAXPATHLEN, "/devices%s", vd->vdev_physpath);
-
 	VERIFY(nvlist_alloc(&attr, NV_UNIQUE_NAME, KM_SLEEP) == 0);
-	VERIFY(nvlist_add_string(attr, DEV_PHYS_PATH, physpath) == 0);
+	VERIFY(nvlist_add_string(attr, DEV_PATH, vd->vdev_path) == 0);
 
 	(void) ddi_log_sysevent(zfs_dip, SUNW_VENDOR, EC_DEV_STATUS,
 	    ESC_ZFS_VDEV_AUTOEXPAND, attr, &eid, DDI_SLEEP);
 
 	nvlist_free(attr);
-	kmem_free(physpath, MAXPATHLEN);
 }
 
 static void
-spa_async_thread(void *arg)
+spa_async_dispatch(spa_t *spa, int tasks)
 {
-	spa_t *spa = arg;
-	int tasks;
 
 	ASSERT(spa->spa_sync_on);
-
-	mutex_enter(&spa->spa_async_lock);
-	tasks = spa->spa_async_tasks;
-	spa->spa_async_tasks = 0;
-	mutex_exit(&spa->spa_async_lock);
 
 	/*
 	 * See if the config needs to be updated.
@@ -5828,13 +5877,90 @@ spa_async_thread(void *arg)
 	 */
 	if (tasks & SPA_ASYNC_RESILVER)
 		dsl_resilver_restart(spa->spa_dsl_pool, 0);
+}
+
+static boolean_t
+spa_async_tasks_pending(spa_t *spa, uint64_t *wait_time)
+{
+	uint_t non_config_tasks;
+	uint_t config_task;
+	boolean_t config_task_suspended;
+	int64_t delta_time;
+
+	delta_time = 0;
+	non_config_tasks = spa->spa_async_tasks & ~SPA_ASYNC_CONFIG_UPDATE;
+	config_task = spa->spa_async_tasks & SPA_ASYNC_CONFIG_UPDATE;
+	if (spa->spa_ccw_fail_time == 0) {
+		config_task_suspended = B_FALSE;
+	} else {
+		delta_time = gethrtime() - spa->spa_ccw_fail_time;
+		config_task_suspended = delta_time <
+		    (zfs_ccw_retry_interval * NANOSEC);
+	}
+	if (config_task_suspended)
+		*wait_time = (zfs_ccw_retry_interval * NANOSEC) - delta_time;
+	else
+		*wait_time = 0;
+
+	return (non_config_tasks || (config_task && !config_task_suspended));
+}
+
+static void
+spa_async_thread(void *arg)
+{
+	spa_t *spa = arg;
+	int tasks;
+	int run_tasks;
+	uint64_t wait_time;
+
+	mutex_enter(&spa->spa_async_lock);
+	for (;;) {
+
+		/*
+		 * The only time we are not suspended is when we
+		 * are running tasks.
+		 */
+		spa->spa_async_suspend_done = 1;
+
+		if (spa->spa_async_shutdown != 0)
+			break;
+
+		if (spa->spa_async_suspended != 0) {
+			/*
+			 * If anyone is waiting for us to suspend, let them
+			 * know we're about to go to sleep.
+			 */
+			cv_broadcast(&spa->spa_async_sd_cv);
+			cv_wait(&spa->spa_async_wu_cv, &spa->spa_async_lock);
+			continue;
+		}
+
+		if (spa_async_tasks_pending(spa, &wait_time) == B_FALSE) {
+			if (wait_time != 0)
+				cv_timedwait(&spa->spa_async_wu_cv,
+				    &spa->spa_async_lock, wait_time);
+			else
+				cv_wait(&spa->spa_async_wu_cv,
+				    &spa->spa_async_lock);
+			continue;
+		}
+
+		tasks = spa->spa_async_tasks;
+		spa->spa_async_tasks = 0;
+		spa->spa_async_suspend_done = 0;
+
+		mutex_exit(&spa->spa_async_lock);
+
+		spa_async_dispatch(spa, tasks);
+
+		mutex_enter(&spa->spa_async_lock);
+	}
 
 	/*
 	 * Let the world know that we're done.
 	 */
-	mutex_enter(&spa->spa_async_lock);
 	spa->spa_async_thread = NULL;
-	cv_broadcast(&spa->spa_async_cv);
+	cv_broadcast(&spa->spa_async_sd_cv);
 	mutex_exit(&spa->spa_async_lock);
 	thread_exit();
 }
@@ -5844,8 +5970,11 @@ spa_async_suspend(spa_t *spa)
 {
 	mutex_enter(&spa->spa_async_lock);
 	spa->spa_async_suspended++;
-	while (spa->spa_async_thread != NULL)
-		cv_wait(&spa->spa_async_cv, &spa->spa_async_lock);
+	while (spa->spa_async_thread != NULL &&
+	    spa->spa_async_suspend_done == 0) {
+		cv_broadcast(&spa->spa_async_wu_cv);
+		cv_wait(&spa->spa_async_sd_cv, &spa->spa_async_lock);
+	}
 	mutex_exit(&spa->spa_async_lock);
 }
 
@@ -5855,39 +5984,44 @@ spa_async_resume(spa_t *spa)
 	mutex_enter(&spa->spa_async_lock);
 	ASSERT(spa->spa_async_suspended != 0);
 	spa->spa_async_suspended--;
+	if (spa->spa_async_suspended == 0)
+		cv_broadcast(&spa->spa_async_wu_cv);
 	mutex_exit(&spa->spa_async_lock);
 }
 
-static boolean_t
-spa_async_tasks_pending(spa_t *spa)
-{
-	uint_t non_config_tasks;
-	uint_t config_task;
-	boolean_t config_task_suspended;
-
-	non_config_tasks = spa->spa_async_tasks & ~SPA_ASYNC_CONFIG_UPDATE;
-	config_task = spa->spa_async_tasks & SPA_ASYNC_CONFIG_UPDATE;
-	if (spa->spa_ccw_fail_time == 0) {
-		config_task_suspended = B_FALSE;
-	} else {
-		config_task_suspended =
-		    (gethrtime() - spa->spa_ccw_fail_time) <
-		    (zfs_ccw_retry_interval * NANOSEC);
-	}
-
-	return (non_config_tasks || (config_task && !config_task_suspended));
-}
-
-static void
-spa_async_dispatch(spa_t *spa)
+void
+spa_async_create(spa_t *spa)
 {
 	mutex_enter(&spa->spa_async_lock);
-	if (spa_async_tasks_pending(spa) &&
-	    !spa->spa_async_suspended &&
-	    spa->spa_async_thread == NULL &&
-	    rootdir != NULL)
-		spa->spa_async_thread = thread_create(NULL, 0,
-		    spa_async_thread, spa, 0, &p0, TS_RUN, maxclsyspri);
+	if (spa->spa_async_thread != NULL) {
+		mutex_exit(&spa->spa_async_lock);
+		return;
+	}
+
+	spa->spa_async_shutdown = 0;
+	/*
+	 * We start off with the async thread suspended.  We resume it when
+	 * we start the syncer.
+	 */
+	spa->spa_async_suspended = 1;
+	mutex_exit(&spa->spa_async_lock);
+
+	spa->spa_async_thread = thread_create(NULL, 0,
+	    spa_async_thread, spa, 0, &p0, TS_RUN, maxclsyspri);
+	if (spa->spa_async_thread == NULL)
+		printf("%s: error creating SPA async thread!\n", __func__);
+}
+
+void
+spa_async_shutdown(spa_t *spa)
+{
+	mutex_enter(&spa->spa_async_lock);
+	while (spa->spa_async_thread != NULL) {
+		spa->spa_async_shutdown = 1;
+		cv_broadcast(&spa->spa_async_wu_cv);
+		cv_wait(&spa->spa_async_sd_cv, &spa->spa_async_lock);
+	}
+	spa->spa_async_suspended = 0;
 	mutex_exit(&spa->spa_async_lock);
 }
 
@@ -5897,6 +6031,7 @@ spa_async_request(spa_t *spa, int task)
 	zfs_dbgmsg("spa=%s async request task=%u", spa->spa_name, task);
 	mutex_enter(&spa->spa_async_lock);
 	spa->spa_async_tasks |= task;
+	cv_broadcast(&spa->spa_async_wu_cv);
 	mutex_exit(&spa->spa_async_lock);
 }
 
@@ -6006,11 +6141,16 @@ static void
 spa_sync_config_object(spa_t *spa, dmu_tx_t *tx)
 {
 	nvlist_t *config;
+	uint64_t txg = dmu_tx_get_txg(tx);
 
 	if (list_is_empty(&spa->spa_config_dirty_list))
 		return;
 
 	spa_config_enter(spa, SCL_STATE, FTAG, RW_READER);
+	ASSERT(spa->spa_config_txg <= spa->spa_config_update_txg);
+	/* The target update txg may have already gone by. */
+	if (txg > spa->spa_config_update_txg)
+		spa->spa_config_update_txg = txg;
 
 	config = spa_config_generate(spa, spa->spa_root_vdev,
 	    dmu_tx_get_txg(tx), B_FALSE);
@@ -6244,6 +6384,8 @@ spa_sync_upgrades(spa_t *spa, dmu_tx_t *tx)
 /*
  * Sync the specified transaction group.  New blocks may be dirtied as
  * part of the process, so we iterate until it converges.
+ *
+ * Only for DMU use 
  */
 void
 spa_sync(spa_t *spa, uint64_t txg)
@@ -6453,6 +6595,7 @@ spa_sync(spa_t *spa, uint64_t txg)
 	if (spa->spa_config_syncing != NULL) {
 		spa_config_set(spa, spa->spa_config_syncing);
 		spa->spa_config_txg = txg;
+		ASSERT(spa->spa_config_txg <= spa->spa_config_update_txg);
 		spa->spa_config_syncing = NULL;
 	}
 
@@ -6481,11 +6624,6 @@ spa_sync(spa_t *spa, uint64_t txg)
 	spa_config_exit(spa, SCL_CONFIG, FTAG);
 
 	spa_handle_ignored_writes(spa);
-
-	/*
-	 * If any async tasks have been requested, kick them off.
-	 */
-	spa_async_dispatch(spa);
 }
 
 /*
@@ -6545,7 +6683,10 @@ spa_evict_all(void)
 		if (spa->spa_state != POOL_STATE_UNINITIALIZED) {
 			spa_unload(spa);
 			spa_deactivate(spa);
-		}
+		} 
+
+		ASSERT3P(spa->spa_async_thread, ==, NULL);
+
 		spa_remove(spa);
 	}
 	mutex_exit(&spa_namespace_lock);

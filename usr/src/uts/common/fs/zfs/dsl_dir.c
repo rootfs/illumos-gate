@@ -39,6 +39,7 @@
 #include <sys/zio.h>
 #include <sys/arc.h>
 #include <sys/sunddi.h>
+#include <sys/dsl_destroy.h>
 #include <sys/zvol.h>
 #ifdef _KERNEL
 #include <sys/zfs_vfsops.h>
@@ -49,11 +50,13 @@ static uint64_t dsl_dir_space_towrite(dsl_dir_t *dd);
 
 /* ARGSUSED */
 static void
-dsl_dir_evict(dmu_buf_t *db, void *arg)
+dsl_dir_evict(dmu_buf_user_t *dbu)
 {
-	dsl_dir_t *dd = arg;
+	dsl_dir_t *dd = (dsl_dir_t *)dbu;
 	dsl_pool_t *dp = dd->dd_pool;
 	int t;
+
+	dd->dd_dbuf = NULL;
 
 	for (t = 0; t < TXG_SIZE; t++) {
 		ASSERT(!txg_list_member(&dp->dp_dirty_dirs, dd, t));
@@ -88,7 +91,7 @@ dsl_dir_hold_obj(dsl_pool_t *dp, uint64_t ddobj,
 	err = dmu_bonus_hold(dp->dp_meta_objset, ddobj, tag, &dbuf);
 	if (err != 0)
 		return (err);
-	dd = dmu_buf_get_user(dbuf);
+	dd = (dsl_dir_t *)dmu_buf_get_user(dbuf);
 #ifdef ZFS_DEBUG
 	{
 		dmu_object_info_t doi;
@@ -104,7 +107,6 @@ dsl_dir_hold_obj(dsl_pool_t *dp, uint64_t ddobj,
 		dd->dd_object = ddobj;
 		dd->dd_dbuf = dbuf;
 		dd->dd_pool = dp;
-		dd->dd_phys = dbuf->db_data;
 		mutex_init(&dd->dd_lock, NULL, MUTEX_DEFAULT, NULL);
 
 		list_create(&dd->dd_prop_cbs, sizeof (dsl_prop_cb_record_t),
@@ -157,8 +159,8 @@ dsl_dir_hold_obj(dsl_pool_t *dp, uint64_t ddobj,
 			dmu_buf_rele(origin_bonus, FTAG);
 		}
 
-		winner = dmu_buf_set_user_ie(dbuf, dd, &dd->dd_phys,
-		    dsl_dir_evict);
+		dmu_buf_init_user(&dd->dd_dbu, dsl_dir_evict, &dd->dd_dbuf);
+		winner = dmu_buf_set_user_ie(dbuf, &dd->dd_dbu);
 		if (winner) {
 			if (dd->dd_parent)
 				dsl_dir_rele(dd->dd_parent, dd);
@@ -1155,11 +1157,6 @@ would_change(dsl_dir_t *dd, int64_t delta, dsl_dir_t *ancestor)
 	return (would_change(dd->dd_parent, delta, ancestor));
 }
 
-typedef struct dsl_dir_rename_arg {
-	const char *ddra_oldname;
-	const char *ddra_newname;
-} dsl_dir_rename_arg_t;
-
 /* ARGSUSED */
 static int
 dsl_valid_rename(dsl_pool_t *dp, dsl_dataset_t *ds, void *arg)
@@ -1304,12 +1301,8 @@ dsl_dir_rename_sync(void *arg, dmu_tx_t *tx)
 	VERIFY0(zap_add(mos, newparent->dd_phys->dd_child_dir_zapobj,
 	    dd->dd_myname, 8, 1, &dd->dd_object, tx));
 
-#ifdef __FreeBSD__
-#ifdef _KERNEL
-	zfsvfs_update_fromname(ddra->ddra_oldname, ddra->ddra_newname);
-	zvol_rename_minors(ddra->ddra_oldname, ddra->ddra_newname);
-#endif
-#endif
+	if (ddra->ddra_user_syncfunc != NULL)
+		ddra->ddra_user_syncfunc(ddra);
 
 	dsl_prop_notify_all(dd);
 
@@ -1317,16 +1310,38 @@ dsl_dir_rename_sync(void *arg, dmu_tx_t *tx)
 	dsl_dir_rele(dd, FTAG);
 }
 
+#ifdef _KERNEL
+static void
+dsl_dir_rename_cleanup_freebsd(dsl_dir_rename_arg_t *ddra)
+{
+	/*
+	 * Both of these must be called in order to handle the case where a
+	 * rename is done on a parent dsl_dir.
+	 */
+	zfsvfs_update_fromname(ddra->ddra_oldname, ddra->ddra_newname);
+	zvol_rename_cleanup(ddra);
+}
+#endif
+
 int
 dsl_dir_rename(const char *oldname, const char *newname)
 {
-	dsl_dir_rename_arg_t ddra;
+	dsl_dir_rename_arg_t ddra = { };
 
 	ddra.ddra_oldname = oldname;
 	ddra.ddra_newname = newname;
 
-	return (dsl_sync_task(oldname,
-	    dsl_dir_rename_check, dsl_dir_rename_sync, &ddra, 3));
+#ifdef _KERNEL
+	ddra.ddra_user_cleanupfunc = dsl_dir_rename_cleanup_freebsd;
+#endif
+
+	ddra.ddra_error = dsl_sync_task(oldname,
+	    dsl_dir_rename_check, dsl_dir_rename_sync, &ddra, 3);
+
+	if (ddra.ddra_user_cleanupfunc != NULL)
+		ddra.ddra_user_cleanupfunc(&ddra);
+
+	return (ddra.ddra_error);
 }
 
 int

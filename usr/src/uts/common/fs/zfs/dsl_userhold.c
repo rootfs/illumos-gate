@@ -27,6 +27,7 @@
 #include <sys/zfs_context.h>
 #include <sys/dsl_userhold.h>
 #include <sys/dsl_dataset.h>
+#include <sys/dsl_pool.h>
 #include <sys/dsl_destroy.h>
 #include <sys/dsl_synctask.h>
 #include <sys/dmu_tx.h>

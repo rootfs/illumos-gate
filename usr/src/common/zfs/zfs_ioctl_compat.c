@@ -582,7 +582,7 @@ zcmd_ioctl_compat(int fd, int request, zfs_cmd_t *zc, const int cflag)
 	switch (cflag) {
 	case ZFS_CMD_COMPAT_NONE:
 		ncmd = _IOWR('Z', request, struct zfs_iocparm);
-		zp.zfs_cmd = (uint64_t)zc;
+		zp.zfs_cmd = (uint64_t)(uintptr_t)(void *)zc;
 		zp.zfs_cmd_size = sizeof(zfs_cmd_t);
 		zp.zfs_ioctl_version = ZFS_IOCVER_CURRENT;
 		return (ioctl(fd, ncmd, &zp));

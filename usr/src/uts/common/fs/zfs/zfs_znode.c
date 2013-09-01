@@ -43,6 +43,7 @@
 #include <sys/errno.h>
 #include <sys/unistd.h>
 #include <sys/atomic.h>
+#include <sys/kstat.h>
 #include <sys/zfs_dir.h>
 #include <sys/zfs_acl.h>
 #include <sys/zfs_ioctl.h>
@@ -70,19 +71,53 @@
 SYSCTL_INT(_debug_sizeof, OID_AUTO, znode, CTLFLAG_RD, 0, sizeof(znode_t),
     "sizeof(znode_t)");
 
-/*
- * Define ZNODE_STATS to turn on statistic gathering. By default, it is only
- * turned on when DEBUG is also defined.
- */
-#ifdef	DEBUG
-#define	ZNODE_STATS
-#endif	/* DEBUG */
+typedef struct znode_stats {
+	kstat_named_t zns_zget_reclaim_collisions;
+	kstat_named_t zns_zget_reclaim_td_collisions;
+} znode_stats_t;
 
-#ifdef	ZNODE_STATS
-#define	ZNODE_STAT_ADD(stat)			((stat)++)
+static znode_stats_t znode_stats = {
+	{ "zget_reclaim_collisions",	KSTAT_DATA_UINT64 },
+	{ "zget_reclaim_td_collisions",	KSTAT_DATA_UINT64 },
+};
+kstat_t	*znode_ksp;
+
+#define	ZNODE_STAT_ADD(stat)	\
+    atomic_add_64(&znode_stats.zns_##stat.value.ui64, 1)
+
+#ifdef	DEBUG
+typedef struct znode_debug_stats {
+#ifdef sun
+	kstat_named_t znds_move_zfsvfs_invald;
+	kstat_named_t znds_move_zfsvfs_recheck1;
+	kstat_named_t znds_move_zfsvfs_unmounted;
+	kstat_named_t znds_move_zfsvfs_recheck2;
+	kstat_named_t znds_move_obj_held;
+	kstat_named_t znds_move_vnode_locked;
+	kstat_named_t znds_move_not_only_dnlc;
+	kstat_named_t znds_zget_reclaim_collision;
+	kstat_named_t znds_zget_reclaim_td_collision;
+#endif	/* sun */
+} znode_debug_stats_t;
+
+static znode_debug_stats_t znode_debug_stats = {
+#ifdef sun
+	{ "move_zfsvfs_invalid",	KSTAT_DATA_UINT64 },
+	{ "move_zfsvfs_recheck1",	KSTAT_DATA_UINT64 },
+	{ "move_zfsvfs_unmounted",	KSTAT_DATA_UINT64 },
+	{ "move_zfsvfs_recheck2",	KSTAT_DATA_UINT64 },
+	{ "move_obj_held",		KSTAT_DATA_UINT64 },
+	{ "move_vnode_locked",		KSTAT_DATA_UINT64 },
+	{ "move_not_only_dnlc",		KSTAT_DATA_UINT64 },
+#endif	/* sun */
+};
+kstat_t	*znode_debug_ksp;
+
+#define	ZNODE_DEBUG_STAT_ADD(stat)	\
+    atomic_add_64(&znode_debug_stats.znds_##stat.value.ui64, 1)
 #else
-#define	ZNODE_STAT_ADD(stat)			/* nothing */
-#endif	/* ZNODE_STATS */
+#define	ZNODE_DEBUG_STAT_ADD(stat) do { } while (0)
+#endif	/* DEBUG */
 
 /*
  * Functions needed for userland (ie: libzpool) are not put under
@@ -132,7 +167,7 @@ zfs_znode_cache_constructor(void *buf, void *arg, int kmflags)
 	ASSERT(!POINTER_IS_VALID(zp->z_zfsvfs));
 
 	if (vfsp != NULL) {
-		error = getnewvnode("zfs", vfsp, &zfs_vnodeops, &vp);
+		error = getnewvnode("zfs_znode", vfsp, &zfs_vnodeops, &vp);
 		if (error != 0 && (kmflags & KM_NOSLEEP))
 			return (-1);
 		ASSERT(error == 0);
@@ -277,7 +312,7 @@ zfs_znode_move(void *buf, void *newbuf, size_t size, void *arg)
 	 */
 	zfsvfs = ozp->z_zfsvfs;
 	if (!POINTER_IS_VALID(zfsvfs)) {
-		ZNODE_STAT_ADD(znode_move_stats.zms_zfsvfs_invalid);
+		ZNODE_DEBUG_STAT_ADD(move_zfsvfs_invalid);
 		return (KMEM_CBRC_DONT_KNOW);
 	}
 
@@ -290,7 +325,7 @@ zfs_znode_move(void *buf, void *newbuf, size_t size, void *arg)
 	rw_enter(&zfsvfs_lock, RW_WRITER);
 	if (zfsvfs != ozp->z_zfsvfs) {
 		rw_exit(&zfsvfs_lock);
-		ZNODE_STAT_ADD(znode_move_stats.zms_zfsvfs_recheck1);
+		ZNODE_DEBUG_STAT_ADD(move_zfsvfs_recheck1);
 		return (KMEM_CBRC_DONT_KNOW);
 	}
 
@@ -304,7 +339,7 @@ zfs_znode_move(void *buf, void *newbuf, size_t size, void *arg)
 	if (zfsvfs->z_unmounted) {
 		ZFS_EXIT(zfsvfs);
 		rw_exit(&zfsvfs_lock);
-		ZNODE_STAT_ADD(znode_move_stats.zms_zfsvfs_unmounted);
+		ZNODE_DEBUG_STAT_ADD(move_zfsvfs_unmounted);
 		return (KMEM_CBRC_DONT_KNOW);
 	}
 	rw_exit(&zfsvfs_lock);
@@ -317,7 +352,7 @@ zfs_znode_move(void *buf, void *newbuf, size_t size, void *arg)
 	if (zfsvfs != ozp->z_zfsvfs) {
 		mutex_exit(&zfsvfs->z_znodes_lock);
 		ZFS_EXIT(zfsvfs);
-		ZNODE_STAT_ADD(znode_move_stats.zms_zfsvfs_recheck2);
+		ZNODE_DEBUG_STAT_ADD(move_zfsvfs_recheck2);
 		return (KMEM_CBRC_DONT_KNOW);
 	}
 
@@ -329,7 +364,7 @@ zfs_znode_move(void *buf, void *newbuf, size_t size, void *arg)
 	if (ZFS_OBJ_HOLD_TRYENTER(zfsvfs, ozp->z_id) == 0) {
 		mutex_exit(&zfsvfs->z_znodes_lock);
 		ZFS_EXIT(zfsvfs);
-		ZNODE_STAT_ADD(znode_move_stats.zms_obj_held);
+		ZNODE_DEBUG_STAT_ADD(move_obj_held);
 		return (KMEM_CBRC_LATER);
 	}
 
@@ -338,7 +373,7 @@ zfs_znode_move(void *buf, void *newbuf, size_t size, void *arg)
 		ZFS_OBJ_HOLD_EXIT(zfsvfs, ozp->z_id);
 		mutex_exit(&zfsvfs->z_znodes_lock);
 		ZFS_EXIT(zfsvfs);
-		ZNODE_STAT_ADD(znode_move_stats.zms_vnode_locked);
+		ZNODE_DEBUG_STAT_ADD(move_vnode_locked);
 		return (KMEM_CBRC_LATER);
 	}
 
@@ -348,7 +383,7 @@ zfs_znode_move(void *buf, void *newbuf, size_t size, void *arg)
 		ZFS_OBJ_HOLD_EXIT(zfsvfs, ozp->z_id);
 		mutex_exit(&zfsvfs->z_znodes_lock);
 		ZFS_EXIT(zfsvfs);
-		ZNODE_STAT_ADD(znode_move_stats.zms_not_only_dnlc);
+		ZNODE_DEBUG_STAT_ADD(move_not_only_dnlc);
 		return (KMEM_CBRC_LATER);
 	}
 
@@ -380,6 +415,26 @@ zfs_znode_init(void)
 	    sizeof (znode_t), 0, /* zfs_znode_cache_constructor */ NULL,
 	    zfs_znode_cache_destructor, NULL, NULL, NULL, 0);
 	kmem_cache_set_move(znode_cache, zfs_znode_move);
+
+	znode_ksp = kstat_create("zfs", 0, "znodestats", "misc",
+	    KSTAT_TYPE_NAMED, sizeof (znode_stats) / sizeof (kstat_named_t),
+	    KSTAT_FLAG_VIRTUAL);
+
+	if (znode_ksp != NULL) {
+		znode_ksp->ks_data = &znode_stats;
+		kstat_install(znode_ksp);
+	}
+
+#ifdef DEBUG
+	znode_debug_ksp = kstat_create("zfs", 0, "znodestats", "debug",
+	    KSTAT_TYPE_NAMED,
+	    sizeof (znode_debug_stats) / sizeof (kstat_named_t),
+	    KSTAT_FLAG_VIRTUAL);
+	if (znode_debug_ksp != NULL) {
+		znode_debug_ksp->ks_data = &znode_debug_stats;
+		kstat_install(znode_debug_ksp);
+	}
+#endif /* DEBUG */
 }
 
 void
@@ -399,6 +454,17 @@ zfs_znode_fini(void)
 		kmem_cache_destroy(znode_cache);
 	znode_cache = NULL;
 	rw_destroy(&zfsvfs_lock);
+
+	if (znode_ksp != NULL) {
+		kstat_delete(znode_ksp);
+		znode_ksp = NULL;
+	}
+#ifdef DEBUG
+	if (znode_debug_ksp != NULL) {
+		kstat_delete(znode_debug_ksp);
+		znode_debug_ksp = NULL;
+	}
+#endif /* DEBUG */
 }
 
 #ifdef sun
@@ -1178,7 +1244,7 @@ again:
 		return (SET_ERROR(EINVAL));
 	}
 
-	hdl = dmu_buf_get_user(db);
+	hdl = (sa_handle_t *)dmu_buf_get_user(db);
 	if (hdl != NULL) {
 		zp  = sa_get_userdata(hdl);
 

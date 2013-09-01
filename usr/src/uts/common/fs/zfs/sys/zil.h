@@ -108,6 +108,7 @@ typedef enum zil_create {
 
 /*
  * size of xvattr log section.
+ *
  * its composed of lr_attr_t + xvattr bitmap + 2 64 bit timestamps
  * for create time and a single 64 bit integer for all of the attributes,
  * and 4 64 bit integers (32 bytes) for the scanstamp.

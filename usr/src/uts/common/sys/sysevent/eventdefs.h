@@ -243,10 +243,11 @@ extern "C" {
 #define	ESC_ACPIEV_TOUCHPAD		"ESC_acpiev_touchpad"
 
 /*
- * ZFS subclass definitions.  supporting attributes (name/value paris) are found
+ * ZFS subclass definitions.  supporting attributes (name/value pairs) are found
  * in sys/fs/zfs.h
  */
 #define	ESC_ZFS_RESILVER_START		"ESC_ZFS_resilver_start"
+#define	ESC_ZFS_RESILVER_UPDATE		"ESC_ZFS_resilver_update"
 #define	ESC_ZFS_RESILVER_FINISH		"ESC_ZFS_resilver_finish"
 #define	ESC_ZFS_VDEV_REMOVE		"ESC_ZFS_vdev_remove"
 #define	ESC_ZFS_POOL_DESTROY		"ESC_ZFS_pool_destroy"
@@ -254,11 +255,14 @@ extern "C" {
 #define	ESC_ZFS_VDEV_CHECK		"ESC_ZFS_vdev_check"
 #define	ESC_ZFS_CONFIG_SYNC		"ESC_ZFS_config_sync"
 #define	ESC_ZFS_SCRUB_START		"ESC_ZFS_scrub_start"
+#define	ESC_ZFS_SCRUB_UPDATE		"ESC_ZFS_scrub_update"
 #define	ESC_ZFS_SCRUB_FINISH		"ESC_ZFS_scrub_finish"
+#define	ESC_ZFS_SCRUB_CANCELLED		"ESC_ZFS_scrub_cancelled"
 #define	ESC_ZFS_VDEV_SPARE		"ESC_ZFS_vdev_spare"
 #define	ESC_ZFS_BOOTFS_VDEV_ATTACH	"ESC_ZFS_bootfs_vdev_attach"
 #define	ESC_ZFS_POOL_REGUID		"ESC_ZFS_pool_reguid"
 #define	ESC_ZFS_VDEV_AUTOEXPAND		"ESC_ZFS_vdev_autoexpand"
+#define	ESC_ZFS_POOL_HISTORY		"ESC_ZFS_pool_history"
 
 /*
  * datalink subclass definitions.
@@ -266,7 +270,7 @@ extern "C" {
 #define	ESC_DATALINK_PHYS_ADD	"ESC_datalink_phys_add"	/* new physical link */
 
 /*
- * VRRP subclass definitions. Supporting attributes (name/value paris) are
+ * VRRP subclass definitions. Supporting attributes (name/value pairs) are
  * found in sys/sysevent/vrrp.h
  */
 #define	ESC_VRRP_STATE_CHANGE	"ESC_vrrp_state_change"

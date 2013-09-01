@@ -97,6 +97,7 @@ static int zfs_vget(vfs_t *vfsp, ino_t ino, int flags, vnode_t **vpp);
 static int zfs_sync(vfs_t *vfsp, int waitfor);
 static int zfs_checkexp(vfs_t *vfsp, struct sockaddr *nam, int *extflagsp,
     struct ucred **credanonp, int *numsecflavors, int **secflavors);
+static vfs_fsmp_t zfs_fsmp;
 static int zfs_fhtovp(vfs_t *vfsp, fid_t *fidp, int flags, vnode_t **vpp);
 static void zfs_objset_close(zfsvfs_t *zfsvfs);
 static void zfs_freevfs(vfs_t *vfsp);
@@ -110,6 +111,7 @@ static struct vfsops zfs_vfsops = {
 	.vfs_sync =		zfs_sync,
 	.vfs_checkexp =		zfs_checkexp,
 	.vfs_fhtovp =		zfs_fhtovp,
+	.vfs_fsmp =             zfs_fsmp,
 };
 
 VFS_SET(zfs_vfsops, zfs, VFCF_JAIL | VFCF_DELEGADMIN);
@@ -870,6 +872,17 @@ zfsvfs_create(const char *osname, zfsvfs_t **zfvp)
 	uint64_t zval;
 	int i, error;
 	uint64_t sa_obj;
+
+	/*
+	 * XXX: Fix struct statfs so this isn't necessary!
+	 *
+	 * The 'osname' is used as the filesystem's special node, which means
+	 * it must fit in statfs.f_mntfromname, or else it can't be
+	 * enumerated, so libzfs_mnttab_find() returns NULL, which causes
+	 * 'zfs unmount' to think it's not mounted when it is.
+	 */
+	if (strlen(osname) >= MNAMELEN)
+		return (SET_ERROR(ENAMETOOLONG));
 
 	zfsvfs = kmem_zalloc(sizeof (zfsvfs_t), KM_SLEEP);
 
@@ -1933,6 +1946,30 @@ zfsvfs_teardown(zfsvfs_t *zfsvfs, boolean_t unmounting)
 	return (0);
 }
 
+static void
+zfs_freebsd_release_snapshot(vfs_t *vfsp)
+{
+	zfsvfs_t *zfsvfs = vfsp->vfs_data;
+	zfsvfs_t *zfs_parent = zfsvfs->z_parent;
+	vnode_t *zvp_parent;
+
+	/*
+	 * Move process references from the snapshot's GFS node to
+	 * the zfs grandparent filesystem's root vnode, so processes
+	 * cannot learn about the GFS node.  This root vnode is the
+	 * proper place, since it is zfs_ctldir/snapdir's parent.
+	 *
+	 * XXX
+	 * dounmount() already calls mountcheckdirs() before calling
+	 * us, but it moves the references to vfsp->mnt_vnodecovered
+	 * instead, and there isn't any way to tell it otherwise.
+	 */
+	VERIFY0(VFS_ROOT(zfs_parent->z_vfs, LK_EXCLUSIVE, &zvp_parent));
+	mountcheckdirs(vfsp->mnt_vnodecovered, zvp_parent);
+	vput(zvp_parent);
+	ASSERT3U(vfsp->mnt_vnodecovered->v_count, ==, 1);
+}
+
 /*ARGSUSED*/
 static int
 zfs_umount(vfs_t *vfsp, int fflag)
@@ -1999,6 +2036,7 @@ zfs_umount(vfs_t *vfsp, int fflag)
 		return (ret);
 	}
 
+#ifdef sun
 	if (!(fflag & MS_FORCE)) {
 		/*
 		 * Check the number of active vnodes in the file system.
@@ -2019,6 +2057,7 @@ zfs_umount(vfs_t *vfsp, int fflag)
 				return (SET_ERROR(EBUSY));
 		}
 	}
+#endif
 
 	VERIFY(zfsvfs_teardown(zfsvfs, B_TRUE) == 0);
 	os = zfsvfs->z_os;
@@ -2046,12 +2085,8 @@ zfs_umount(vfs_t *vfsp, int fflag)
 	 */
 	if (zfsvfs->z_ctldir != NULL)
 		zfsctl_destroy(zfsvfs);
-	if (zfsvfs->z_issnap) {
-		vnode_t *svp = vfsp->mnt_vnodecovered;
-
-		if (svp->v_count >= 2)
-			VN_RELE(svp);
-	}
+	else if (zfsvfs->z_issnap)
+		zfs_freebsd_release_snapshot(vfsp);
 	zfs_freevfs(vfsp);
 
 	return (0);
@@ -2106,6 +2141,14 @@ zfs_checkexp(vfs_t *vfsp, struct sockaddr *nam, int *extflagsp,
 	 */
 	return (vfs_stdcheckexp(zfsvfs->z_parent->z_vfs, nam, extflagsp,
 	    credanonp, numsecflavors, secflavors));
+}
+
+static vfs_t *
+zfs_fsmp(vfs_t *vfsp)
+{
+	zfsvfs_t *zfsvfs = vfsp->vfs_data;
+
+	return (zfsvfs->z_parent->z_vfs);
 }
 
 CTASSERT(SHORT_FID_LEN <= sizeof(struct fid));
@@ -2173,8 +2216,8 @@ zfs_fhtovp(vfs_t *vfsp, fid_t *fidp, int flags, vnode_t **vpp)
 		*vpp = zfsvfs->z_ctldir;
 		ASSERT(*vpp != NULL);
 		if (object == ZFSCTL_INO_SNAPDIR) {
-			VERIFY(zfsctl_root_lookup(*vpp, "snapshot", vpp, NULL,
-			    0, NULL, NULL, NULL, NULL, NULL) == 0);
+			VERIFY(zfsctl_root_lookup(*vpp, zfsctl_snapdir_name(),
+			    vpp, NULL, 0, NULL, NULL, NULL, NULL, NULL) == 0);
 		} else if (object == zfsvfs->z_shares_dir) {
 			VERIFY(zfsctl_root_lookup(*vpp, "shares", vpp, NULL,
 			    0, NULL, NULL, NULL, NULL, NULL) == 0);
@@ -2306,8 +2349,11 @@ bail:
 		 * Since we couldn't reopen zfsvfs::z_os, or
 		 * setup the sa framework force unmount this file system.
 		 */
-		if (vn_vfswlock(zfsvfs->z_vfs->vfs_vnodecovered) == 0)
+		if (vn_vfswlock(zfsvfs->z_vfs->vfs_vnodecovered) == 0) {
+			mount_lock();
 			(void) dounmount(zfsvfs->z_vfs, MS_FORCE, curthread);
+			mount_unlock();
+		}
 	}
 	return (err);
 }

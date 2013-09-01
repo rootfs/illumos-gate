@@ -44,6 +44,8 @@
 #include <sys/dsl_dataset.h>
 
 /*
+ * Routines to manage intent log entries
+ *
  * These zfs_log_* functions must be called within a dmu tx, in one
  * of 2 contexts depending on zilog->z_replay:
  *
@@ -498,7 +500,7 @@ zfs_log_write(zilog_t *zilog, dmu_tx_t *tx, int txtype,
 		    (write_state == WR_COPIED ? len : 0));
 		lr = (lr_write_t *)&itx->itx_lr;
 		if (write_state == WR_COPIED && dmu_read(zp->z_zfsvfs->z_os,
-		    zp->z_id, off, len, lr + 1, DMU_READ_NO_PREFETCH) != 0) {
+		    zp->z_id, off, len, lr + 1, /*flags*/0) != 0) {
 			zil_itx_destroy(itx);
 			itx = zil_itx_create(txtype, sizeof (*lr));
 			lr = (lr_write_t *)&itx->itx_lr;
@@ -600,6 +602,56 @@ zfs_log_setattr(zilog_t *zilog, dmu_tx_t *tx, int txtype,
 		zfs_log_xvattr((lr_attr_t *)start, xvap);
 		start = (caddr_t)start + ZIL_XVAT_SIZE(xvap->xva_mapsize);
 	}
+
+	/*
+	 * Now stick on domain information if any on end
+	 */
+
+	if (fuidp)
+		(void) zfs_log_fuid_domains(fuidp, start);
+
+	itx->itx_sync = (zp->z_sync_cnt != 0);
+	zil_itx_assign(zilog, itx, tx);
+}
+
+/*
+ * Handles TX_SETATTR transactions caused by security descriptor based updates.
+ */
+void
+zfs_log_sd_setattr(zilog_t *zilog, dmu_tx_t *tx, int txtype,
+	znode_t *zp, uint_t mask_applied, uint64_t mode, zfs_fuid_info_t *fuidp)
+{
+	itx_t		*itx;
+	lr_setattr_t	*lr;
+	size_t		recsize = sizeof (lr_setattr_t);
+	void		*start;
+
+	if (zil_replaying(zilog, tx) || zp->z_unlinked)
+		return;
+
+	if (fuidp)
+		recsize += fuidp->z_domain_str_sz;
+
+	itx = zil_itx_create(txtype, recsize);
+	lr = (lr_setattr_t *)&itx->itx_lr;
+	lr->lr_foid = zp->z_id;
+
+	lr->lr_mask = (uint64_t)mask_applied;
+	lr->lr_mode = (uint64_t)mode;
+	if (mask_applied & AT_UID)
+		lr->lr_uid = fuidp->z_fuid_owner;
+	else
+		lr->lr_uid = 0;
+
+	if (mask_applied & AT_GID)
+		lr->lr_gid = fuidp->z_fuid_group;
+	else
+		lr->lr_gid = 0;
+
+	lr->lr_size = 0;
+	lr->lr_atime[0] = lr->lr_atime[1] = 0;
+	lr->lr_mtime[0] = lr->lr_mtime[1] = 0;
+	start = (lr_setattr_t *)(lr + 1);
 
 	/*
 	 * Now stick on domain information if any on end

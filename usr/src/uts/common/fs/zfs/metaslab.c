@@ -181,6 +181,27 @@ metaslab_class_space_update(metaslab_class_t *mc, int64_t alloc_delta,
 	atomic_add_64(&mc->mc_dspace, dspace_delta);
 }
 
+void
+metaslab_class_minblocksize_update(metaslab_class_t *mc)
+{
+	metaslab_group_t *mg;
+	vdev_t *vd;
+	uint64_t minashift = UINT64_MAX;
+
+	if ((mg = mc->mc_rotor) == NULL) {
+		mc->mc_minblocksize = SPA_MINBLOCKSIZE;
+		return;
+	}
+
+	do {
+		vd = mg->mg_vd;
+		if (vd->vdev_ashift < minashift)
+			minashift = vd->vdev_ashift;
+	} while ((mg = mg->mg_next) != mc->mc_rotor);
+
+	mc->mc_minblocksize = 1ULL << minashift;
+}
+
 uint64_t
 metaslab_class_get_alloc(metaslab_class_t *mc)
 {
@@ -203,6 +224,12 @@ uint64_t
 metaslab_class_get_dspace(metaslab_class_t *mc)
 {
 	return (spa_deflate(mc->mc_spa) ? mc->mc_dspace : mc->mc_space);
+}
+
+uint64_t
+metaslab_class_get_minblocksize(metaslab_class_t *mc)
+{
+	return (mc->mc_minblocksize);
 }
 
 /*
@@ -296,6 +323,7 @@ metaslab_group_activate(metaslab_group_t *mg)
 		mgnext->mg_prev = mg;
 	}
 	mc->mc_rotor = mg;
+	metaslab_class_minblocksize_update(mc);
 }
 
 void
@@ -327,6 +355,7 @@ metaslab_group_passivate(metaslab_group_t *mg)
 
 	mg->mg_prev = NULL;
 	mg->mg_next = NULL;
+	metaslab_class_minblocksize_update(mc);
 }
 
 static void
@@ -1790,7 +1819,7 @@ metaslab_alloc(spa_t *spa, metaslab_class_t *mc, uint64_t psize, blkptr_t *bp,
     int ndvas, uint64_t txg, blkptr_t *hintbp, int flags)
 {
 	dva_t *dva = bp->blk_dva;
-	dva_t *hintdva = hintbp->blk_dva;
+	dva_t *hintdva = hintbp ? hintbp->blk_dva : NULL;
 	int error = 0;
 
 	ASSERT(bp->blk_birth == 0);

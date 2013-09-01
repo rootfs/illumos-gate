@@ -92,23 +92,6 @@ typedef enum drr_headertype {
 /* Are all features in the given flag word currently supported? */
 #define	DMU_STREAM_SUPPORTED(x)	(!((x) & ~DMU_BACKUP_FEATURE_MASK))
 
-/*
- * The drr_versioninfo field of the dmu_replay_record has the
- * following layout:
- *
- *	64	56	48	40	32	24	16	8	0
- *	+-------+-------+-------+-------+-------+-------+-------+-------+
- *  	|		reserved	|        feature-flags	    |C|S|
- *	+-------+-------+-------+-------+-------+-------+-------+-------+
- *
- * The low order two bits indicate the header type: SUBSTREAM (0x1)
- * or COMPOUNDSTREAM (0x2).  Using two bits for this is historical:
- * this field used to be a version number, where the two version types
- * were 1 and 2.  Using two bits for this allows earlier versions of
- * the code to be able to recognize send streams that don't use any
- * of the features indicated by feature flags.
- */
-
 #define	DMU_BACKUP_MAGIC 0x2F5bacbacULL
 
 #define	DRR_FLAG_CLONE		(1<<0)
@@ -127,7 +110,22 @@ typedef enum drr_headertype {
  */
 struct drr_begin {
 	uint64_t drr_magic;
-	uint64_t drr_versioninfo; /* was drr_version */
+	/*
+	 * Formerly named drr_version, this field has the following layout:
+	 *
+	 *  64      56      48      40      32      24      16      8       0
+	 *  +-------+-------+-------+-------+-------+-------+-------+-------+
+	 *  |               reserved        |        feature-flags      |C|S|
+	 *  +-------+-------+-------+-------+-------+-------+-------+-------+
+	 *
+ 	 * The low order two bits indicate the header type: SUBSTREAM (0x1)
+ 	 * or COMPOUNDSTREAM (0x2).  Using two bits for this is historical:
+ 	 * this field used to be a version number, where the two version types
+ 	 * were 1 and 2.  Using two bits for this allows earlier versions of
+ 	 * the code to be able to recognize send streams that don't use any
+ 	 * of the features indicated by feature flags.
+ 	 */
+	uint64_t drr_versioninfo;
 	uint64_t drr_creation_time;
 	dmu_objset_type_t drr_type;
 	uint32_t drr_flags;
@@ -383,6 +381,7 @@ extern void *zfsdev_get_soft_state(minor_t minor,
 extern minor_t zfsdev_minor_alloc(void);
 
 extern void *zfsdev_state;
+extern kmutex_t zfsdev_state_lock;
 
 #endif	/* _KERNEL */
 

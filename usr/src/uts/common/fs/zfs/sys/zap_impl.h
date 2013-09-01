@@ -62,6 +62,11 @@ typedef struct mzap_phys {
 	/* actually variable size depending on block size */
 } mzap_phys_t;
 
+typedef struct mzap_dbuf {
+	uint8_t mzdb_pad[offsetof(dmu_buf_t, db_data)];
+	mzap_phys_t *mzdb_data;
+} mzap_dbuf_t;
+
 typedef struct mzap_ent {
 	avl_node_t mze_node;
 	int mze_chunkid;
@@ -70,7 +75,7 @@ typedef struct mzap_ent {
 } mzap_ent_t;
 
 #define	MZE_PHYS(zap, mze) \
-	(&(zap)->zap_m.zap_phys->mz_chunk[(mze)->mze_chunkid])
+	(&(zap)->zap_m_phys->mz_chunk[(mze)->mze_chunkid])
 
 /*
  * The (fat) zap is stored in one object. It is an array of
@@ -104,7 +109,7 @@ struct zap_leaf;
  * word number (1<<ZAP_EMBEDDED_PTRTBL_SHIFT(zap)).
  */
 #define	ZAP_EMBEDDED_PTRTBL_ENT(zap, idx) \
-	((uint64_t *)(zap)->zap_f.zap_phys) \
+	((uint64_t *)(zap)->zap_f_phys) \
 	[(idx) + (1<<ZAP_EMBEDDED_PTRTBL_SHIFT(zap))]
 
 /*
@@ -137,29 +142,34 @@ typedef struct zap_phys {
 	 */
 } zap_phys_t;
 
+typedef struct fzap_dbuf {
+	uint8_t fzdb_pad[offsetof(dmu_buf_t, db_data)];
+	zap_phys_t *fzdb_data;
+} fzap_dbuf_t;
+
 typedef struct zap_table_phys zap_table_phys_t;
 
 typedef struct zap {
+	/* Dbuf user eviction data for this instance. */
+	dmu_buf_user_t zap_dbu;
 	objset_t *zap_objset;
 	uint64_t zap_object;
-	struct dmu_buf *zap_dbuf;
+	union {
+		dmu_buf_t *zap_dmu_db;
+		mzap_dbuf_t *mzap_db;
+		fzap_dbuf_t *fzap_db;
+	} zap_db_u;
 	krwlock_t zap_rwlock;
 	boolean_t zap_ismicro;
 	int zap_normflags;
 	uint64_t zap_salt;
 	union {
 		struct {
-			zap_phys_t *zap_phys;
-
-			/*
-			 * zap_num_entries_mtx protects
-			 * zap_num_entries
-			 */
+			/* protects zap_num_entries */
 			kmutex_t zap_num_entries_mtx;
 			int zap_block_shift;
 		} zap_fat;
 		struct {
-			mzap_phys_t *zap_phys;
 			int16_t zap_num_entries;
 			int16_t zap_num_chunks;
 			int16_t zap_alloc_next;
@@ -180,14 +190,17 @@ typedef struct zap_name {
 	char zn_normbuf[ZAP_MAXNAMELEN];
 } zap_name_t;
 
-#define	zap_f	zap_u.zap_fat
-#define	zap_m	zap_u.zap_micro
+#define	zap_dbuf	zap_db_u.zap_dmu_db
+#define	zap_f		zap_u.zap_fat
+#define	zap_m		zap_u.zap_micro
+#define	zap_f_phys	zap_db_u.fzap_db->fzdb_data
+#define	zap_m_phys	zap_db_u.mzap_db->mzdb_data
 
 boolean_t zap_match(zap_name_t *zn, const char *matchname);
 int zap_lockdir(objset_t *os, uint64_t obj, dmu_tx_t *tx,
     krw_t lti, boolean_t fatreader, boolean_t adding, zap_t **zapp);
 void zap_unlockdir(zap_t *zap);
-void zap_evict(dmu_buf_t *db, void *vmzap);
+void zap_evict(dmu_buf_user_t *dbu);
 zap_name_t *zap_name_alloc(zap_t *zap, const char *key, matchtype_t mt);
 void zap_name_free(zap_name_t *zn);
 int zap_hashbits(zap_t *zap);

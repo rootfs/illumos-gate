@@ -24,6 +24,7 @@
  * Copyright (c) 2013 by Delphix. All rights reserved.
  */
 
+#include <machine/_inttypes.h>
 #include <sys/zfs_context.h>
 #include <sys/txg_impl.h>
 #include <sys/dmu_impl.h>
@@ -378,7 +379,8 @@ txg_quiesce(dsl_pool_t *dp, uint64_t txg)
 		mutex_exit(&tx->tx_cpu[c].tc_open_lock);
 
 	/*
-	 * Quiesce the transaction group by waiting for everyone to txg_exit().
+	 * Quiesce the transaction group by waiting for everyone to call
+	 * txg_rele_to_sync().
 	 */
 	for (c = 0; c < max_ncpus; c++) {
 		tx_cpu_t *tc = &tx->tx_cpu[c];
@@ -446,6 +448,23 @@ txg_dispatch_callbacks(dsl_pool_t *dp, uint64_t txg)
 	}
 }
 
+/*
+ * dsl_scan_active may perform I/O and we do not want to hold tx_sync_lock
+ * across that.
+ *
+ * NOTE that tx state can be changed across this call.
+ */
+static boolean_t
+dsl_scan_active_unlocked(tx_state_t *tx, dsl_scan_t *scn)
+{
+	boolean_t active;
+
+	mutex_exit(&tx->tx_sync_lock);
+	active = dsl_scan_active(scn);
+	mutex_enter(&tx->tx_sync_lock);
+	return (active);
+}
+
 static void
 txg_sync_thread(void *arg)
 {
@@ -466,9 +485,12 @@ txg_sync_thread(void *arg)
 		 * We sync when we're scanning, there's someone waiting
 		 * on us, or the quiesce thread has handed off a txg to
 		 * us, or we have reached our timeout.
+		 *
+		 * Call dsl_scan_active_unlocked first, so that tx state
+		 * is unchanged between the checks and txg_thread_wait.
 		 */
 		timer = (delta >= timeout ? 0 : timeout - delta);
-		while (!dsl_scan_active(dp->dp_scan) &&
+		while (!dsl_scan_active_unlocked(tx, dp->dp_scan) &&
 		    !tx->tx_exiting && timer > 0 &&
 		    tx->tx_synced_txg >= tx->tx_sync_txg_waiting &&
 		    tx->tx_quiesced_txg == 0) {

@@ -167,8 +167,8 @@ dsl_prop_get_ds(dsl_dataset_t *ds, const char *propname,
 
 	ASSERT(dsl_pool_config_held(ds->ds_dir->dd_pool));
 	inheritable = (prop == ZPROP_INVAL || zfs_prop_inheritable(prop));
-	snapshot = (ds->ds_phys != NULL && dsl_dataset_is_snapshot(ds));
-	zapobj = (ds->ds_phys == NULL ? 0 : ds->ds_phys->ds_props_obj);
+	snapshot = (DS_HAS_PHYS(ds) && dsl_dataset_is_snapshot(ds));
+	zapobj = (DS_HAS_PHYS(ds) ? ds->ds_phys->ds_props_obj : 0);
 
 	if (zapobj != 0) {
 		objset_t *mos = ds->ds_dir->dd_pool->dp_meta_objset;
@@ -222,7 +222,7 @@ dsl_prop_get_ds(dsl_dataset_t *ds, const char *propname,
  * once to notify it of the current property value, and again each time
  * the property changes, until this callback is unregistered.
  *
- * Return 0 on success, errno if the prop is not an integer value.
+ * Return 0 on success, or errno if the prop is not an integer value.
  */
 int
 dsl_prop_register(dsl_dataset_t *ds, const char *propname,
@@ -278,7 +278,7 @@ dsl_prop_get(const char *dsname, const char *propname,
  * dsl_prop_register() and assume that the value has not changed in
  * between.
  *
- * Return 0 on success, ENOENT if ddname is invalid.
+ * Return 0 on success, or ENOENT if ddname is invalid.
  */
 int
 dsl_prop_get_integer(const char *ddname, const char *propname,
@@ -301,7 +301,7 @@ dsl_prop_get_int_ds(dsl_dataset_t *ds, const char *propname,
  * properties. The fact that these properties are non-inheritable greatly
  * simplifies the prediction logic.
  *
- * Returns 0 on success, a positive error code on failure, or -1 if called with
+ * Return 0 on success, a positive error code on failure, or -1 if called with
  * a property not handled by this function.
  */
 int
@@ -543,7 +543,7 @@ dsl_prop_set_sync_impl(dsl_dataset_t *ds, const char *propname,
 
 	isint = (dodefault(propname, 8, 1, &intval) == 0);
 
-	if (ds->ds_phys != NULL && dsl_dataset_is_snapshot(ds)) {
+	if (DS_HAS_PHYS(ds) && dsl_dataset_is_snapshot(ds)) {
 		ASSERT(version >= SPA_VERSION_SNAP_PROPS);
 		if (ds->ds_phys->ds_props_obj == 0) {
 			dmu_buf_will_dirty(ds->ds_dbuf, tx);
@@ -640,7 +640,7 @@ dsl_prop_set_sync_impl(dsl_dataset_t *ds, const char *propname,
 	if (isint) {
 		VERIFY0(dsl_prop_get_int_ds(ds, propname, &intval));
 
-		if (ds->ds_phys != NULL && dsl_dataset_is_snapshot(ds)) {
+		if (DS_HAS_PHYS(ds) && dsl_dataset_is_snapshot(ds)) {
 			dsl_prop_cb_record_t *cbr;
 			/*
 			 * It's a snapshot; nothing can inherit this

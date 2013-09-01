@@ -35,6 +35,37 @@ struct nvlist;
 struct dsl_dataset;
 struct dmu_tx;
 
+struct dmu_snapshots_destroy_arg;
+typedef void (*dmu_snapshots_destroy_syncfunc_t)(
+    struct dmu_snapshots_destroy_arg *, dsl_pool_t *, dsl_dataset_t *,
+    const char *);
+typedef void (*dmu_snapshots_destroy_cleanupfunc_t)(
+    struct dmu_snapshots_destroy_arg *);
+
+typedef struct dmu_snapshots_destroy_arg {
+	int dsda_error;
+	nvlist_t *dsda_snaps;
+	nvlist_t *dsda_successful_snaps;
+	boolean_t dsda_defer;
+	nvlist_t *dsda_errlist;
+	void *dsda_user_data;
+	dmu_snapshots_destroy_syncfunc_t dsda_user_syncfunc;
+	dmu_snapshots_destroy_cleanupfunc_t dsda_user_cleanupfunc;
+} dmu_snapshots_destroy_arg_t;
+
+struct dsl_destroy_head_arg;
+typedef void (*dsl_destroy_head_syncfunc_t)(
+    struct dsl_destroy_head_arg *, dsl_dataset_t *);
+typedef void (*dsl_destroy_head_cleanupfunc_t)(
+    struct dsl_destroy_head_arg *);
+typedef struct dsl_destroy_head_arg {
+	const char *ddha_name;
+	int ddha_error;
+	void *ddha_user_data;
+	dsl_destroy_head_syncfunc_t ddha_user_syncfunc;
+	dsl_destroy_head_cleanupfunc_t ddha_user_cleanupfunc;
+} dsl_destroy_head_arg_t;
+
 int dsl_destroy_snapshots_nvl(struct nvlist *snaps, boolean_t defer,
     struct nvlist *errlist);
 int dsl_destroy_snapshot(const char *name, boolean_t defer);

@@ -31,6 +31,11 @@
 #include <sys/sunddi.h>
 #include <sys/zfs_ioctl.h>
 #include <sys/zfs_onexit.h>
+/* zvol.h requires these */
+#include <sys/dmu_objset.h>
+#include <sys/dsl_dataset.h>
+#include <sys/dsl_dir.h>
+#include <sys/dsl_destroy.h>
 #include <sys/zvol.h>
 
 /*

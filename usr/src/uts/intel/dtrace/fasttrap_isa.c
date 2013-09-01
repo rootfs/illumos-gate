@@ -74,12 +74,10 @@ proc_ops(int op, proc_t *p, void *kaddr, off_t uaddr, size_t len)
 	uio.uio_segflg = UIO_SYSSPACE;
 	uio.uio_td = curthread;
 	uio.uio_rw = op;
-	PHOLD(p);
-	if (proc_rwmem(p, &uio) < 0) {
-		PRELE(p);
+	PROC_ASSERT_HELD(p);
+	PROC_LOCK_ASSERT((p), MA_NOTOWNED);
+	if (proc_rwmem(p, &uio) < 0)
 		return (-1);
-	}
-	PRELE(p);
 
 	return (0);
 }

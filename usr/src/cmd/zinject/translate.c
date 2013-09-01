@@ -177,8 +177,8 @@ object_from_path(const char *dataset, const char *path, struct stat64 *statbuf,
  * Calculate the real range based on the type, level, and range given.
  */
 static int
-calculate_range(const char *dataset, err_type_t type, int level, char *range,
-    zinject_record_t *record)
+calculate_range(const char *dataset, err_type_t type, int level,
+    const char *range, zinject_record_t *record)
 {
 	objset_t *os = NULL;
 	dnode_t *dn = NULL;
@@ -380,7 +380,7 @@ translate_record(err_type_t type, const char *object, const char *range,
 	/*
 	 * For the given object, calculate the real (type, level, range)
 	 */
-	if (calculate_range(dataset, type, level, (char *)range, record) != 0)
+	if (calculate_range(dataset, type, level, range, record) != 0)
 		goto err;
 
 	ziprintf("    objset: %llu\n", record->zi_objset);
